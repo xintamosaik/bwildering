@@ -30,7 +30,7 @@ typedef float mat4[16];
 void mat4_identity(mat4 dest);
 void mat4_perspective(float fov_radians, float aspect, float near, float far,
                       mat4 dest);
-void mat4_lookat(float eye[3], float center[3], float up[3], mat4 dest);
+void mat4_lookat(Vec3 eye, float center[3], float up[3], mat4 dest);
 void mat4_rotate(mat4 dest, float angle, float x, float y, float z);
 void mat4_multiply(mat4 a, mat4 b, mat4 dest);
 
@@ -74,8 +74,8 @@ void mat4_perspective(float fov_radians, float aspect, float near, float far,
   dest[14] = -(2.0f * far * near) / (far - near);
 }
 
-void mat4_lookat(float eye[3], float center[3], float up[3], mat4 dest) {
-  float f[3] = {center[0] - eye[0], center[1] - eye[1], center[2] - eye[2]};
+void mat4_lookat(Vec3 eye, float center[3], float up[3], mat4 dest) {
+  float f[3] = {center[0] - eye.x, center[1] - eye.y, center[2] - eye.z};
   float flen = sqrtf(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
   f[0] /= flen;
   f[1] /= flen;
@@ -102,9 +102,9 @@ void mat4_lookat(float eye[3], float center[3], float up[3], mat4 dest) {
   dest[6] = -f[1];
   dest[10] = -f[2];
 
-  dest[12] = -(s[0] * eye[0] + s[1] * eye[1] + s[2] * eye[2]);
-  dest[13] = -(u[0] * eye[0] + u[1] * eye[1] + u[2] * eye[2]);
-  dest[14] = (f[0] * eye[0] + f[1] * eye[1] + f[2] * eye[2]);
+  dest[12] = -(s[0] * eye.x + s[1] * eye.y + s[2] * eye.z);
+  dest[13] = -(u[0] * eye.x + u[1] * eye.y + u[2] * eye.z);
+  dest[14] = (f[0] * eye.x + f[1] * eye.y + f[2] * eye.z);
 }
 
 void mat4_multiply(mat4 a, mat4 b, mat4 dest) {
@@ -122,7 +122,7 @@ void mat4_multiply(mat4 a, mat4 b, mat4 dest) {
 // ---------------------------
 
 // Camera State Variables
-float cameraPos[] = {0.0f, 2.0f, 2.0f};
+// float cameraPos[] = {0.0f, 2.0f, 2.0f};
 float cameraFront[] = {0.0f, 0.0f, -1.0f};
 float cameraUp[] = {0.0f, 1.0f, 0.0f};
 
@@ -361,34 +361,34 @@ int main(void) {
 
     // WASD Input (XZ plane only)
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
-      cameraPos[0] += frontXZ[0] * cameraSpeed;
-      cameraPos[2] += frontXZ[2] * cameraSpeed;
+      player.position.x += frontXZ[0] * cameraSpeed;
+      player.position.z += frontXZ[2] * cameraSpeed;
     }
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
-      cameraPos[0] -= frontXZ[0] * cameraSpeed;
-      cameraPos[2] -= frontXZ[2] * cameraSpeed;
+      player.position.x -= frontXZ[0] * cameraSpeed;
+      player.position.z -= frontXZ[2] * cameraSpeed;
     }
     if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
-      cameraPos[0] -= right[0] * cameraSpeed;
-      cameraPos[2] -= right[2] * cameraSpeed;
+      player.position.x -= right[0] * cameraSpeed;
+      player.position.z -= right[2] * cameraSpeed;
     }
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
-      cameraPos[0] += right[0] * cameraSpeed;
-      cameraPos[2] += right[2] * cameraSpeed;
+      player.position.x += right[0] * cameraSpeed;
+      player.position.z += right[2] * cameraSpeed;
     }
 
     // Apply Gravity
     player.velocityY -= gravity * deltaTime;
-    cameraPos[1] += player.velocityY * deltaTime;
+    player.position.y += player.velocityY * deltaTime;
 
     // --- Simple Platform Collision ---
     float platformSurfaceY = 1.0f;
 
-    if (cameraPos[0] >= -4.0f && cameraPos[0] <= 4.0f &&
-        cameraPos[2] >= -4.0f && cameraPos[2] <= 4.0f) {
+    if (player.position.x >= -4.0f && player.position.x <= 4.0f &&
+        player.position.z >= -4.0f && player.position.z <= 4.0f) {
 
-      if (cameraPos[1] <= platformSurfaceY) {
-        cameraPos[1] = platformSurfaceY;
+      if (player.position.y <= platformSurfaceY) {
+        player.position.y = platformSurfaceY;
         player.velocityY = 0.0f;
         player.grounded = 1;
       }
@@ -413,10 +413,10 @@ int main(void) {
     mat4_perspective(75.0f * (3.14159f / 180.0f), 800.0f / 600.0f, 0.1f, 100.0f,
                      proj);
     // View matrix pointing from cameraPos toward cameraPos + cameraFront
-    float center[3] = {cameraPos[0] + cameraFront[0],
-                       cameraPos[1] + cameraFront[1],
-                       cameraPos[2] + cameraFront[2]};
-    mat4_lookat(cameraPos, center, cameraUp, view);
+    float center[3] = {player.position.x + cameraFront[0],
+                       player.position.y + cameraFront[1],
+                       player.position.z + cameraFront[2]};
+    mat4_lookat( player.position, center, cameraUp, view);
 
     glBindVertexArray(VAO);
     glBindTexture(GL_TEXTURE_2D, texture);

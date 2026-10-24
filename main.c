@@ -4,6 +4,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+// Player Physics State
+float velocityY = 0.0f;
+int isGrounded = 0;
+const float gravity = 9.81f;
 // --- Tiny Custom Math Backend (id Software style) ---
 typedef float mat4[16];
 // --- Forward Declarations ---
@@ -261,43 +265,74 @@ int main(void) {
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
       glfwSetWindowShouldClose(window, GLFW_TRUE);
 
-    // WASD Movement
-    float cameraSpeed = 2.5f * deltaTime;
+    // --- Physics & Movement ---
+    float cameraSpeed = 4.0f * deltaTime;
+
+    // Horizontal movement vectors (ignore Y component so player stays level)
+    float frontXZ[3] = {cameraFront[0], 0.0f, cameraFront[2]};
+    float f_len = sqrtf(frontXZ[0] * frontXZ[0] + frontXZ[2] * frontXZ[2]);
+    if (f_len > 0.0f) {
+      frontXZ[0] /= f_len;
+      frontXZ[2] /= f_len;
+    }
+
+    float right[3] = {frontXZ[1] * cameraUp[2] - frontXZ[2] * cameraUp[1],
+                      frontXZ[2] * cameraUp[0] - frontXZ[0] * cameraUp[2],
+                      frontXZ[0] * cameraUp[1] - frontXZ[1] * cameraUp[0]};
+    float r_len =
+        sqrtf(right[0] * right[0] + right[1] * right[1] + right[2] * right[2]);
+    if (r_len > 0.0f) {
+      right[0] /= r_len;
+      right[2] /= r_len;
+    }
+
+    // WASD Input (XZ plane only)
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
-      cameraPos[0] += cameraFront[0] * cameraSpeed;
-      cameraPos[1] += cameraFront[1] * cameraSpeed;
-      cameraPos[2] += cameraFront[2] * cameraSpeed;
+      cameraPos[0] += frontXZ[0] * cameraSpeed;
+      cameraPos[2] += frontXZ[2] * cameraSpeed;
     }
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
-      cameraPos[0] -= cameraFront[0] * cameraSpeed;
-      cameraPos[1] -= cameraFront[1] * cameraSpeed;
-      cameraPos[2] -= cameraFront[2] * cameraSpeed;
+      cameraPos[0] -= frontXZ[0] * cameraSpeed;
+      cameraPos[2] -= frontXZ[2] * cameraSpeed;
     }
-    // Strafing left/right using cross product approximation
-    float right[3] = {
-        cameraFront[1] * cameraUp[2] - cameraFront[2] * cameraUp[1],
-        cameraFront[2] * cameraUp[0] - cameraFront[0] * cameraUp[2],
-        cameraFront[0] * cameraUp[1] - cameraFront[1] * cameraUp[0]};
-    float rlen =
-        sqrtf(right[0] * right[0] + right[1] * right[1] + right[2] * right[2]);
-    right[0] /= rlen;
-    right[1] /= rlen;
-    right[2] /= rlen;
-
     if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
       cameraPos[0] -= right[0] * cameraSpeed;
-      cameraPos[1] -= right[1] * cameraSpeed;
       cameraPos[2] -= right[2] * cameraSpeed;
     }
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
       cameraPos[0] += right[0] * cameraSpeed;
-      cameraPos[1] += right[1] * cameraSpeed;
       cameraPos[2] += right[2] * cameraSpeed;
+    }
+
+    // Apply Gravity
+    velocityY -= gravity * deltaTime;
+    cameraPos[1] += velocityY * deltaTime;
+
+    // --- Simple Platform Collision ---
+    float platformSurfaceY = 1.0f;
+
+    if (cameraPos[0] >= -4.0f && cameraPos[0] <= 4.0f &&
+        cameraPos[2] >= -4.0f && cameraPos[2] <= 4.0f) {
+
+      if (cameraPos[1] <= platformSurfaceY) {
+        cameraPos[1] = platformSurfaceY;
+        velocityY = 0.0f;
+        isGrounded = 1;
+      }
+    } else {
+      isGrounded = 0;
+    }
+
+    // Jump on Spacebar
+    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS && isGrounded) {
+      velocityY = 5.0f;
+      isGrounded = 0;
     }
 
     glClearColor(0.15f, 0.15f, 0.2f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+    // ... rest of your rendering code ...
     glUseProgram(program);
 
     // Build matrices

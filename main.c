@@ -235,52 +235,52 @@ int main(void) {
   // Cube Vertex Data (Grass/Green styled with slight shade variation)
   //
   // Cube Vertex Data: [PosX, PosY, PosZ, U, V]
+  //
+  // Cube Vertex Data (36 unindexed vertices, 6 per face, with independent UVs)
   float vertices[] = {
       // Back face
       -0.5f, -0.5f, -0.5f, 0.0f, 0.0f, 0.5f, -0.5f, -0.5f, 1.0f, 0.0f, 0.5f,
-      0.5f, -0.5f, 1.0f, 1.0f, -0.5f, 0.5f, -0.5f, 0.0f, 1.0f,
+      0.5f, -0.5f, 1.0f, 1.0f, 0.5f, 0.5f, -0.5f, 1.0f, 1.0f, -0.5f, 0.5f,
+      -0.5f, 0.0f, 1.0f, -0.5f, -0.5f, -0.5f, 0.0f, 0.0f,
+
       // Front face
       -0.5f, -0.5f, 0.5f, 0.0f, 0.0f, 0.5f, -0.5f, 0.5f, 1.0f, 0.0f, 0.5f, 0.5f,
-      0.5f, 1.0f, 1.0f, -0.5f, 0.5f, 0.5f, 0.0f, 1.0f,
+      0.5f, 1.0f, 1.0f, 0.5f, 0.5f, 0.5f, 1.0f, 1.0f, -0.5f, 0.5f, 0.5f, 0.0f,
+      1.0f, -0.5f, -0.5f, 0.5f, 0.0f, 0.0f,
+
       // Left face
       -0.5f, 0.5f, 0.5f, 1.0f, 0.0f, -0.5f, 0.5f, -0.5f, 1.0f, 1.0f, -0.5f,
-      -0.5f, -0.5f, 0.0f, 1.0f, -0.5f, -0.5f, 0.5f, 0.0f, 0.0f,
+      -0.5f, -0.5f, 0.0f, 1.0f, -0.5f, -0.5f, -0.5f, 0.0f, 1.0f, -0.5f, -0.5f,
+      0.5f, 0.0f, 0.0f, -0.5f, 0.5f, 0.5f, 1.0f, 0.0f,
+
       // Right face
       0.5f, 0.5f, 0.5f, 1.0f, 0.0f, 0.5f, 0.5f, -0.5f, 1.0f, 1.0f, 0.5f, -0.5f,
-      -0.5f, 0.0f, 1.0f, 0.5f, -0.5f, 0.5f, 0.0f, 0.0f,
+      -0.5f, 0.0f, 1.0f, 0.5f, -0.5f, -0.5f, 0.0f, 1.0f, 0.5f, -0.5f, 0.5f,
+      0.0f, 0.0f, 0.5f, 0.5f, 0.5f, 1.0f, 0.0f,
+
       // Bottom face
       -0.5f, -0.5f, -0.5f, 0.0f, 1.0f, 0.5f, -0.5f, -0.5f, 1.0f, 1.0f, 0.5f,
-      -0.5f, 0.5f, 1.0f, 0.0f, -0.5f, -0.5f, 0.5f, 0.0f, 0.0f,
+      -0.5f, 0.5f, 1.0f, 0.0f, 0.5f, -0.5f, 0.5f, 1.0f, 0.0f, -0.5f, -0.5f,
+      0.5f, 0.0f, 0.0f, -0.5f, -0.5f, -0.5f, 0.0f, 1.0f,
+
       // Top face
       -0.5f, 0.5f, -0.5f, 0.0f, 1.0f, 0.5f, 0.5f, -0.5f, 1.0f, 1.0f, 0.5f, 0.5f,
-      0.5f, 1.0f, 0.0f, -0.5f, 0.5f, 0.5f, 0.0f, 0.0f};
-  unsigned int indices[] = {
+      0.5f, 1.0f, 0.0f, 0.5f, 0.5f, 0.5f, 1.0f, 0.0f, -0.5f, 0.5f, 0.5f, 0.0f,
+      0.0f, -0.5f, 0.5f, -0.5f, 0.0f, 1.0f};
 
-      0, 1, 2, 2, 3, 0, // Back
-      4, 5, 6, 6, 7, 4, // Front
-      0, 4, 7, 7, 3, 0, // Left
-      1, 5, 6, 6, 2, 1, // Right
-      3, 2, 6, 6, 7, 3, // Top
-      0, 1, 5, 5, 4, 0  // Bottom
-  };
-
-  GLuint VAO, VBO, EBO;
+  GLuint VAO, VBO;
   glGenVertexArrays(1, &VAO);
   glGenBuffers(1, &VBO);
-  glGenBuffers(1, &EBO);
+
   glBindVertexArray(VAO);
   glBindBuffer(GL_ARRAY_BUFFER, VBO);
   glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-  glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices,
-               GL_STATIC_DRAW);
 
-  // Attribute 0: Position (3 floats), offset 0, stride 5 floats
+  // Attribute 0: Position (3 floats)
   glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void *)0);
   glEnableVertexAttribArray(0);
 
-  // Attribute 1: Texture Coordinates (2 floats), offset 3 floats, stride 5
-  // floats
+  // Attribute 1: UV coordinates (2 floats)
   glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float),
                         (void *)(3 * sizeof(float)));
   glEnableVertexAttribArray(1);
@@ -303,12 +303,13 @@ int main(void) {
   unsigned char *pixels = malloc(tw * th * 3);
   for (int y = 0; y < th; y++) {
     for (int x = 0; x < tw; x++) {
-      int check = ((x / 2) + (y / 2)) % 2;
+      // Larger 4x4 pixel checker squares eliminate moiré stripes
+      int check = ((x / 4) + (y / 4)) % 2;
       int index = (y * tw + x) * 3;
-      // Two shades of retro green checkerboard
-      pixels[index + 0] = check ? 40 : 60;   // Red
-      pixels[index + 1] = check ? 140 : 180; // Green
-      pixels[index + 2] = check ? 40 : 60;   // Blue
+
+      pixels[index + 0] = check ? 34 : 58;   // Red
+      pixels[index + 1] = check ? 139 : 180; // Green (Retro grass)
+      pixels[index + 2] = check ? 34 : 58;   // Blue
     }
   }
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, tw, th, 0, GL_RGB, GL_UNSIGNED_BYTE,
@@ -418,7 +419,9 @@ int main(void) {
         mat4_multiply(proj, temp, mvp);
 
         glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, (float *)mvp);
-        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+        //        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+        // Inside the platform loop:
+        glDrawArrays(GL_TRIANGLES, 0, 36);
       }
     }
 
@@ -428,7 +431,7 @@ int main(void) {
 
   glDeleteVertexArrays(1, &VAO);
   glDeleteBuffers(1, &VBO);
-  glDeleteBuffers(1, &EBO);
+
   glDeleteProgram(program);
   glfwTerminate();
   return 0;

@@ -127,8 +127,8 @@ float cameraFront[] = {0.0f, 0.0f, -1.0f};
 float cameraUp[] = {0.0f, 1.0f, 0.0f};
 
 // Mouse Look Angles
-float yaw = -90.0f;
-float pitch = 0.0f;
+// float yaw = -90.0f;
+// float pitch = 0.0f;
 float lastX = 400.0f;
 float lastY = 300.0f;
 int firstMouse = 1;
@@ -151,16 +151,16 @@ void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
   xoffset *= sensitivity;
   yoffset *= sensitivity;
 
-  yaw += xoffset;
-  pitch += yoffset;
+  player.camera.yaw += xoffset;
+  player.camera.pitch += yoffset;
 
-  if (pitch > 89.0f)
-    pitch = 89.0f;
-  if (pitch < -89.0f)
-    pitch = -89.0f;
+  if (player.camera.pitch > 89.0f)
+    player.camera.pitch = 89.0f;
+  if (player.camera.pitch < -89.0f)
+    player.camera.pitch = -89.0f;
 
-  float radYaw = yaw * 3.14159265f / 180.0f;
-  float radPitch = pitch * 3.14159265f / 180.0f;
+  float radYaw = player.camera.yaw * 3.14159265f / 180.0f;
+  float radPitch = player.camera.pitch * 3.14159265f / 180.0f;
 
   cameraFront[0] = cosf(radYaw) * cosf(radPitch);
   cameraFront[1] = sinf(radPitch);

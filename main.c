@@ -23,17 +23,33 @@ void mat4_perspective(float fov_radians, float aspect, float near, float far, ma
     dest[14] = -(2.0f * far * near) / (far - near);
 }
 
-void mat4_rotate(mat4 dest, float angle, float x, float y, float z) {
-    float c = cosf(angle);
-    float s = sinf(angle);
-    float len = sqrtf(x*x + y*y + z*z);
-    x /= len; y /= len; z /= len;
-    float ic = 1.0f - c;
+void mat4_lookat(float eye[3], float center[3], float up[3], mat4 dest) {
+    float f[3] = {center[0] - eye[0], center[1] - eye[1], center[2] - eye[2]};
+    float flen = sqrtf(f[0]*f[0] + f[1]*f[1] + f[2]*f[2]);
+    f[0] /= flen; f[1] /= flen; f[2] /= flen;
+
+    float s[3] = {
+        f[1]*up[2] - f[2]*up[1],
+        f[2]*up[0] - f[0]*up[2],
+        f[0]*up[1] - f[1]*up[0]
+    };
+    float slen = sqrtf(s[0]*s[0] + s[1]*s[1] + s[2]*s[2]);
+    s[0] /= slen; s[1] /= slen; s[2] /= slen;
+
+    float u[3] = {
+        s[1]*f[2] - s[2]*f[1],
+        s[2]*f[0] - s[0]*f[2],
+        s[0]*f[1] - s[1]*f[0]
+    };
 
     mat4_identity(dest);
-    dest[0] = x*x*ic + c;     dest[4] = x*y*ic - z*s;   dest[8]  = x*z*ic + y*s;
-    dest[1] = y*x*ic + z*s;   dest[5] = y*y*ic + c;     dest[9]  = y*z*ic - x*s;
-    dest[2] = x*z*ic - y*s;   dest[6] = y*z*ic + x*s;   dest[10] = z*z*ic + c;
+    dest[0] = s[0];  dest[4] = s[1];  dest[8]  = s[2];
+    dest[1] = u[0];  dest[5] = u[1];  dest[9]  = u[2];
+    dest[2] = -f[0]; dest[6] = -f[1]; dest[10] = -f[2];
+
+    dest[12] = -(s[0]*eye[0] + s[1]*eye[1] + s[2]*eye[2]);
+    dest[13] = -(u[0]*eye[0] + u[1]*eye[1] + u[2]*eye[2]);
+    dest[14] =  (f[0]*eye[0] + f[1]*eye[1] + f[2]*eye[2]);
 }
 
 void mat4_multiply(mat4 a, mat4 b, mat4 dest) {
@@ -49,7 +65,54 @@ void mat4_multiply(mat4 a, mat4 b, mat4 dest) {
     }
     for (int i = 0; i < 16; i++) dest[i] = res[i];
 }
-// -----------------------------------------------------
+// ---------------------------
+
+// Camera State Variables
+float cameraPos[]   = { 0.0f, 0.0f,  3.0f };
+float cameraFront[] = { 0.0f, 0.0f, -1.0f };
+float cameraUp[]    = { 0.0f, 1.0f,  0.0f };
+
+// Mouse Look Angles
+float yaw   = -90.0f;
+float pitch =   0.0f;
+float lastX =  400.0f;
+float lastY =  300.0f;
+int firstMouse = 1;
+
+void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
+    (void)window;
+    if (firstMouse) {
+        lastX = (float)xpos;
+        lastY = (float)ypos;
+        firstMouse = 0;
+    }
+
+    float xoffset = (float)xpos - lastX;
+    float yoffset = lastY - (float)ypos; // Reversed since y-coordinates go from bottom to top
+    lastX = (float)xpos;
+    lastY = (float)ypos;
+
+    float sensitivity = 0.1f;
+    xoffset *= sensitivity;
+    yoffset *= sensitivity;
+
+    yaw   += xoffset;
+    pitch += yoffset;
+
+    if (pitch >  89.0f) pitch =  89.0f;
+    if (pitch < -89.0f) pitch = -89.0f;
+
+    float radYaw = yaw * 3.14159265f / 180.0f;
+    float radPitch = pitch * 3.14159265f / 180.0f;
+
+    cameraFront[0] = cosf(radYaw) * cosf(radPitch);
+    cameraFront[1] = sinf(radPitch);
+    cameraFront[2] = sinf(radYaw) * cosf(radPitch);
+    
+    // Normalize front vector
+    float len = sqrtf(cameraFront[0]*cameraFront[0] + cameraFront[1]*cameraFront[1] + cameraFront[2]*cameraFront[2]);
+    cameraFront[0] /= len; cameraFront[1] /= len; cameraFront[2] /= len;
+}
 
 const char* vertexShaderSource = 
     "#version 330 core\n"
@@ -71,11 +134,6 @@ const char* fragmentShaderSource =
     "    FragColor = vec4(ourColor, 1.0);\n"
     "}\0";
 
-void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
-    (void)window; // Silence unused parameter warning
-    glViewport(0, 0, width, height);
-}
-
 int main(void) {
     // 1. Initialize GLFW
     if (!glfwInit()) {
@@ -96,7 +154,6 @@ int main(void) {
         return -1;
     }
     glfwMakeContextCurrent(window);
-    glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 
     // 3. Initialize GLEW
     glewExperimental = GL_TRUE;
@@ -107,18 +164,17 @@ int main(void) {
         // but function pointers are usually still loaded.
     }
 
-    // Enable depth testing for 3D rendering
+    glewExperimental = GL_TRUE;
+    glewInit();
     glEnable(GL_DEPTH_TEST);
 
     // Shaders
     GLuint vShader = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(vShader, 1, &vertexShaderSource, NULL);
     glCompileShader(vShader);
-
     GLuint fShader = glCreateShader(GL_FRAGMENT_SHADER);
     glShaderSource(fShader, 1, &fragmentShaderSource, NULL);
     glCompileShader(fShader);
-
     GLuint program = glCreateProgram();
     glAttachShader(program, vShader);
     glAttachShader(program, fShader);
@@ -138,7 +194,6 @@ int main(void) {
          0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 1.0f,
         -0.5f,  0.5f,  0.5f,  0.0f, 1.0f, 1.0f
     };
-
     unsigned int indices[] = {
         0, 1, 2,  2, 3, 0, // Back
         4, 5, 6,  6, 7, 4, // Front
@@ -152,13 +207,11 @@ int main(void) {
     glGenVertexArrays(1, &VAO);
     glGenBuffers(1, &VBO);
     glGenBuffers(1, &EBO);
-
     glBindVertexArray(VAO);
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
-
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
@@ -166,9 +219,47 @@ int main(void) {
 
     GLint mvpLoc = glGetUniformLocation(program, "mvp");
 
+    float lastFrame = 0.0f;
+
     while (!glfwWindowShouldClose(window)) {
+        float currentFrame = (float)glfwGetTime();
+        float deltaTime = currentFrame - lastFrame;
+        lastFrame = currentFrame;
+
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
             glfwSetWindowShouldClose(window, GLFW_TRUE);
+
+        // WASD Movement
+        float cameraSpeed = 2.5f * deltaTime;
+        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
+            cameraPos[0] += cameraFront[0] * cameraSpeed;
+            cameraPos[1] += cameraFront[1] * cameraSpeed;
+            cameraPos[2] += cameraFront[2] * cameraSpeed;
+        }
+        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
+            cameraPos[0] -= cameraFront[0] * cameraSpeed;
+            cameraPos[1] -= cameraFront[1] * cameraSpeed;
+            cameraPos[2] -= cameraFront[2] * cameraSpeed;
+        }
+        // Strafing left/right using cross product approximation
+        float right[3] = {
+            cameraFront[1]*cameraUp[2] - cameraFront[2]*cameraUp[1],
+            cameraFront[2]*cameraUp[0] - cameraFront[0]*cameraUp[2],
+            cameraFront[0]*cameraUp[1] - cameraFront[1]*cameraUp[0]
+        };
+        float rlen = sqrtf(right[0]*right[0] + right[1]*right[1] + right[2]*right[2]);
+        right[0] /= rlen; right[1] /= rlen; right[2] /= rlen;
+
+        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
+            cameraPos[0] -= right[0] * cameraSpeed;
+            cameraPos[1] -= right[1] * cameraSpeed;
+            cameraPos[2] -= right[2] * cameraSpeed;
+        }
+        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
+            cameraPos[0] += right[0] * cameraSpeed;
+            cameraPos[1] += right[1] * cameraSpeed;
+            cameraPos[2] += right[2] * cameraSpeed;
+        }
 
         glClearColor(0.15f, 0.15f, 0.2f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -176,20 +267,19 @@ int main(void) {
         glUseProgram(program);
 
         // Build matrices
-        mat4 proj, model, mvp;
+        mat4 proj, view, model, mvp;
         mat4_perspective(3.14159f / 4.0f, 800.0f / 600.0f, 0.1f, 100.0f, proj);
-        
-        // Push the cube back by Z = -3.0 (acting as our view translation)
-        mat4_identity(model);
-        model[14] = -3.0f; 
 
-        // Rotate it over time
-        mat4 rot;
-        mat4_rotate(rot, (float)glfwGetTime(), 0.5f, 1.0f, 0.0f);
-        
-        // Combine into MVP: Projection * Model * Rotation
+        // View matrix pointing from cameraPos toward cameraPos + cameraFront
+        float center[3] = {cameraPos[0] + cameraFront[0], cameraPos[1] + cameraFront[1], cameraPos[2] + cameraFront[2]};
+        mat4_lookat(cameraPos, center, cameraUp, view);
+
+        // Position the cube right in front of the starting spawn point (e.g. at x=0, y=0, z=0)
+        mat4_identity(model);
+
+        // Combine MVP = Projection * View * Model
         mat4 temp;
-        mat4_multiply(model, rot, temp);
+        mat4_multiply(view, model, temp);
         mat4_multiply(proj, temp, mvp);
 
         glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, (float*)mvp);

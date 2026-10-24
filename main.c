@@ -4,7 +4,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+// ... rest of your code ...
 // Player Physics State
+//
 float velocityY = 0.0f;
 int isGrounded = 0;
 const float gravity = 9.81f;
@@ -159,25 +161,28 @@ void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
   cameraFront[2] /= len;
 }
 
-const char *vertexShaderSource = "#version 330 core\n"
-                                 "layout (location = 0) in vec3 aPos;\n"
-                                 "layout (location = 1) in vec3 aColor;\n"
-                                 "out vec3 ourColor;\n"
-                                 "uniform mat4 mvp;\n"
-                                 "void main() {\n"
-                                 "    gl_Position = mvp * vec4(aPos, 1.0);\n"
-                                 "    ourColor = aColor;\n"
-                                 "}\0";
+const char *vertexShaderSource =
+    "#version 330 core\n"
+    "layout (location = 0) in vec3 aPos;\n"
+    "layout (location = 1) in vec2 aTexCoord;\n" // Changed from color to UV
+                                                 // coordinates
+    "out vec2 TexCoord;\n"
+    "uniform mat4 mvp;\n"
+    "void main() {\n"
+    "    gl_Position = mvp * vec4(aPos, 1.0);\n"
+    "    TexCoord = aTexCoord;\n"
+    "}\0";
 
-// Simple Fragment Shader: outputs interpolated vertex colors
-const char *fragmentShaderSource = "#version 330 core\n"
-                                   "in vec3 ourColor;\n"
-                                   "out vec4 FragColor;\n"
-                                   "void main() {\n"
-                                   "    FragColor = vec4(ourColor, 1.0);\n"
-                                   "}\0";
-
+const char *fragmentShaderSource =
+    "#version 330 core\n"
+    "in vec2 TexCoord;\n"
+    "out vec4 FragColor;\n"
+    "uniform sampler2D ourTexture;\n"
+    "void main() {\n"
+    "    FragColor = texture(ourTexture, TexCoord);\n"
+    "}\0";
 int main(void) {
+
   // 1. Initialize GLFW
   if (!glfwInit()) {
     fprintf(stderr, "Failed to initialize GLFW\n");
@@ -204,6 +209,13 @@ int main(void) {
 
   glewExperimental = GL_TRUE;
   glewInit();
+  // Set texture wrapping/filtering options
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                  GL_NEAREST); // Pixel-art style scaling!
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
   glEnable(GL_DEPTH_TEST);
 
   // Shaders
@@ -221,13 +233,29 @@ int main(void) {
   glDeleteShader(fShader);
 
   // Cube Vertex Data (Grass/Green styled with slight shade variation)
-  float vertices[] = {-0.5f, -0.5f, -0.5f, 0.15f, 0.55f, 0.15f, 0.5f,  -0.5f,
-                      -0.5f, 0.20f, 0.65f, 0.20f, 0.5f,  0.5f,  -0.5f, 0.25f,
-                      0.75f, 0.25f, -0.5f, 0.5f,  -0.5f, 0.20f, 0.65f, 0.20f,
-                      -0.5f, -0.5f, 0.5f,  0.20f, 0.60f, 0.20f, 0.5f,  -0.5f,
-                      0.5f,  0.25f, 0.70f, 0.25f, 0.5f,  0.5f,  0.5f,  0.30f,
-                      0.80f, 0.30f, -0.5f, 0.5f,  0.5f,  0.25f, 0.70f, 0.25f};
+  //
+  // Cube Vertex Data: [PosX, PosY, PosZ, U, V]
+  float vertices[] = {
+      // Back face
+      -0.5f, -0.5f, -0.5f, 0.0f, 0.0f, 0.5f, -0.5f, -0.5f, 1.0f, 0.0f, 0.5f,
+      0.5f, -0.5f, 1.0f, 1.0f, -0.5f, 0.5f, -0.5f, 0.0f, 1.0f,
+      // Front face
+      -0.5f, -0.5f, 0.5f, 0.0f, 0.0f, 0.5f, -0.5f, 0.5f, 1.0f, 0.0f, 0.5f, 0.5f,
+      0.5f, 1.0f, 1.0f, -0.5f, 0.5f, 0.5f, 0.0f, 1.0f,
+      // Left face
+      -0.5f, 0.5f, 0.5f, 1.0f, 0.0f, -0.5f, 0.5f, -0.5f, 1.0f, 1.0f, -0.5f,
+      -0.5f, -0.5f, 0.0f, 1.0f, -0.5f, -0.5f, 0.5f, 0.0f, 0.0f,
+      // Right face
+      0.5f, 0.5f, 0.5f, 1.0f, 0.0f, 0.5f, 0.5f, -0.5f, 1.0f, 1.0f, 0.5f, -0.5f,
+      -0.5f, 0.0f, 1.0f, 0.5f, -0.5f, 0.5f, 0.0f, 0.0f,
+      // Bottom face
+      -0.5f, -0.5f, -0.5f, 0.0f, 1.0f, 0.5f, -0.5f, -0.5f, 1.0f, 1.0f, 0.5f,
+      -0.5f, 0.5f, 1.0f, 0.0f, -0.5f, -0.5f, 0.5f, 0.0f, 0.0f,
+      // Top face
+      -0.5f, 0.5f, -0.5f, 0.0f, 1.0f, 0.5f, 0.5f, -0.5f, 1.0f, 1.0f, 0.5f, 0.5f,
+      0.5f, 1.0f, 0.0f, -0.5f, 0.5f, 0.5f, 0.0f, 0.0f};
   unsigned int indices[] = {
+
       0, 1, 2, 2, 3, 0, // Back
       4, 5, 6, 6, 7, 4, // Front
       0, 4, 7, 7, 3, 0, // Left
@@ -246,15 +274,46 @@ int main(void) {
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
   glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices,
                GL_STATIC_DRAW);
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *)0);
+
+  // Attribute 0: Position (3 floats), offset 0, stride 5 floats
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void *)0);
   glEnableVertexAttribArray(0);
-  glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float),
+
+  // Attribute 1: Texture Coordinates (2 floats), offset 3 floats, stride 5
+  // floats
+  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float),
                         (void *)(3 * sizeof(float)));
   glEnableVertexAttribArray(1);
-
   GLint mvpLoc = glGetUniformLocation(program, "mvp");
 
   float lastFrame = 0.0f;
+
+  // Generate a procedural retro checkerboard texture in memory
+  unsigned int texture;
+  glGenTextures(1, &texture);
+  glBindTexture(GL_TEXTURE_2D, texture);
+
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                  GL_NEAREST); // Crisp pixel art look
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+  int tw = 16, th = 16;
+  unsigned char *pixels = malloc(tw * th * 3);
+  for (int y = 0; y < th; y++) {
+    for (int x = 0; x < tw; x++) {
+      int check = ((x / 2) + (y / 2)) % 2;
+      int index = (y * tw + x) * 3;
+      // Two shades of retro green checkerboard
+      pixels[index + 0] = check ? 40 : 60;   // Red
+      pixels[index + 1] = check ? 140 : 180; // Green
+      pixels[index + 2] = check ? 40 : 60;   // Blue
+    }
+  }
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, tw, th, 0, GL_RGB, GL_UNSIGNED_BYTE,
+               pixels);
+  free(pixels);
 
   while (!glfwWindowShouldClose(window)) {
     float currentFrame = (float)glfwGetTime();
@@ -345,7 +404,7 @@ int main(void) {
     mat4_lookat(cameraPos, center, cameraUp, view);
 
     glBindVertexArray(VAO);
-
+    glBindTexture(GL_TEXTURE_2D, texture);
     // 1. Draw the 8x8x1 Platform blocks at y = -1.0f
     for (int x = -4; x < 4; x++) {
       for (int z = -4; z < 4; z++) {

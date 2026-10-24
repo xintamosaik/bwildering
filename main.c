@@ -17,16 +17,26 @@ typedef struct {
     Vec3 position;
     float velocityY;
     int grounded;
+  float eyeHeight;
     Camera camera;
 } Player;
 
+typedef struct {
+  Vec3 position;
+  Vec3 size;
+} Block;
+
 Player player = {
     .position = {.x = 0.0f, .y = 2.0f, .z = 2.0f},
+  .eyeHeight = 1.0f,
     .camera = {.yaw = -90.0f, .pitch = 0.0f}
 };
 
 
 const float gravity = 9.81f;
+const float platformSurfaceY = 1.0f;
+const float platformBlockSize = 1.0f;
+const int PLATFORM_BLOCKS_PER_SIDE = 8 ;
 // --- Tiny Custom Math Backend (id Software style) ---
 typedef float mat4[16];
 // --- Forward Declarations ---
@@ -333,6 +343,23 @@ int main(void) {
                pixels);
   free(pixels);
 
+  Block blocks[PLATFORM_BLOCKS_PER_SIDE * PLATFORM_BLOCKS_PER_SIDE];
+  int blockCount = 0;
+  for (int x = 0; x < PLATFORM_BLOCKS_PER_SIDE; x++) {
+    for (int z = 0; z < PLATFORM_BLOCKS_PER_SIDE; z++) {
+      blocks[blockCount++] = (Block){
+          .position = {
+              .x = (float)x - PLATFORM_BLOCKS_PER_SIDE / 2.0f +
+                   platformBlockSize / 2.0f,
+              .y = platformSurfaceY - platformBlockSize / 2.0f,
+              .z = (float)z - PLATFORM_BLOCKS_PER_SIDE / 2.0f +
+                   platformBlockSize / 2.0f,
+          },
+          .size = {platformBlockSize, platformBlockSize, platformBlockSize},
+      };
+    }
+  }
+
   while (!glfwWindowShouldClose(window)) {
     float currentFrame = (float)glfwGetTime();
     float deltaTime = currentFrame - lastFrame;
@@ -380,23 +407,29 @@ int main(void) {
       player.position.z += right[2] * cameraSpeed;
     }
 
+    float previousY = player.position.y;
+    player.grounded = 0;
+
     // Apply Gravity
     player.velocityY -= gravity * deltaTime;
     player.position.y += player.velocityY * deltaTime;
 
-    // --- Simple Platform Collision ---
-    float platformSurfaceY = 1.0f;
+    for (int i = 0; i < blockCount; i++) {
+      Block *block = &blocks[i];
+      float halfWidth = block->size.x / 2.0f;
+      float halfDepth = block->size.z / 2.0f;
+      float blockTop = block->position.y + block->size.y / 2.0f;
 
-    if (player.position.x >= -4.0f && player.position.x <= 4.0f &&
-        player.position.z >= -4.0f && player.position.z <= 4.0f) {
-
-      if (player.position.y <= platformSurfaceY) {
-        player.position.y = platformSurfaceY;
+      if (player.position.x >= block->position.x - halfWidth &&
+          player.position.x <= block->position.x + halfWidth &&
+          player.position.z >= block->position.z - halfDepth &&
+          player.position.z <= block->position.z + halfDepth &&
+          previousY >= blockTop && player.position.y <= blockTop) {
+        player.position.y = blockTop;
         player.velocityY = 0.0f;
         player.grounded = 1;
+        break;
       }
-    } else {
-      player.grounded = 0;
     }
 
     // Jump on Spacebar
@@ -415,31 +448,31 @@ int main(void) {
     mat4 proj, view, mvp;
     mat4_perspective(75.0f * (3.14159f / 180.0f), 800.0f / 600.0f, 0.1f, 100.0f,
                      proj);
-    // View matrix pointing from cameraPos toward cameraPos + cameraFront
-    float center[3] = {player.position.x + cameraFront[0],
-                       player.position.y + cameraFront[1],
-                       player.position.z + cameraFront[2]};
-    mat4_lookat( player.position, center, cameraUp, view);
+    Vec3 cameraPosition = player.position;
+    cameraPosition.y += player.eyeHeight;
+    float center[3] = {cameraPosition.x + cameraFront[0],
+               cameraPosition.y + cameraFront[1],
+               cameraPosition.z + cameraFront[2]};
+    mat4_lookat(cameraPosition, center, cameraUp, view);
 
     glBindVertexArray(VAO);
     glBindTexture(GL_TEXTURE_2D, texture);
-    // 1. Draw the 8x8x1 Platform blocks at y = -1.0f
-    for (int x = -4; x < 4; x++) {
-      for (int z = -4; z < 4; z++) {
-        mat4 model, temp;
-        mat4_identity(model);
-        model[12] = (float)x + 0.5f; // X position
-        model[13] = -1.0f;           // Y position (platform floor)
-        model[14] = (float)z + 0.5f; // Z position
+    for (int i = 0; i < blockCount; i++) {
+      Block *block = &blocks[i];
+      mat4 model, temp;
+      mat4_identity(model);
+      model[0] = block->size.x;
+      model[5] = block->size.y;
+      model[10] = block->size.z;
+      model[12] = block->position.x;
+      model[13] = block->position.y;
+      model[14] = block->position.z;
 
-        mat4_multiply(view, model, temp);
-        mat4_multiply(proj, temp, mvp);
+      mat4_multiply(view, model, temp);
+      mat4_multiply(proj, temp, mvp);
 
-        glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, (float *)mvp);
-        //        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
-        // Inside the platform loop:
-        glDrawArrays(GL_TRIANGLES, 0, 36);
-      }
+      glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, (float *)mvp);
+      glDrawArrays(GL_TRIANGLES, 0, 36);
     }
 
     glfwSwapBuffers(window);

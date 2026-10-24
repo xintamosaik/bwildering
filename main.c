@@ -3,12 +3,26 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+typedef struct {
+    float x;
+    float y;
+    float z;
+} Vec3;
+typedef struct {
+    float yaw;
+    float pitch;
+} Camera;
 
-// ... rest of your code ...
-// Player Physics State
-//
-float velocityY = 0.0f;
-int isGrounded = 0;
+typedef struct {
+    Vec3 position;
+    float velocityY;
+    int grounded;
+    Camera camera;
+} Player;
+
+ Player player = {0};
+
+
 const float gravity = 9.81f;
 // --- Tiny Custom Math Backend (id Software style) ---
 typedef float mat4[16];
@@ -364,8 +378,8 @@ int main(void) {
     }
 
     // Apply Gravity
-    velocityY -= gravity * deltaTime;
-    cameraPos[1] += velocityY * deltaTime;
+    player.velocityY -= gravity * deltaTime;
+    cameraPos[1] += player.velocityY * deltaTime;
 
     // --- Simple Platform Collision ---
     float platformSurfaceY = 1.0f;
@@ -375,17 +389,17 @@ int main(void) {
 
       if (cameraPos[1] <= platformSurfaceY) {
         cameraPos[1] = platformSurfaceY;
-        velocityY = 0.0f;
-        isGrounded = 1;
+        player.velocityY = 0.0f;
+        player.grounded = 1;
       }
     } else {
-      isGrounded = 0;
+      player.grounded = 0;
     }
 
     // Jump on Spacebar
-    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS && isGrounded) {
-      velocityY = 5.0f;
-      isGrounded = 0;
+    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS && player.grounded) {
+      player.velocityY = 5.0f;
+      player.grounded = 0;
     }
 
     glClearColor(0.15f, 0.15f, 0.2f, 1.0f);

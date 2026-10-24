@@ -220,14 +220,13 @@ int main(void) {
   glDeleteShader(vShader);
   glDeleteShader(fShader);
 
-  // 5. Define Cube Vertex Data (Positions + Colors)
-  float vertices[] = {// Positions         // Colors
-                      -0.5f, -0.5f, -0.5f, 0.0f, 0.0f,  0.0f, 0.5f,  -0.5f,
-                      -0.5f, 1.0f,  0.0f,  0.0f, 0.5f,  0.5f, -0.5f, 1.0f,
-                      1.0f,  0.0f,  -0.5f, 0.5f, -0.5f, 0.0f, 1.0f,  0.0f,
-                      -0.5f, -0.5f, 0.5f,  0.0f, 0.0f,  1.0f, 0.5f,  -0.5f,
-                      0.5f,  1.0f,  0.0f,  1.0f, 0.5f,  0.5f, 0.5f,  1.0f,
-                      1.0f,  1.0f,  -0.5f, 0.5f, 0.5f,  0.0f, 1.0f,  1.0f};
+  // Cube Vertex Data (Grass/Green styled with slight shade variation)
+  float vertices[] = {-0.5f, -0.5f, -0.5f, 0.15f, 0.55f, 0.15f, 0.5f,  -0.5f,
+                      -0.5f, 0.20f, 0.65f, 0.20f, 0.5f,  0.5f,  -0.5f, 0.25f,
+                      0.75f, 0.25f, -0.5f, 0.5f,  -0.5f, 0.20f, 0.65f, 0.20f,
+                      -0.5f, -0.5f, 0.5f,  0.20f, 0.60f, 0.20f, 0.5f,  -0.5f,
+                      0.5f,  0.25f, 0.70f, 0.25f, 0.5f,  0.5f,  0.5f,  0.30f,
+                      0.80f, 0.30f, -0.5f, 0.5f,  0.5f,  0.25f, 0.70f, 0.25f};
   unsigned int indices[] = {
       0, 1, 2, 2, 3, 0, // Back
       4, 5, 6, 6, 7, 4, // Front
@@ -364,22 +363,6 @@ int main(void) {
       }
     }
 
-    // 2. Draw the original rotating cube hovering at y = 1.0f
-    {
-      mat4 model, rot, temp;
-      mat4_identity(model);
-      model[12] = 0.0f;
-      model[13] = 1.0f; // Floating above the platform
-      model[14] = 0.0f;
-
-      mat4_rotate(rot, (float)glfwGetTime(), 0.5f, 1.0f, 0.0f);
-      mat4_multiply(model, rot, temp);
-      mat4_multiply(view, temp, temp);
-      mat4_multiply(proj, temp, mvp);
-
-      glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, (float *)mvp);
-      glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
-    }
     glfwSwapBuffers(window);
     glfwPollEvents();
   }

@@ -20,7 +20,10 @@ typedef struct {
     Camera camera;
 } Player;
 
- Player player = {0};
+Player player = {
+    .position = {.x = 0.0f, .y = 2.0f, .z = 2.0f},
+    .camera = {.yaw = -90.0f, .pitch = 0.0f}
+};
 
 
 const float gravity = 9.81f;

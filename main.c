@@ -106,7 +106,7 @@ void mat4_multiply(mat4 a, mat4 b, mat4 dest) {
 // ---------------------------
 
 // Camera State Variables
-float cameraPos[] = {0.0f, 2.0f, 5.0f};
+float cameraPos[] = {0.0f, 2.0f, 2.0f};
 float cameraFront[] = {0.0f, 0.0f, -1.0f};
 float cameraUp[] = {0.0f, 1.0f, 0.0f};
 

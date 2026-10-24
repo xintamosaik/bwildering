@@ -4,21 +4,21 @@
 #include <stdio.h>
 #include <stdlib.h>
 typedef struct {
-    float x;
-    float y;
-    float z;
+  float x;
+  float y;
+  float z;
 } Vec3;
 typedef struct {
-    float yaw;
-    float pitch;
+  float yaw;
+  float pitch;
 } Camera;
 
 typedef struct {
-    Vec3 position;
-    float velocityY;
-    int grounded;
+  Vec3 position;
+  float velocityY;
+  int grounded;
   float eyeHeight;
-    Camera camera;
+  Camera camera;
 } Player;
 
 typedef struct {
@@ -26,17 +26,14 @@ typedef struct {
   Vec3 size;
 } Block;
 
-Player player = {
-    .position = {.x = 0.0f, .y = 2.0f, .z = 2.0f},
-  .eyeHeight = 1.0f,
-    .camera = {.yaw = -90.0f, .pitch = 0.0f}
-};
-
+Player player = {.position = {.x = 0.0f, .y = 2.0f, .z = 2.0f},
+                 .eyeHeight = 1.0f,
+                 .camera = {.yaw = -90.0f, .pitch = 0.0f}};
 
 const float gravity = 9.81f;
 const float platformSurfaceY = 1.0f;
 const float platformBlockSize = 1.0f;
-const int PLATFORM_BLOCKS_PER_SIDE = 8 ;
+const int PLATFORM_BLOCKS_PER_SIDE = 8;
 // --- Tiny Custom Math Backend (id Software style) ---
 typedef float mat4[16];
 // --- Forward Declarations ---
@@ -348,13 +345,14 @@ int main(void) {
   for (int x = 0; x < PLATFORM_BLOCKS_PER_SIDE; x++) {
     for (int z = 0; z < PLATFORM_BLOCKS_PER_SIDE; z++) {
       blocks[blockCount++] = (Block){
-          .position = {
-              .x = (float)x - PLATFORM_BLOCKS_PER_SIDE / 2.0f +
-                   platformBlockSize / 2.0f,
-              .y = platformSurfaceY - platformBlockSize / 2.0f,
-              .z = (float)z - PLATFORM_BLOCKS_PER_SIDE / 2.0f +
-                   platformBlockSize / 2.0f,
-          },
+          .position =
+              {
+                  .x = (float)x - PLATFORM_BLOCKS_PER_SIDE / 2.0f +
+                       platformBlockSize / 2.0f,
+                  .y = platformSurfaceY - platformBlockSize / 2.0f,
+                  .z = (float)z - PLATFORM_BLOCKS_PER_SIDE / 2.0f +
+                       platformBlockSize / 2.0f,
+              },
           .size = {platformBlockSize, platformBlockSize, platformBlockSize},
       };
     }
@@ -451,8 +449,8 @@ int main(void) {
     Vec3 cameraPosition = player.position;
     cameraPosition.y += player.eyeHeight;
     float center[3] = {cameraPosition.x + cameraFront[0],
-               cameraPosition.y + cameraFront[1],
-               cameraPosition.z + cameraFront[2]};
+                       cameraPosition.y + cameraFront[1],
+                       cameraPosition.z + cameraFront[2]};
     mat4_lookat(cameraPosition, center, cameraUp, view);
 
     glBindVertexArray(VAO);

@@ -155,14 +155,9 @@ int main(void) {
     }
     glfwMakeContextCurrent(window);
 
-    // 3. Initialize GLEW
-    glewExperimental = GL_TRUE;
-    GLenum err = glewInit();
-    if (err != GLEW_OK) {
-        fprintf(stderr, "Failed to initialize GLEW: %s\n", glewGetErrorString(err));
-        // Note: GLEW often throws an error on core profiles due to glGetString, 
-        // but function pointers are usually still loaded.
-    }
+    // Capture the mouse cursor like a game
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    glfwSetCursorPosCallback(window, mouse_callback);
 
     glewExperimental = GL_TRUE;
     glewInit();

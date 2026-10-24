@@ -334,10 +334,10 @@ int main(void) {
     // ... rest of your rendering code ...
     glUseProgram(program);
 
-    // Build matrices
+    // Build matrices (Wider 75-degree FOV for proper first-person scale)
     mat4 proj, view, mvp;
-    mat4_perspective(3.14159f / 4.0f, 800.0f / 600.0f, 0.1f, 100.0f, proj);
-
+    mat4_perspective(75.0f * (3.14159f / 180.0f), 800.0f / 600.0f, 0.1f, 100.0f,
+                     proj);
     // View matrix pointing from cameraPos toward cameraPos + cameraFront
     float center[3] = {cameraPos[0] + cameraFront[0],
                        cameraPos[1] + cameraFront[1],

@@ -41,7 +41,7 @@ int main(void) {
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
     // 2. Create Window
-    GLFWwindow* window = glfwCreateWindow(800, 600, "Voxel Engine - Step 0", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(800, 600, "bwildering 0.1", NULL, NULL);
     if (!window) {
         fprintf(stderr, "Failed to create GLFW window\n");
         glfwTerminate();

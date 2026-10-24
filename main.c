@@ -1,295 +1,358 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <math.h>
 
 // --- Tiny Custom Math Backend (id Software style) ---
 typedef float mat4[16];
+// --- Forward Declarations ---
+void mat4_identity(mat4 dest);
+void mat4_perspective(float fov_radians, float aspect, float near, float far,
+                      mat4 dest);
+void mat4_lookat(float eye[3], float center[3], float up[3], mat4 dest);
+void mat4_rotate(mat4 dest, float angle, float x, float y, float z);
+void mat4_multiply(mat4 a, mat4 b, mat4 dest);
 
-void mat4_identity(mat4 dest) {
-    for (int i = 0; i < 16; i++) dest[i] = 0.0f;
-    dest[0] = dest[5] = dest[10] = dest[15] = 1.0f;
+void mat4_rotate(mat4 dest, float angle, float x, float y, float z) {
+  float c = cosf(angle);
+  float s = sinf(angle);
+  float len = sqrtf(x * x + y * y + z * z);
+  x /= len;
+  y /= len;
+  z /= len;
+  float ic = 1.0f - c;
+
+  mat4_identity(dest);
+  dest[0] = x * x * ic + c;
+  dest[4] = x * y * ic - z * s;
+  dest[8] = x * z * ic + y * s;
+  dest[1] = y * x * ic + z * s;
+  dest[5] = y * y * ic + c;
+  dest[9] = y * z * ic - x * s;
+  dest[2] = x * z * ic - y * s;
+  dest[6] = y * z * ic + x * s;
+  dest[10] = z * z * ic + c;
 }
 
-void mat4_perspective(float fov_radians, float aspect, float near, float far, mat4 dest) {
-    for (int i = 0; i < 16; i++) dest[i] = 0.0f;
-    float tanHalfFovy = tanf(fov_radians / 2.0f);
-    
-    dest[0]  = 1.0f / (aspect * tanHalfFovy);
-    dest[5]  = 1.0f / tanHalfFovy;
-    dest[10] = -(far + near) / (far - near);
-    dest[11] = -1.0f;
-    dest[14] = -(2.0f * far * near) / (far - near);
+void mat4_identity(mat4 dest) {
+  for (int i = 0; i < 16; i++)
+    dest[i] = 0.0f;
+  dest[0] = dest[5] = dest[10] = dest[15] = 1.0f;
+}
+
+void mat4_perspective(float fov_radians, float aspect, float near, float far,
+                      mat4 dest) {
+  for (int i = 0; i < 16; i++)
+    dest[i] = 0.0f;
+  float tanHalfFovy = tanf(fov_radians / 2.0f);
+
+  dest[0] = 1.0f / (aspect * tanHalfFovy);
+  dest[5] = 1.0f / tanHalfFovy;
+  dest[10] = -(far + near) / (far - near);
+  dest[11] = -1.0f;
+  dest[14] = -(2.0f * far * near) / (far - near);
 }
 
 void mat4_lookat(float eye[3], float center[3], float up[3], mat4 dest) {
-    float f[3] = {center[0] - eye[0], center[1] - eye[1], center[2] - eye[2]};
-    float flen = sqrtf(f[0]*f[0] + f[1]*f[1] + f[2]*f[2]);
-    f[0] /= flen; f[1] /= flen; f[2] /= flen;
+  float f[3] = {center[0] - eye[0], center[1] - eye[1], center[2] - eye[2]};
+  float flen = sqrtf(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
+  f[0] /= flen;
+  f[1] /= flen;
+  f[2] /= flen;
 
-    float s[3] = {
-        f[1]*up[2] - f[2]*up[1],
-        f[2]*up[0] - f[0]*up[2],
-        f[0]*up[1] - f[1]*up[0]
-    };
-    float slen = sqrtf(s[0]*s[0] + s[1]*s[1] + s[2]*s[2]);
-    s[0] /= slen; s[1] /= slen; s[2] /= slen;
+  float s[3] = {f[1] * up[2] - f[2] * up[1], f[2] * up[0] - f[0] * up[2],
+                f[0] * up[1] - f[1] * up[0]};
+  float slen = sqrtf(s[0] * s[0] + s[1] * s[1] + s[2] * s[2]);
+  s[0] /= slen;
+  s[1] /= slen;
+  s[2] /= slen;
 
-    float u[3] = {
-        s[1]*f[2] - s[2]*f[1],
-        s[2]*f[0] - s[0]*f[2],
-        s[0]*f[1] - s[1]*f[0]
-    };
+  float u[3] = {s[1] * f[2] - s[2] * f[1], s[2] * f[0] - s[0] * f[2],
+                s[0] * f[1] - s[1] * f[0]};
 
-    mat4_identity(dest);
-    dest[0] = s[0];  dest[4] = s[1];  dest[8]  = s[2];
-    dest[1] = u[0];  dest[5] = u[1];  dest[9]  = u[2];
-    dest[2] = -f[0]; dest[6] = -f[1]; dest[10] = -f[2];
+  mat4_identity(dest);
+  dest[0] = s[0];
+  dest[4] = s[1];
+  dest[8] = s[2];
+  dest[1] = u[0];
+  dest[5] = u[1];
+  dest[9] = u[2];
+  dest[2] = -f[0];
+  dest[6] = -f[1];
+  dest[10] = -f[2];
 
-    dest[12] = -(s[0]*eye[0] + s[1]*eye[1] + s[2]*eye[2]);
-    dest[13] = -(u[0]*eye[0] + u[1]*eye[1] + u[2]*eye[2]);
-    dest[14] =  (f[0]*eye[0] + f[1]*eye[1] + f[2]*eye[2]);
+  dest[12] = -(s[0] * eye[0] + s[1] * eye[1] + s[2] * eye[2]);
+  dest[13] = -(u[0] * eye[0] + u[1] * eye[1] + u[2] * eye[2]);
+  dest[14] = (f[0] * eye[0] + f[1] * eye[1] + f[2] * eye[2]);
 }
 
 void mat4_multiply(mat4 a, mat4 b, mat4 dest) {
-    mat4 res;
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 4; j++) {
-            res[j * 4 + i] = 
-                a[0 * 4 + i] * b[j * 4 + 0] +
-                a[1 * 4 + i] * b[j * 4 + 1] +
-                a[2 * 4 + i] * b[j * 4 + 2] +
-                a[3 * 4 + i] * b[j * 4 + 3];
-        }
+  mat4 res;
+  for (int i = 0; i < 4; i++) {
+    for (int j = 0; j < 4; j++) {
+      res[j * 4 + i] =
+          a[0 * 4 + i] * b[j * 4 + 0] + a[1 * 4 + i] * b[j * 4 + 1] +
+          a[2 * 4 + i] * b[j * 4 + 2] + a[3 * 4 + i] * b[j * 4 + 3];
     }
-    for (int i = 0; i < 16; i++) dest[i] = res[i];
+  }
+  for (int i = 0; i < 16; i++)
+    dest[i] = res[i];
 }
 // ---------------------------
 
 // Camera State Variables
-float cameraPos[]   = { 0.0f, 0.0f,  3.0f };
-float cameraFront[] = { 0.0f, 0.0f, -1.0f };
-float cameraUp[]    = { 0.0f, 1.0f,  0.0f };
+float cameraPos[] = {0.0f, 2.0f, 5.0f};
+float cameraFront[] = {0.0f, 0.0f, -1.0f};
+float cameraUp[] = {0.0f, 1.0f, 0.0f};
 
 // Mouse Look Angles
-float yaw   = -90.0f;
-float pitch =   0.0f;
-float lastX =  400.0f;
-float lastY =  300.0f;
+float yaw = -90.0f;
+float pitch = 0.0f;
+float lastX = 400.0f;
+float lastY = 300.0f;
 int firstMouse = 1;
 
-void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
-    (void)window;
-    if (firstMouse) {
-        lastX = (float)xpos;
-        lastY = (float)ypos;
-        firstMouse = 0;
-    }
-
-    float xoffset = (float)xpos - lastX;
-    float yoffset = lastY - (float)ypos; // Reversed since y-coordinates go from bottom to top
+void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
+  (void)window;
+  if (firstMouse) {
     lastX = (float)xpos;
     lastY = (float)ypos;
+    firstMouse = 0;
+  }
 
-    float sensitivity = 0.1f;
-    xoffset *= sensitivity;
-    yoffset *= sensitivity;
+  float xoffset = (float)xpos - lastX;
+  float yoffset =
+      lastY - (float)ypos; // Reversed since y-coordinates go from bottom to top
+  lastX = (float)xpos;
+  lastY = (float)ypos;
 
-    yaw   += xoffset;
-    pitch += yoffset;
+  float sensitivity = 0.1f;
+  xoffset *= sensitivity;
+  yoffset *= sensitivity;
 
-    if (pitch >  89.0f) pitch =  89.0f;
-    if (pitch < -89.0f) pitch = -89.0f;
+  yaw += xoffset;
+  pitch += yoffset;
 
-    float radYaw = yaw * 3.14159265f / 180.0f;
-    float radPitch = pitch * 3.14159265f / 180.0f;
+  if (pitch > 89.0f)
+    pitch = 89.0f;
+  if (pitch < -89.0f)
+    pitch = -89.0f;
 
-    cameraFront[0] = cosf(radYaw) * cosf(radPitch);
-    cameraFront[1] = sinf(radPitch);
-    cameraFront[2] = sinf(radYaw) * cosf(radPitch);
-    
-    // Normalize front vector
-    float len = sqrtf(cameraFront[0]*cameraFront[0] + cameraFront[1]*cameraFront[1] + cameraFront[2]*cameraFront[2]);
-    cameraFront[0] /= len; cameraFront[1] /= len; cameraFront[2] /= len;
+  float radYaw = yaw * 3.14159265f / 180.0f;
+  float radPitch = pitch * 3.14159265f / 180.0f;
+
+  cameraFront[0] = cosf(radYaw) * cosf(radPitch);
+  cameraFront[1] = sinf(radPitch);
+  cameraFront[2] = sinf(radYaw) * cosf(radPitch);
+
+  // Normalize front vector
+  float len =
+      sqrtf(cameraFront[0] * cameraFront[0] + cameraFront[1] * cameraFront[1] +
+            cameraFront[2] * cameraFront[2]);
+  cameraFront[0] /= len;
+  cameraFront[1] /= len;
+  cameraFront[2] /= len;
 }
 
-const char* vertexShaderSource = 
-    "#version 330 core\n"
-    "layout (location = 0) in vec3 aPos;\n"
-    "layout (location = 1) in vec3 aColor;\n"
-    "out vec3 ourColor;\n"
-    "uniform mat4 mvp;\n"
-    "void main() {\n"
-    "    gl_Position = mvp * vec4(aPos, 1.0);\n"
-    "    ourColor = aColor;\n"
-    "}\0";
+const char *vertexShaderSource = "#version 330 core\n"
+                                 "layout (location = 0) in vec3 aPos;\n"
+                                 "layout (location = 1) in vec3 aColor;\n"
+                                 "out vec3 ourColor;\n"
+                                 "uniform mat4 mvp;\n"
+                                 "void main() {\n"
+                                 "    gl_Position = mvp * vec4(aPos, 1.0);\n"
+                                 "    ourColor = aColor;\n"
+                                 "}\0";
 
 // Simple Fragment Shader: outputs interpolated vertex colors
-const char* fragmentShaderSource = 
-    "#version 330 core\n"
-    "in vec3 ourColor;\n"
-    "out vec4 FragColor;\n"
-    "void main() {\n"
-    "    FragColor = vec4(ourColor, 1.0);\n"
-    "}\0";
+const char *fragmentShaderSource = "#version 330 core\n"
+                                   "in vec3 ourColor;\n"
+                                   "out vec4 FragColor;\n"
+                                   "void main() {\n"
+                                   "    FragColor = vec4(ourColor, 1.0);\n"
+                                   "}\0";
 
 int main(void) {
-    // 1. Initialize GLFW
-    if (!glfwInit()) {
-        fprintf(stderr, "Failed to initialize GLFW\n");
-        return -1;
+  // 1. Initialize GLFW
+  if (!glfwInit()) {
+    fprintf(stderr, "Failed to initialize GLFW\n");
+    return -1;
+  }
+
+  // Configure OpenGL version 3.3 Core Profile
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+  glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
+  // 2. Create Window
+  GLFWwindow *window = glfwCreateWindow(800, 600, "bwildering 0.1", NULL, NULL);
+  if (!window) {
+    fprintf(stderr, "Failed to create GLFW window\n");
+    glfwTerminate();
+    return -1;
+  }
+  glfwMakeContextCurrent(window);
+
+  // Capture the mouse cursor like a game
+  glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+  glfwSetCursorPosCallback(window, mouse_callback);
+
+  glewExperimental = GL_TRUE;
+  glewInit();
+  glEnable(GL_DEPTH_TEST);
+
+  // Shaders
+  GLuint vShader = glCreateShader(GL_VERTEX_SHADER);
+  glShaderSource(vShader, 1, &vertexShaderSource, NULL);
+  glCompileShader(vShader);
+  GLuint fShader = glCreateShader(GL_FRAGMENT_SHADER);
+  glShaderSource(fShader, 1, &fragmentShaderSource, NULL);
+  glCompileShader(fShader);
+  GLuint program = glCreateProgram();
+  glAttachShader(program, vShader);
+  glAttachShader(program, fShader);
+  glLinkProgram(program);
+  glDeleteShader(vShader);
+  glDeleteShader(fShader);
+
+  // 5. Define Cube Vertex Data (Positions + Colors)
+  float vertices[] = {// Positions         // Colors
+                      -0.5f, -0.5f, -0.5f, 0.0f, 0.0f,  0.0f, 0.5f,  -0.5f,
+                      -0.5f, 1.0f,  0.0f,  0.0f, 0.5f,  0.5f, -0.5f, 1.0f,
+                      1.0f,  0.0f,  -0.5f, 0.5f, -0.5f, 0.0f, 1.0f,  0.0f,
+                      -0.5f, -0.5f, 0.5f,  0.0f, 0.0f,  1.0f, 0.5f,  -0.5f,
+                      0.5f,  1.0f,  0.0f,  1.0f, 0.5f,  0.5f, 0.5f,  1.0f,
+                      1.0f,  1.0f,  -0.5f, 0.5f, 0.5f,  0.0f, 1.0f,  1.0f};
+  unsigned int indices[] = {
+      0, 1, 2, 2, 3, 0, // Back
+      4, 5, 6, 6, 7, 4, // Front
+      0, 4, 7, 7, 3, 0, // Left
+      1, 5, 6, 6, 2, 1, // Right
+      3, 2, 6, 6, 7, 3, // Top
+      0, 1, 5, 5, 4, 0  // Bottom
+  };
+
+  GLuint VAO, VBO, EBO;
+  glGenVertexArrays(1, &VAO);
+  glGenBuffers(1, &VBO);
+  glGenBuffers(1, &EBO);
+  glBindVertexArray(VAO);
+  glBindBuffer(GL_ARRAY_BUFFER, VBO);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices,
+               GL_STATIC_DRAW);
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *)0);
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float),
+                        (void *)(3 * sizeof(float)));
+  glEnableVertexAttribArray(1);
+
+  GLint mvpLoc = glGetUniformLocation(program, "mvp");
+
+  float lastFrame = 0.0f;
+
+  while (!glfwWindowShouldClose(window)) {
+    float currentFrame = (float)glfwGetTime();
+    float deltaTime = currentFrame - lastFrame;
+    lastFrame = currentFrame;
+
+    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+      glfwSetWindowShouldClose(window, GLFW_TRUE);
+
+    // WASD Movement
+    float cameraSpeed = 2.5f * deltaTime;
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
+      cameraPos[0] += cameraFront[0] * cameraSpeed;
+      cameraPos[1] += cameraFront[1] * cameraSpeed;
+      cameraPos[2] += cameraFront[2] * cameraSpeed;
+    }
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
+      cameraPos[0] -= cameraFront[0] * cameraSpeed;
+      cameraPos[1] -= cameraFront[1] * cameraSpeed;
+      cameraPos[2] -= cameraFront[2] * cameraSpeed;
+    }
+    // Strafing left/right using cross product approximation
+    float right[3] = {
+        cameraFront[1] * cameraUp[2] - cameraFront[2] * cameraUp[1],
+        cameraFront[2] * cameraUp[0] - cameraFront[0] * cameraUp[2],
+        cameraFront[0] * cameraUp[1] - cameraFront[1] * cameraUp[0]};
+    float rlen =
+        sqrtf(right[0] * right[0] + right[1] * right[1] + right[2] * right[2]);
+    right[0] /= rlen;
+    right[1] /= rlen;
+    right[2] /= rlen;
+
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
+      cameraPos[0] -= right[0] * cameraSpeed;
+      cameraPos[1] -= right[1] * cameraSpeed;
+      cameraPos[2] -= right[2] * cameraSpeed;
+    }
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
+      cameraPos[0] += right[0] * cameraSpeed;
+      cameraPos[1] += right[1] * cameraSpeed;
+      cameraPos[2] += right[2] * cameraSpeed;
     }
 
-    // Configure OpenGL version 3.3 Core Profile
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glClearColor(0.15f, 0.15f, 0.2f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    // 2. Create Window
-    GLFWwindow* window = glfwCreateWindow(800, 600, "bwildering 0.1", NULL, NULL);
-    if (!window) {
-        fprintf(stderr, "Failed to create GLFW window\n");
-        glfwTerminate();
-        return -1;
-    }
-    glfwMakeContextCurrent(window);
+    glUseProgram(program);
 
-    // Capture the mouse cursor like a game
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-    glfwSetCursorPosCallback(window, mouse_callback);
+    // Build matrices
+    mat4 proj, view, mvp;
+    mat4_perspective(3.14159f / 4.0f, 800.0f / 600.0f, 0.1f, 100.0f, proj);
 
-    glewExperimental = GL_TRUE;
-    glewInit();
-    glEnable(GL_DEPTH_TEST);
+    // View matrix pointing from cameraPos toward cameraPos + cameraFront
+    float center[3] = {cameraPos[0] + cameraFront[0],
+                       cameraPos[1] + cameraFront[1],
+                       cameraPos[2] + cameraFront[2]};
+    mat4_lookat(cameraPos, center, cameraUp, view);
 
-    // Shaders
-    GLuint vShader = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vShader, 1, &vertexShaderSource, NULL);
-    glCompileShader(vShader);
-    GLuint fShader = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fShader, 1, &fragmentShaderSource, NULL);
-    glCompileShader(fShader);
-    GLuint program = glCreateProgram();
-    glAttachShader(program, vShader);
-    glAttachShader(program, fShader);
-    glLinkProgram(program);
-    glDeleteShader(vShader);
-    glDeleteShader(fShader);
-
-    // 5. Define Cube Vertex Data (Positions + Colors)
-    float vertices[] = {
-        // Positions         // Colors
-        -0.5f, -0.5f, -0.5f,  0.0f, 0.0f, 0.0f,
-         0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 0.0f,
-         0.5f,  0.5f, -0.5f,  1.0f, 1.0f, 0.0f,
-        -0.5f,  0.5f, -0.5f,  0.0f, 1.0f, 0.0f,
-        -0.5f, -0.5f,  0.5f,  0.0f, 0.0f, 1.0f,
-         0.5f, -0.5f,  0.5f,  1.0f, 0.0f, 1.0f,
-         0.5f,  0.5f,  0.5f,  1.0f, 1.0f, 1.0f,
-        -0.5f,  0.5f,  0.5f,  0.0f, 1.0f, 1.0f
-    };
-    unsigned int indices[] = {
-        0, 1, 2,  2, 3, 0, // Back
-        4, 5, 6,  6, 7, 4, // Front
-        0, 4, 7,  7, 3, 0, // Left
-        1, 5, 6,  6, 2, 1, // Right
-        3, 2, 6,  6, 7, 3, // Top
-        0, 1, 5,  5, 4, 0  // Bottom
-    };
-
-    GLuint VAO, VBO, EBO;
-    glGenVertexArrays(1, &VAO);
-    glGenBuffers(1, &VBO);
-    glGenBuffers(1, &EBO);
     glBindVertexArray(VAO);
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
-    glEnableVertexAttribArray(1);
 
-    GLint mvpLoc = glGetUniformLocation(program, "mvp");
-
-    float lastFrame = 0.0f;
-
-    while (!glfwWindowShouldClose(window)) {
-        float currentFrame = (float)glfwGetTime();
-        float deltaTime = currentFrame - lastFrame;
-        lastFrame = currentFrame;
-
-        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-            glfwSetWindowShouldClose(window, GLFW_TRUE);
-
-        // WASD Movement
-        float cameraSpeed = 2.5f * deltaTime;
-        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
-            cameraPos[0] += cameraFront[0] * cameraSpeed;
-            cameraPos[1] += cameraFront[1] * cameraSpeed;
-            cameraPos[2] += cameraFront[2] * cameraSpeed;
-        }
-        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
-            cameraPos[0] -= cameraFront[0] * cameraSpeed;
-            cameraPos[1] -= cameraFront[1] * cameraSpeed;
-            cameraPos[2] -= cameraFront[2] * cameraSpeed;
-        }
-        // Strafing left/right using cross product approximation
-        float right[3] = {
-            cameraFront[1]*cameraUp[2] - cameraFront[2]*cameraUp[1],
-            cameraFront[2]*cameraUp[0] - cameraFront[0]*cameraUp[2],
-            cameraFront[0]*cameraUp[1] - cameraFront[1]*cameraUp[0]
-        };
-        float rlen = sqrtf(right[0]*right[0] + right[1]*right[1] + right[2]*right[2]);
-        right[0] /= rlen; right[1] /= rlen; right[2] /= rlen;
-
-        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
-            cameraPos[0] -= right[0] * cameraSpeed;
-            cameraPos[1] -= right[1] * cameraSpeed;
-            cameraPos[2] -= right[2] * cameraSpeed;
-        }
-        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
-            cameraPos[0] += right[0] * cameraSpeed;
-            cameraPos[1] += right[1] * cameraSpeed;
-            cameraPos[2] += right[2] * cameraSpeed;
-        }
-
-        glClearColor(0.15f, 0.15f, 0.2f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        glUseProgram(program);
-
-        // Build matrices
-        mat4 proj, view, model, mvp;
-        mat4_perspective(3.14159f / 4.0f, 800.0f / 600.0f, 0.1f, 100.0f, proj);
-
-        // View matrix pointing from cameraPos toward cameraPos + cameraFront
-        float center[3] = {cameraPos[0] + cameraFront[0], cameraPos[1] + cameraFront[1], cameraPos[2] + cameraFront[2]};
-        mat4_lookat(cameraPos, center, cameraUp, view);
-
-        // Position the cube right in front of the starting spawn point (e.g. at x=0, y=0, z=0)
+    // 1. Draw the 8x8x1 Platform blocks at y = -1.0f
+    for (int x = -4; x < 4; x++) {
+      for (int z = -4; z < 4; z++) {
+        mat4 model, temp;
         mat4_identity(model);
+        model[12] = (float)x + 0.5f; // X position
+        model[13] = -1.0f;           // Y position (platform floor)
+        model[14] = (float)z + 0.5f; // Z position
 
-        // Combine MVP = Projection * View * Model
-        mat4 temp;
         mat4_multiply(view, model, temp);
         mat4_multiply(proj, temp, mvp);
 
-        glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, (float*)mvp);
-
-        glBindVertexArray(VAO);
+        glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, (float *)mvp);
         glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
-
-        glfwSwapBuffers(window);
-        glfwPollEvents();
+      }
     }
 
-    glDeleteVertexArrays(1, &VAO);
-    glDeleteBuffers(1, &VBO);
-    glDeleteBuffers(1, &EBO);
-    glDeleteProgram(program);
-    glfwTerminate();
-    return 0;
+    // 2. Draw the original rotating cube hovering at y = 1.0f
+    {
+      mat4 model, rot, temp;
+      mat4_identity(model);
+      model[12] = 0.0f;
+      model[13] = 1.0f; // Floating above the platform
+      model[14] = 0.0f;
+
+      mat4_rotate(rot, (float)glfwGetTime(), 0.5f, 1.0f, 0.0f);
+      mat4_multiply(model, rot, temp);
+      mat4_multiply(view, temp, temp);
+      mat4_multiply(proj, temp, mvp);
+
+      glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, (float *)mvp);
+      glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+    }
+    glfwSwapBuffers(window);
+    glfwPollEvents();
+  }
+
+  glDeleteVertexArrays(1, &VAO);
+  glDeleteBuffers(1, &VBO);
+  glDeleteBuffers(1, &EBO);
+  glDeleteProgram(program);
+  glfwTerminate();
+  return 0;
 }

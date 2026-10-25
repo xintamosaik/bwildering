@@ -238,7 +238,8 @@ void update_camera_front(Camera *camera) {
 
 /** Stores cursor motion for the next frame without changing camera state. */
 void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
-  (void)window;
+  if (glfwGetInputMode(window, GLFW_CURSOR) != GLFW_CURSOR_DISABLED)
+    return;
   if (mouseInput.firstMouse) {
     mouseInput.lastX = xpos;
     mouseInput.lastY = ypos;
@@ -650,6 +651,7 @@ int main(void) {
   */
   // LOOP
   float lastFrame = (float)glfwGetTime();
+  int escapeWasDown = GLFW_FALSE;
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
 
@@ -657,9 +659,18 @@ int main(void) {
     float deltaTime = currentFrame - lastFrame;
     lastFrame = currentFrame;
 
-    // QUIT
-    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-      glfwSetWindowShouldClose(window, GLFW_TRUE);
+    int escapeIsDown = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
+    if (escapeIsDown && !escapeWasDown) {
+      int cursorCaptured =
+          glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED;
+      glfwSetInputMode(window, GLFW_CURSOR,
+                       cursorCaptured ? GLFW_CURSOR_NORMAL
+                                      : GLFW_CURSOR_DISABLED);
+      mouseInput.firstMouse = 1;
+      mouseInput.deltaX = 0.0;
+      mouseInput.deltaY = 0.0;
+    }
+    escapeWasDown = escapeIsDown;
 
 
  

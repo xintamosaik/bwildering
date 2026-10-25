@@ -217,6 +217,37 @@ void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
 }
 
 #pragma endregion
+
+
+
+GLuint create_grass_texture(void) {
+  const int textureWidth = 16;
+  const int textureHeight = 16;
+  unsigned char pixels[16 * 16 * 3];
+
+  for (int y = 0; y < textureHeight; y++) {
+    for (int x = 0; x < textureWidth; x++) {
+      int check = ((x / 4) + (y / 4)) % 2;
+      int index = (y * textureWidth + x) * 3;
+      pixels[index + 0] = check ? 34 : 58;
+      pixels[index + 1] = check ? 139 : 180;
+      pixels[index + 2] = check ? 34 : 58;
+    }
+  }
+
+  GLuint texture;
+  glGenTextures(1, &texture);
+  glBindTexture(GL_TEXTURE_2D, texture);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, textureWidth, textureHeight, 0,
+               GL_RGB, GL_UNSIGNED_BYTE, pixels);
+
+  return texture;
+}
+
 /**
 
 
@@ -236,7 +267,8 @@ void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
 
 (main)
 
-*/    
+*/
+
 int main(void) {
 
   // 1. Initialize GLFW
@@ -400,32 +432,7 @@ const char *fragmentShaderSource =
 
 (texture)
 */
-  unsigned int texture;
-  glGenTextures(1, &texture);
-  glBindTexture(GL_TEXTURE_2D, texture);
-
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-                  GL_NEAREST); // Crisp pixel art look
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-
-  int tw = 16, th = 16;
-  unsigned char *pixels = malloc(tw * th * 3);
-  for (int y = 0; y < th; y++) {
-    for (int x = 0; x < tw; x++) {
-      // Larger 4x4 pixel checker squares eliminate moiré stripes
-      int check = ((x / 4) + (y / 4)) % 2;
-      int index = (y * tw + x) * 3;
-
-      pixels[index + 0] = check ? 34 : 58;   // Red
-      pixels[index + 1] = check ? 139 : 180; // Green (Retro grass)
-      pixels[index + 2] = check ? 34 : 58;   // Blue
-    }
-  }
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, tw, th, 0, GL_RGB, GL_UNSIGNED_BYTE,
-               pixels);
-  free(pixels);
+  GLuint texture = create_grass_texture();
 /**
 
 

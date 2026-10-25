@@ -19,6 +19,8 @@ typedef struct {
   GLuint vbo;
   GLuint outlineVao;
   GLuint outlineVbo;
+  GLuint textVao;
+  GLuint textVbo;
   GLuint program;
   GLint mvpLocation;
   GLint colorLocation;
@@ -33,7 +35,10 @@ typedef struct {
   Renderer renderer;
   World world;
   double lastFrame;
+  double fpsWindowStart;
   double simulationAccumulator;
+  int fpsFrameCount;
+  int fps;
   int jumpWasDown;
   int jumpQueued;
   int escapeWasDown;
@@ -47,6 +52,7 @@ static const Vec3 CENTER = {0.0f, 0.0f, 0.0f};
 static const float BLOCK_SIZE = 1.0f;
 static const double FIXED_DELTA_TIME = 1.0 / 60.0;
 static const double MAX_FRAME_DELTA_TIME = 0.25;
+static const int FPS_TEXT_MAX_CHARS = 16;
 
 #pragma endregion
 
@@ -268,6 +274,10 @@ static void renderer_destroy(Renderer *renderer) {
     glDeleteVertexArrays(1, &renderer->outlineVao);
   if (renderer->outlineVbo != 0)
     glDeleteBuffers(1, &renderer->outlineVbo);
+  if (renderer->textVao != 0)
+    glDeleteVertexArrays(1, &renderer->textVao);
+  if (renderer->textVbo != 0)
+    glDeleteBuffers(1, &renderer->textVbo);
   if (renderer->program != 0)
     glDeleteProgram(renderer->program);
   *renderer = (Renderer){0};
@@ -283,6 +293,19 @@ static int renderer_init(Renderer *renderer) {
     goto fail;
   if (!create_cube_outline_mesh(&renderer->outlineVao, &renderer->outlineVbo))
     goto fail;
+
+  glGenVertexArrays(1, &renderer->textVao);
+  glGenBuffers(1, &renderer->textVbo);
+  if (renderer->textVao == 0 || renderer->textVbo == 0)
+    goto fail;
+  glBindVertexArray(renderer->textVao);
+  glBindBuffer(GL_ARRAY_BUFFER, renderer->textVbo);
+  glBufferData(GL_ARRAY_BUFFER,
+               FPS_TEXT_MAX_CHARS * 5 * 7 * 6 * 3 * sizeof(float), NULL,
+               GL_DYNAMIC_DRAW);
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float),
+                        (void *)0);
+  glEnableVertexAttribArray(0);
 
   renderer->mvpLocation = glGetUniformLocation(renderer->program, "mvp");
   if (renderer->mvpLocation < 0) {
@@ -300,6 +323,126 @@ static int renderer_init(Renderer *renderer) {
 fail:
   renderer_destroy(renderer);
   return 0;
+}
+
+static const unsigned char *font_glyph(char character) {
+  static const unsigned char glyph0[7] = {0x0e, 0x11, 0x13, 0x15,
+                                          0x19, 0x11, 0x0e};
+  static const unsigned char glyph1[7] = {0x04, 0x0c, 0x04, 0x04,
+                                          0x04, 0x04, 0x0e};
+  static const unsigned char glyph2[7] = {0x0e, 0x11, 0x01, 0x02,
+                                          0x04, 0x08, 0x1f};
+  static const unsigned char glyph3[7] = {0x1e, 0x01, 0x01, 0x0e,
+                                          0x01, 0x01, 0x1e};
+  static const unsigned char glyph4[7] = {0x02, 0x06, 0x0a, 0x12,
+                                          0x1f, 0x02, 0x02};
+  static const unsigned char glyph5[7] = {0x1f, 0x10, 0x10, 0x1e,
+                                          0x01, 0x01, 0x1e};
+  static const unsigned char glyph6[7] = {0x0e, 0x10, 0x10, 0x1e,
+                                          0x11, 0x11, 0x0e};
+  static const unsigned char glyph7[7] = {0x1f, 0x01, 0x02, 0x04,
+                                          0x08, 0x08, 0x08};
+  static const unsigned char glyph8[7] = {0x0e, 0x11, 0x11, 0x0e,
+                                          0x11, 0x11, 0x0e};
+  static const unsigned char glyph9[7] = {0x0e, 0x11, 0x11, 0x0f,
+                                          0x01, 0x01, 0x0e};
+  static const unsigned char glyphF[7] = {0x1f, 0x10, 0x10, 0x1e,
+                                          0x10, 0x10, 0x10};
+  static const unsigned char glyphP[7] = {0x1e, 0x11, 0x11, 0x1e,
+                                          0x10, 0x10, 0x10};
+  static const unsigned char glyphS[7] = {0x0f, 0x10, 0x10, 0x0e,
+                                          0x01, 0x01, 0x1e};
+  static const unsigned char glyphColon[7] = {0x00, 0x04, 0x04, 0x00,
+                                              0x04, 0x04, 0x00};
+
+  switch (character) {
+  case '0': return glyph0;
+  case '1': return glyph1;
+  case '2': return glyph2;
+  case '3': return glyph3;
+  case '4': return glyph4;
+  case '5': return glyph5;
+  case '6': return glyph6;
+  case '7': return glyph7;
+  case '8': return glyph8;
+  case '9': return glyph9;
+  case 'F': return glyphF;
+  case 'P': return glyphP;
+  case 'S': return glyphS;
+  case ':': return glyphColon;
+  default: return NULL;
+  }
+}
+
+static int build_text_vertices(const char *text, float shadowOffset,
+                               int framebufferWidth, int framebufferHeight,
+                               float *vertices) {
+  const float pixelSize = 2.0f;
+  const float cellSize = 3.0f;
+  int vertexCount = 0;
+
+  for (int characterIndex = 0; text[characterIndex] != '\0';
+       characterIndex++) {
+    const unsigned char *glyph = font_glyph(text[characterIndex]);
+    if (glyph == NULL)
+      continue;
+    float originX = 16.0f + characterIndex * 18.0f + shadowOffset;
+    float originY = 16.0f + shadowOffset;
+    for (int row = 0; row < 7; row++) {
+      for (int column = 0; column < 5; column++) {
+        if ((glyph[row] & (1u << (4 - column))) == 0)
+          continue;
+        float left = originX + column * cellSize;
+        float top = originY + row * cellSize;
+        float right = left + pixelSize;
+        float bottom = top + pixelSize;
+        const float quad[6][2] = {{left, top}, {right, top}, {right, bottom},
+                                  {left, top}, {right, bottom}, {left, bottom}};
+        for (int vertex = 0; vertex < 6; vertex++) {
+          vertices[vertexCount * 3] =
+              2.0f * quad[vertex][0] / framebufferWidth - 1.0f;
+          vertices[vertexCount * 3 + 1] =
+              1.0f - 2.0f * quad[vertex][1] / framebufferHeight;
+          vertices[vertexCount * 3 + 2] = 0.0f;
+          vertexCount++;
+        }
+      }
+    }
+  }
+  return vertexCount;
+}
+
+static void render_fps(const Renderer *renderer, int fps) {
+  if (renderer->framebufferWidth <= 0 || renderer->framebufferHeight <= 0)
+    return;
+
+  char text[16];
+  snprintf(text, sizeof(text), "FPS: %d", fps);
+  float vertices[FPS_TEXT_MAX_CHARS * 5 * 7 * 6 * 3];
+  mat4 identity;
+  mat4_identity(identity);
+
+  glUseProgram(renderer->program);
+  glUniformMatrix4fv(renderer->mvpLocation, 1, GL_FALSE, (float *)identity);
+  glBindVertexArray(renderer->textVao);
+  glBindBuffer(GL_ARRAY_BUFFER, renderer->textVbo);
+  glDisable(GL_DEPTH_TEST);
+
+  int vertexCount = build_text_vertices(
+      text, 1.0f, renderer->framebufferWidth, renderer->framebufferHeight,
+      vertices);
+  glBufferSubData(GL_ARRAY_BUFFER, 0, vertexCount * 3 * sizeof(float), vertices);
+  glUniform3f(renderer->colorLocation, 0.02f, 0.03f, 0.02f);
+  glDrawArrays(GL_TRIANGLES, 0, vertexCount);
+
+  vertexCount = build_text_vertices(
+      text, 0.0f, renderer->framebufferWidth, renderer->framebufferHeight,
+      vertices);
+  glBufferSubData(GL_ARRAY_BUFFER, 0, vertexCount * 3 * sizeof(float), vertices);
+  glUniform3f(renderer->colorLocation, 0.95f, 0.98f, 0.92f);
+  glDrawArrays(GL_TRIANGLES, 0, vertexCount);
+
+  glEnable(GL_DEPTH_TEST);
 }
 
 static void render_world(const Renderer *renderer, const World *world,
@@ -420,6 +563,10 @@ static int application_init(Application *application) {
     goto fail;
   }
   glfwMakeContextCurrent(application->window);
+  // Keep VSync off while measuring the uncapped development baseline.
+  glfwSwapInterval(0);
+  // For synchronized gameplay, switch the two swap-interval lines:
+  // glfwSwapInterval(1);
 
   glfwSetWindowUserPointer(application->window, application);
   glfwSetCursorPosCallback(application->window, mouse_callback);
@@ -455,6 +602,7 @@ static int application_init(Application *application) {
     goto fail;
   }
   application->lastFrame = glfwGetTime();
+  application->fpsWindowStart = application->lastFrame;
   return 1;
 
 fail:
@@ -473,6 +621,14 @@ static void application_update(Application *application) {
     deltaTime = 0.0;
   if (deltaTime > MAX_FRAME_DELTA_TIME)
     deltaTime = MAX_FRAME_DELTA_TIME;
+
+  application->fpsFrameCount++;
+  double fpsElapsed = currentFrame - application->fpsWindowStart;
+  if (fpsElapsed >= 1.0) {
+    application->fps = (int)(application->fpsFrameCount / fpsElapsed + 0.5);
+    application->fpsFrameCount = 0;
+    application->fpsWindowStart = currentFrame;
+  }
 
   int escapeIsDown = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
   if (escapeIsDown && !application->escapeWasDown) {
@@ -509,6 +665,7 @@ static void application_render(const Application *application) {
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
   render_world(&application->renderer, &application->world,
                &application->player);
+  render_fps(&application->renderer, application->fps);
   glfwSwapBuffers(application->window);
 }
 

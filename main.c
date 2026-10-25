@@ -46,6 +46,14 @@ typedef struct {
 } Application;
 
 typedef struct {
+  GLuint vao;
+  GLuint vbo;
+  GLuint program;
+  GLuint texture;
+  GLint mvpLocation;
+} Renderer;
+
+typedef struct {
   Vec3 position;
   Vec3 size;
 } Block;
@@ -559,19 +567,19 @@ static int run_application(void) {
 
   glEnable(GL_DEPTH_TEST);
 
-  GLuint program = create_shader_program();
-  if (program == 0) {
+  Renderer renderer = {0};
+  renderer.program = create_shader_program();
+  if (renderer.program == 0) {
     glfwDestroyWindow(window);
     glfwTerminate();
     return -1;
   }
  
-  GLuint VAO, VBO;
-  create_cube_mesh(&VAO, &VBO);
-  GLint mvpLoc = glGetUniformLocation(program, "mvp");
+  create_cube_mesh(&renderer.vao, &renderer.vbo);
+  renderer.mvpLocation = glGetUniformLocation(renderer.program, "mvp");
 
  
-  GLuint texture = create_grass_texture();
+  renderer.texture = create_grass_texture();
 
   World world = {0};
   create_platform(&world, PLATFORM_BLOCKS_PER_SIDE, CENTER, BLOCK_SIZE);
@@ -608,7 +616,7 @@ static int run_application(void) {
     glClearColor(0.15f, 0.15f, 0.2f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    glUseProgram(program);
+    glUseProgram(renderer.program);
 
     mat4 proj, view, mvp;
     mat4_perspective(75.0f * (3.14159f / 180.0f), framebufferAspectRatio,
@@ -618,8 +626,8 @@ static int run_application(void) {
     Vec3 target = vec3_add(cameraPosition, application.player.camera.front);
     mat4_lookat(cameraPosition, target, application.player.camera.up, view);
 
-    glBindVertexArray(VAO);
-    glBindTexture(GL_TEXTURE_2D, texture);
+    glBindVertexArray(renderer.vao);
+    glBindTexture(GL_TEXTURE_2D, renderer.texture);
     for (int i = 0; i < world.blockCount; i++) {
       const Block *block = &world.blocks[i];
       mat4 model, temp;
@@ -634,18 +642,18 @@ static int run_application(void) {
       mat4_multiply(view, model, temp);
       mat4_multiply(proj, temp, mvp);
 
-      glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, (float *)mvp);
+      glUniformMatrix4fv(renderer.mvpLocation, 1, GL_FALSE, (float *)mvp);
       glDrawArrays(GL_TRIANGLES, 0, 36);
     }
 
     glfwSwapBuffers(window);
   }
 
-  glDeleteVertexArrays(1, &VAO);
-  glDeleteBuffers(1, &VBO);
-  glDeleteTextures(1, &texture);
+  glDeleteVertexArrays(1, &renderer.vao);
+  glDeleteBuffers(1, &renderer.vbo);
+  glDeleteTextures(1, &renderer.texture);
 
-  glDeleteProgram(program);
+  glDeleteProgram(renderer.program);
   glfwDestroyWindow(window);
   glfwTerminate();
   return 0;

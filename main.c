@@ -121,12 +121,16 @@ float vec3_dot(Vec3 a, Vec3 b) {
 }
 /**
  * Builds a column-major rotation matrix for angle radians around an axis.
- * The axis must be nonzero; the matrix is written to dest.
+ * A zero-length axis produces the identity matrix.
  */
 void mat4_rotate(mat4 dest, float angle, float x, float y, float z) {
   float c = cosf(angle);
   float s = sinf(angle);
   float len = sqrtf(x * x + y * y + z * z);
+  if (len == 0.0f) {
+    mat4_identity(dest);
+    return;
+  }
   x /= len;
   y /= len;
   z /= len;

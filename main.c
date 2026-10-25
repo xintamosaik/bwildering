@@ -59,9 +59,13 @@ Player player = {.position = {.x = 0.0f, .y = 2.0f, .z = 2.0f},
                             .firstMouse = 1}};
 
 /**
- * Math
- */ 
-#pragma region Math
+ * These helpers define the game's basic geometry vocabulary and matrix
+ * conventions. Vectors are represented by Vec3, while matrices are flat
+ * 16-element arrays in column-major order to match OpenGL. Camera and rendering
+ * code use these operations to build transforms without repeating component-wise
+ * arithmetic.
+ */
+#pragma region Vector and matrix utilities
 typedef float mat4[16];
 // --- Forward Declarations ---
 void mat4_identity(mat4 dest);
@@ -196,9 +200,13 @@ void mat4_multiply(mat4 a, mat4 b, mat4 dest) {
 
 
 /**
- * camera
-*/
-#pragma region camera
+ * The camera stores its orientation as yaw and pitch angles, plus a normalized
+ * forward direction used by both movement and view construction. Mouse input
+ * adjusts those angles, clamps pitch to avoid looking straight up or down, and
+ * then refreshes the forward vector so the rest of the frame can use one
+ * consistent orientation.
+ */
+#pragma region Camera input and orientation
 /** Recomputes camera->front from its yaw and pitch, which are measured in degrees. */
 void update_camera_front(Camera *camera) {
   float radYaw = camera->yaw * 3.14159265f / 180.0f;
@@ -471,19 +479,15 @@ int main(void) {
   }
  
 /**
- * 
+ * The cube mesh is shared by every world block, so its vertex positions and UVs
+ * are uploaded once and reused for each draw. This setup creates the VAO/VBO
+ * attribute layout expected by the shaders; the MVP uniform location is kept
+ * alongside it because the render loop uses that program-specific handle.
  */
-#pragma region cube
+#pragma region Cube mesh and shader binding
   GLuint VAO, VBO;
   create_cube_mesh(&VAO, &VBO);
   GLint mvpLoc = glGetUniformLocation(program, "mvp");
-
-
-
-
-
-
-  // Generate a procedural retro checkerboard texture in memory
 #pragma endregion
 
 /**
@@ -582,9 +586,12 @@ int main(void) {
 
  
 /**
- * Movement
+ * Each frame applies horizontal input relative to the camera while keeping the
+ * player on the ground plane, then advances vertical velocity under gravity.
+ * A downward crossing of a block's top surface resolves the landing and marks
+ * the player grounded; jump input is accepted only after that collision check.
  */
-#pragma region movement
+#pragma region Player movement and physics
     // --- Physics & Movement ---
     float cameraSpeed = 4.0f * deltaTime;
 

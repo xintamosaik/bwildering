@@ -55,10 +55,13 @@ typedef struct {
   Vec3 size;
 } Block;
 
-enum { PLATFORM_BLOCKS_PER_SIDE = 32 };
+enum {
+  WORLD_MAX_BLOCKS = 1024,
+  PLATFORM_BLOCKS_PER_SIDE = 32
+};
 
 typedef struct {
-  Block blocks[PLATFORM_BLOCKS_PER_SIDE * PLATFORM_BLOCKS_PER_SIDE];
+  Block blocks[WORLD_MAX_BLOCKS];
   int blockCount;
 } World;
 
@@ -281,12 +284,27 @@ static void update_camera(Camera *camera, MouseInput *input) {
 #pragma endregion
 
 #pragma region World Generation
-static void create_platform(World *world, int blocksPerSide, Vec3 center,
-                            float blockSize) {
+/** Adds one block when capacity remains; a World holds at most WORLD_MAX_BLOCKS. */
+static int world_add_block(World *world, Block block) {
+  if (world == NULL || world->blockCount < 0 ||
+      world->blockCount >= WORLD_MAX_BLOCKS)
+    return 0;
+
+  world->blocks[world->blockCount++] = block;
+  return 1;
+}
+
+/** Creates at most WORLD_MAX_BLOCKS blocks; rejects invalid or oversized sides. */
+static int create_platform(World *world, int blocksPerSide, Vec3 center,
+                           float blockSize) {
+  if (world == NULL || blocksPerSide <= 0 ||
+      blocksPerSide > WORLD_MAX_BLOCKS / blocksPerSide)
+    return 0;
+
   world->blockCount = 0;
   for (int x = 0; x < blocksPerSide; x++) {
     for (int z = 0; z < blocksPerSide; z++) {
-      world->blocks[world->blockCount++] = (Block){
+      Block block = {
           .position =
               {
                   .x = center.x +
@@ -297,8 +315,11 @@ static void create_platform(World *world, int blocksPerSide, Vec3 center,
               },
           .size = {blockSize, blockSize, blockSize},
       };
+      if (!world_add_block(world, block))
+        return 0;
     }
   }
+  return 1;
 }
 #pragma endregion
 
@@ -674,8 +695,12 @@ static int application_init(Application *application) {
   glfwSetFramebufferSizeCallback(application->window,
                                  framebuffer_size_callback);
 
-  create_platform(&application->world, PLATFORM_BLOCKS_PER_SIDE, CENTER,
-                  BLOCK_SIZE);
+  if (!create_platform(&application->world, PLATFORM_BLOCKS_PER_SIDE, CENTER,
+                       BLOCK_SIZE)) {
+    fprintf(stderr, "Failed to create platform: world capacity is %d blocks\n",
+            WORLD_MAX_BLOCKS);
+    goto fail;
+  }
   application->lastFrame = (float)glfwGetTime();
   return 1;
 

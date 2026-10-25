@@ -71,7 +71,10 @@ typedef struct {
   MouseInput mouseInput;
   Renderer renderer;
   World world;
-  float lastFrame;
+  double lastFrame;
+  double simulationAccumulator;
+  int jumpWasDown;
+  int jumpQueued;
   int escapeWasDown;
   int glfwInitialized;
   int rendererInitialized;
@@ -83,6 +86,8 @@ static const Vec3 CENTER = {0.0f, 0.0f, 0.0f};
 static const float GRAVITY = 9.81f;
 /** Width, height, and depth of each default platform block, in world units. */
 static const float BLOCK_SIZE = 1.0f;
+static const double FIXED_DELTA_TIME = 1.0 / 60.0;
+static const double MAX_FRAME_DELTA_TIME = 0.25;
 
 #pragma endregion
 
@@ -324,7 +329,7 @@ static int create_platform(World *world, int blocksPerSide, Vec3 center,
 #pragma endregion
 
 #pragma region Player Physics
-/** Collision resolution handles downward crossings of block top surfaces only. */
+/** Collision resolution handles a point at the player's feet and block tops. */
 static void update_player(Player *updatedPlayer, PlayerInput input,
                           float deltaTime, const World *world) {
   const float moveSpeed = 4.0f;
@@ -339,8 +344,34 @@ static void update_player(Player *updatedPlayer, PlayerInput input,
   updatedPlayer->position =
       vec3_add(updatedPlayer->position, vec3_scale(movement, moveSpeed * deltaTime));
 
+  if (updatedPlayer->grounded) {
+    int hasSupport = 0;
+    for (int i = 0; i < world->blockCount; i++) {
+      const Block *block = &world->blocks[i];
+      float halfWidth = block->size.x / 2.0f;
+      float halfDepth = block->size.z / 2.0f;
+      float blockTop = block->position.y + block->size.y / 2.0f;
+      if (updatedPlayer->position.x >= block->position.x - halfWidth &&
+          updatedPlayer->position.x <= block->position.x + halfWidth &&
+          updatedPlayer->position.z >= block->position.z - halfDepth &&
+          updatedPlayer->position.z <= block->position.z + halfDepth &&
+          fabsf(updatedPlayer->position.y - blockTop) < 0.001f) {
+        hasSupport = 1;
+        break;
+      }
+    }
+    if (!hasSupport)
+      updatedPlayer->grounded = 0;
+  }
+
+  if (input.jump && updatedPlayer->grounded) {
+    updatedPlayer->velocityY = 5.0f;
+    updatedPlayer->grounded = 0;
+  }
+  if (updatedPlayer->grounded)
+    return;
+
   float previousY = updatedPlayer->position.y;
-  updatedPlayer->grounded = 0;
   updatedPlayer->velocityY -= GRAVITY * deltaTime;
   updatedPlayer->position.y += updatedPlayer->velocityY * deltaTime;
 
@@ -360,11 +391,6 @@ static void update_player(Player *updatedPlayer, PlayerInput input,
       updatedPlayer->grounded = 1;
       break;
     }
-  }
-
-  if (input.jump && updatedPlayer->grounded) {
-    updatedPlayer->velocityY = 5.0f;
-    updatedPlayer->grounded = 0;
   }
 }
 #pragma endregion
@@ -701,7 +727,7 @@ static int application_init(Application *application) {
             WORLD_MAX_BLOCKS);
     goto fail;
   }
-  application->lastFrame = (float)glfwGetTime();
+  application->lastFrame = glfwGetTime();
   return 1;
 
 fail:
@@ -713,9 +739,13 @@ static void application_update(Application *application) {
   GLFWwindow *window = application->window;
   glfwPollEvents();
 
-  float currentFrame = (float)glfwGetTime();
-  float deltaTime = currentFrame - application->lastFrame;
+  double currentFrame = glfwGetTime();
+  double deltaTime = currentFrame - application->lastFrame;
   application->lastFrame = currentFrame;
+  if (deltaTime < 0.0)
+    deltaTime = 0.0;
+  if (deltaTime > MAX_FRAME_DELTA_TIME)
+    deltaTime = MAX_FRAME_DELTA_TIME;
 
   int escapeIsDown = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
   if (escapeIsDown && !application->escapeWasDown) {
@@ -732,7 +762,19 @@ static void application_update(Application *application) {
 
   update_camera(&application->player.camera, &application->mouseInput);
   PlayerInput input = read_player_input(window);
-  update_player(&application->player, input, deltaTime, &application->world);
+  if (input.jump && !application->jumpWasDown)
+    application->jumpQueued = 1;
+  application->jumpWasDown = input.jump;
+  input.jump = 0;
+
+  application->simulationAccumulator += deltaTime;
+  while (application->simulationAccumulator >= FIXED_DELTA_TIME) {
+    input.jump = application->jumpQueued;
+    update_player(&application->player, input, (float)FIXED_DELTA_TIME,
+                  &application->world);
+    application->jumpQueued = 0;
+    application->simulationAccumulator -= FIXED_DELTA_TIME;
+  }
 }
 
 static void application_render(const Application *application) {

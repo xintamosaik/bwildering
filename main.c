@@ -4,18 +4,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#pragma region Types & Constants
 typedef struct {
   float x;
   float y;
   float z;
 } Vec3;
-
-Vec3 vec3_add(Vec3 a, Vec3 b);
-Vec3 vec3_sub(Vec3 a, Vec3 b);
-Vec3 vec3_scale(Vec3 v, float scalar);
-Vec3 vec3_normalize(Vec3 v);
-Vec3 vec3_cross(Vec3 a, Vec3 b);
-float vec3_dot(Vec3 a, Vec3 b);
 
 typedef struct {
   float yaw;
@@ -72,16 +66,15 @@ static int framebufferWidth;
 static int framebufferHeight;
 static float framebufferAspectRatio = 4.0f / 3.0f;
 
-/**
- * These helpers define the game's basic geometry vocabulary and matrix
- * conventions. Vectors are represented by Vec3, while matrices are flat
- * 16-element arrays in column-major order to match OpenGL. Camera and rendering
- * code use these operations to build transforms without repeating component-wise
- * arithmetic.
- */
-#pragma region Vector and matrix
+#pragma endregion
+
 typedef float mat4[16];
-// --- Forward Declarations ---
+Vec3 vec3_add(Vec3 a, Vec3 b);
+Vec3 vec3_sub(Vec3 a, Vec3 b);
+Vec3 vec3_scale(Vec3 v, float scalar);
+Vec3 vec3_normalize(Vec3 v);
+Vec3 vec3_cross(Vec3 a, Vec3 b);
+float vec3_dot(Vec3 a, Vec3 b);
 void mat4_identity(mat4 dest);
 void mat4_perspective(float fov_radians, float aspect, float near, float far,
                       mat4 dest);
@@ -89,6 +82,7 @@ void mat4_lookat(Vec3 eye, Vec3 target, Vec3 up, mat4 dest);
 void mat4_rotate(mat4 dest, float angle, float x, float y, float z);
 void mat4_multiply(mat4 a, mat4 b, mat4 dest);
 
+#pragma region Vector Math
 /** Returns the component-wise sum of two vectors. */
 Vec3 vec3_add(Vec3 a, Vec3 b) {
   return (Vec3){a.x + b.x, a.y + b.y, a.z + b.z};
@@ -122,6 +116,10 @@ Vec3 vec3_cross(Vec3 a, Vec3 b) {
 float vec3_dot(Vec3 a, Vec3 b) {
   return a.x * b.x + a.y * b.y + a.z * b.z;
 }
+
+#pragma endregion
+
+#pragma region Matrix Math
 /**
  * Builds a column-major rotation matrix for angle radians around an axis.
  * A zero-length axis produces the identity matrix.
@@ -217,25 +215,7 @@ void mat4_multiply(mat4 a, mat4 b, mat4 dest) {
 #pragma endregion
 
 
-/**
- * The camera stores its orientation as yaw and pitch angles, plus a normalized
- * forward direction used by both movement and view construction. Mouse input
- * adjusts those angles, clamps pitch to avoid looking straight up or down, and
- * then refreshes the forward vector so the rest of the frame can use one
- * consistent orientation.
- */
-#pragma region Camera
-/** Recomputes camera->front from its yaw and pitch, which are measured in degrees. */
-void update_camera_front(Camera *camera) {
-  float radYaw = camera->yaw * 3.14159265f / 180.0f;
-  float radPitch = camera->pitch * 3.14159265f / 180.0f;
-
-  camera->front.x = cosf(radYaw) * cosf(radPitch);
-  camera->front.y = sinf(radPitch);
-  camera->front.z = sinf(radYaw) * cosf(radPitch);
-  camera->front = vec3_normalize(camera->front);
-}
-
+#pragma region Input
 /** Stores cursor motion for the next frame without changing camera state. */
 void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
   if (glfwGetInputMode(window, GLFW_CURSOR) != GLFW_CURSOR_DISABLED)
@@ -253,13 +233,29 @@ void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
   mouseInput.lastY = ypos;
 }
 
-void framebuffer_size_callback(GLFWwindow *window, int width, int height) {
-  (void)window;
-  framebufferWidth = width;
-  framebufferHeight = height;
-  glViewport(0, 0, width, height);
-  if (width > 0 && height > 0)
-    framebufferAspectRatio = (float)width / (float)height;
+/** Converts the current WASD and jump key states into player movement intent. */
+PlayerInput read_player_input(GLFWwindow *window) {
+  PlayerInput input = {0};
+  input.forward = (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) -
+                  (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS);
+  input.strafe = (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) -
+                 (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS);
+  input.jump = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
+  return input;
+}
+
+#pragma endregion
+
+#pragma region Camera
+/** Recomputes camera->front from yaw and pitch, which are measured in degrees. */
+void update_camera_front(Camera *camera) {
+  float radYaw = camera->yaw * 3.14159265f / 180.0f;
+  float radPitch = camera->pitch * 3.14159265f / 180.0f;
+
+  camera->front.x = cosf(radYaw) * cosf(radPitch);
+  camera->front.y = sinf(radPitch);
+  camera->front.z = sinf(radYaw) * cosf(radPitch);
+  camera->front = vec3_normalize(camera->front);
 }
 
 /** Applies accumulated mouse motion to the camera and then clears the deltas. */
@@ -278,25 +274,83 @@ void update_camera(Camera *camera, MouseInput *input) {
   update_camera_front(camera);
 }
 
-/** Converts the current WASD and jump key states into player movement intent. */
-PlayerInput read_player_input(GLFWwindow *window) {
-  PlayerInput input = {0};
-  input.forward = (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) -
-                  (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS);
-  input.strafe = (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) -
-                 (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS);
-  input.jump = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
-  return input;
-}
-
 #pragma endregion
 
+#pragma region World Generation
+/** Fills a caller-provided array with a centered, flat grid of cubic blocks. */
+int create_platform(Block blocks[], int blocksPerSide, Vec3 center,
+                    float blockSize) {
+  int blockCount = 0;
+  for (int x = 0; x < blocksPerSide; x++) {
+    for (int z = 0; z < blocksPerSide; z++) {
+      blocks[blockCount++] = (Block){
+          .position =
+              {
+                  .x = center.x +
+                       ((float)x - blocksPerSide / 2.0f + 0.5f) * blockSize,
+                  .y = center.y - blockSize / 2.0f,
+                  .z = center.z +
+                       ((float)z - blocksPerSide / 2.0f + 0.5f) * blockSize,
+              },
+          .size = {blockSize, blockSize, blockSize},
+      };
+    }
+  }
+  return blockCount;
+}
+#pragma endregion
 
+#pragma region Player Physics
+/** Updates movement, gravity, block-top landing, and jumping. */
+void update_player(Player *updatedPlayer, PlayerInput input, float deltaTime,
+                   const Block blocks[], int blockCount) {
+  const float moveSpeed = 4.0f;
+  Vec3 frontXZ = vec3_normalize(
+      (Vec3){updatedPlayer->camera.front.x, 0.0f, updatedPlayer->camera.front.z});
+  Vec3 right = vec3_normalize(vec3_cross(frontXZ, updatedPlayer->camera.up));
+  Vec3 movement = vec3_add(vec3_scale(frontXZ, input.forward),
+                           vec3_scale(right, input.strafe));
+  if (vec3_dot(movement, movement) > 1.0f)
+    movement = vec3_normalize(movement);
+
+  updatedPlayer->position =
+      vec3_add(updatedPlayer->position, vec3_scale(movement, moveSpeed * deltaTime));
+
+  float previousY = updatedPlayer->position.y;
+  updatedPlayer->grounded = 0;
+  updatedPlayer->velocityY -= GRAVITY * deltaTime;
+  updatedPlayer->position.y += updatedPlayer->velocityY * deltaTime;
+
+  for (int i = 0; i < blockCount; i++) {
+    const Block *block = &blocks[i];
+    float halfWidth = block->size.x / 2.0f;
+    float halfDepth = block->size.z / 2.0f;
+    float blockTop = block->position.y + block->size.y / 2.0f;
+
+    if (updatedPlayer->position.x >= block->position.x - halfWidth &&
+        updatedPlayer->position.x <= block->position.x + halfWidth &&
+        updatedPlayer->position.z >= block->position.z - halfDepth &&
+        updatedPlayer->position.z <= block->position.z + halfDepth &&
+        previousY >= blockTop && updatedPlayer->position.y <= blockTop) {
+      updatedPlayer->position.y = blockTop;
+      updatedPlayer->velocityY = 0.0f;
+      updatedPlayer->grounded = 1;
+      break;
+    }
+  }
+
+  if (input.jump && updatedPlayer->grounded) {
+    updatedPlayer->velocityY = 5.0f;
+    updatedPlayer->grounded = 0;
+  }
+}
+#pragma endregion
 
 /**
  * Creates and uploads the procedural 16x16 grass checker texture.
  * Requires a current OpenGL context; returns the generated texture handle.
  */
+#pragma region Rendering
 GLuint create_grass_texture(void) {
   const int textureWidth = 16;
   const int textureHeight = 16;
@@ -453,82 +507,22 @@ GLuint create_shader_program(void) {
   return program;
 }
 
-/**
- * Fills a caller-provided array with a centered, flat grid of cubic blocks.
- * The array must hold blocksPerSide squared entries; returns the number written.
- */
-int create_platform(Block blocks[], int blocksPerSide, Vec3 center,
-                    float blockSize) {
-  int blockCount = 0;
-  for (int x = 0; x < blocksPerSide; x++) {
-    for (int z = 0; z < blocksPerSide; z++) {
-      blocks[blockCount++] = (Block){
-          .position =
-              {
-                     .x = center.x +
-                       ((float)x - blocksPerSide / 2.0f + 0.5f) * blockSize,
-                  .y = center.y - blockSize / 2.0f,
-                     .z = center.z +
-                       ((float)z - blocksPerSide / 2.0f + 0.5f) * blockSize,
-              },
-          .size = {blockSize, blockSize, blockSize},
-      };
-    }
-  }
-  return blockCount;
-}
+#pragma endregion
 
-/**
- * Applies camera-relative movement, gravity, block-top landing, and jumping.
- * Diagonal input is normalized to keep its speed equal to cardinal movement.
- */
-void update_player(Player *updatedPlayer, PlayerInput input, float deltaTime,
-                   const Block blocks[], int blockCount) {
-  const float moveSpeed = 4.0f;
-  Vec3 frontXZ = vec3_normalize(
-      (Vec3){updatedPlayer->camera.front.x, 0.0f, updatedPlayer->camera.front.z});
-  Vec3 right = vec3_normalize(vec3_cross(frontXZ, updatedPlayer->camera.up));
-  Vec3 movement = vec3_add(vec3_scale(frontXZ, input.forward),
-                           vec3_scale(right, input.strafe));
-  if (vec3_dot(movement, movement) > 1.0f)
-    movement = vec3_normalize(movement);
-
-  updatedPlayer->position =
-      vec3_add(updatedPlayer->position, vec3_scale(movement, moveSpeed * deltaTime));
-
-  float previousY = updatedPlayer->position.y;
-  updatedPlayer->grounded = 0;
-  updatedPlayer->velocityY -= GRAVITY * deltaTime;
-  updatedPlayer->position.y += updatedPlayer->velocityY * deltaTime;
-
-  for (int i = 0; i < blockCount; i++) {
-    const Block *block = &blocks[i];
-    float halfWidth = block->size.x / 2.0f;
-    float halfDepth = block->size.z / 2.0f;
-    float blockTop = block->position.y + block->size.y / 2.0f;
-
-    if (updatedPlayer->position.x >= block->position.x - halfWidth &&
-        updatedPlayer->position.x <= block->position.x + halfWidth &&
-        updatedPlayer->position.z >= block->position.z - halfDepth &&
-        updatedPlayer->position.z <= block->position.z + halfDepth &&
-        previousY >= blockTop && updatedPlayer->position.y <= blockTop) {
-      updatedPlayer->position.y = blockTop;
-      updatedPlayer->velocityY = 0.0f;
-      updatedPlayer->grounded = 1;
-      break;
-    }
-  }
-
-  if (input.jump && updatedPlayer->grounded) {
-    updatedPlayer->velocityY = 5.0f;
-    updatedPlayer->grounded = 0;
-  }
+#pragma region Application
+void framebuffer_size_callback(GLFWwindow *window, int width, int height) {
+  (void)window;
+  framebufferWidth = width;
+  framebufferHeight = height;
+  glViewport(0, 0, width, height);
+  if (width > 0 && height > 0)
+    framebufferAspectRatio = (float)width / (float)height;
 }
 
 /**
 
 
-
+                                                               
                                                               
   ▄▒ ▄▄▄▄       ▄▄▄▄                             ▄▒ ▄▄▄▄      
 ▄▀▓▄▀▀   ▀░▄  ▄▀▀   ▀░▄         ▄▄▄▄        ▄▒ ▄▀▓▄▀▀   ▀░▄   
@@ -547,7 +541,7 @@ void update_player(Player *updatedPlayer, PlayerInput input, float deltaTime,
 */
 
 /** Initializes the window and OpenGL resources, runs the game loop, then cleans up. */
-int main(void) {
+static int run_application(void) {
 
   // 1. Initialize GLFW
   if (!glfwInit()) {
@@ -616,11 +610,9 @@ int main(void) {
  * attribute layout expected by the shaders; the MVP uniform location is kept
  * alongside it because the render loop uses that program-specific handle.
  */
-#pragma region Cube mesh shader
   GLuint VAO, VBO;
   create_cube_mesh(&VAO, &VBO);
   GLint mvpLoc = glGetUniformLocation(program, "mvp");
-#pragma endregion
 
  
   GLuint texture = create_grass_texture();
@@ -680,12 +672,9 @@ int main(void) {
  * A downward crossing of a block's top surface resolves the landing and marks
  * the player grounded; jump input is accepted only after that collision check.
  */
-#pragma region Player moves physics
     update_camera(&player.camera, &mouseInput);
     PlayerInput input = read_player_input(window);
     update_player(&player, input, deltaTime, blocks, blockCount);
-
-#pragma endregion
 
     glClearColor(0.15f, 0.15f, 0.2f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -734,3 +723,9 @@ int main(void) {
   glfwTerminate();
   return 0;
 }
+
+#pragma endregion
+
+#pragma region Main
+int main(void) { return run_application(); }
+#pragma endregion

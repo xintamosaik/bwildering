@@ -460,7 +460,30 @@ const char *fragmentShaderSource =
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, tw, th, 0, GL_RGB, GL_UNSIGNED_BYTE,
                pixels);
   free(pixels);
+/**
 
+
+
+
+  ▄▄▒           ▄▄                                  ▄▄▒                        
+▀▓▓              ▓▓                               ▀▓▓          ▄░              
+ ▓█  ▄▄▄▄        █▓         ▄▄▄▄           ▄▄▄▄    ▓█         ▐░░      ▄▄▄▄    
+▄██▄▀▀   ▀░▄    ▄██      ▄▓▀    ▀░▄     ▄░▀   ▀█▄ ▄██        ▄░▀    ▄▒▀    ▀░▄ 
+ █░▌      ▐░░   ▐░█     ▒▓▌      ▐▓▓   ░░▌     ▀   █░  ▄▄▄▄▀▀        ▌      ▐░▒
+ ██        █░▌   ██    ▐▓░        █▓▌ ▐░█          ██▄▀▀   ▀░▄    ▐ ▓       ▀  
+ ██        ██▌   ██    ▐█░        ▓▓▌ ▐██          ██▌      ▐░░   ▐▓▓▌         
+ ▓█        ▓█▌   █▓    ▐░░        ▓░▌ ▐█▓          ▓█        █░▌   ▀░█▄▄▄▄     
+ ▓█        ▓█▌   ░░    ▐▓░         ░▌ ▐█▓          ▓█        ██▌    ▄   ▀▀▀▀██▄
+ ██▌      ▐▓▓    ░█     ▓▓▌      ▐░░   ▓▓▌     ██  ██        ▓█▌   ▓▓▌      ▐█▓
+▄██▀▄▄   ▄▒▀    ░░░▌     ▀▓▄░   ▄░▀     ▀▒▄   ▄█▀ ▄██        ▓█▌    ▀░▄    ▄▓▀ 
+ █▒▀ ▀▀▀▀       ▀▒░▐        ▀▀▀▀           ▀▀▀▀             ▐▓▓        ▀▀▀▀    
+
+
+
+
+ 
+  (blocks)
+*/
   const int PLATFORM_BLOCKS_PER_SIDE = 8;
   Block blocks[PLATFORM_BLOCKS_PER_SIDE * PLATFORM_BLOCKS_PER_SIDE];
   int blockCount = 0;

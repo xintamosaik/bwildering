@@ -13,6 +13,11 @@ typedef struct {
 typedef struct {
   float yaw;
   float pitch;
+  Vec3 front;
+  Vec3 up;
+  float lastX;
+  float lastY;
+  int firstMouse;
 } Camera;
 
 typedef struct {
@@ -34,7 +39,13 @@ const float BLOCK_SIZE = 1.0f;
 
 Player player = {.position = {.x = 0.0f, .y = 2.0f, .z = 2.0f},
                  .eyeHeight = 1.0f,
-                 .camera = {.yaw = -90.0f, .pitch = 0.0f}};
+                 .camera = {.yaw = -90.0f,
+                            .pitch = 0.0f,
+                            .front = {.x = 0.0f, .y = 0.0f, .z = -1.0f},
+                            .up = {.x = 0.0f, .y = 1.0f, .z = 0.0f},
+                            .lastX = 400.0f,
+                            .lastY = 300.0f,
+                            .firstMouse = 1}};
 
 /**
 
@@ -61,7 +72,7 @@ typedef float mat4[16];
 void mat4_identity(mat4 dest);
 void mat4_perspective(float fov_radians, float aspect, float near, float far,
                       mat4 dest);
-void mat4_lookat(Vec3 eye, float center[3], float up[3], mat4 dest);
+void mat4_lookat(Vec3 eye, Vec3 center, Vec3 up, mat4 dest);
 void mat4_rotate(mat4 dest, float angle, float x, float y, float z);
 void mat4_multiply(mat4 a, mat4 b, mat4 dest);
 
@@ -105,15 +116,15 @@ void mat4_perspective(float fov_radians, float aspect, float near, float far,
   dest[14] = -(2.0f * far * near) / (far - near);
 }
 
-void mat4_lookat(Vec3 eye, float center[3], float up[3], mat4 dest) {
-  float f[3] = {center[0] - eye.x, center[1] - eye.y, center[2] - eye.z};
+void mat4_lookat(Vec3 eye, Vec3 center, Vec3 up, mat4 dest) {
+  float f[3] = {center.x - eye.x, center.y - eye.y, center.z - eye.z};
   float flen = sqrtf(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
   f[0] /= flen;
   f[1] /= flen;
   f[2] /= flen;
 
-  float s[3] = {f[1] * up[2] - f[2] * up[1], f[2] * up[0] - f[0] * up[2],
-                f[0] * up[1] - f[1] * up[0]};
+  float s[3] = {f[1] * up.z - f[2] * up.y, f[2] * up.x - f[0] * up.z,
+                f[0] * up.y - f[1] * up.x};
   float slen = sqrtf(s[0] * s[0] + s[1] * s[1] + s[2] * s[2]);
   s[0] /= slen;
   s[1] /= slen;
@@ -172,30 +183,19 @@ void mat4_multiply(mat4 a, mat4 b, mat4 dest) {
 
 (camera)
 */
-// Camera State Variables
-// float cameraPos[] = {0.0f, 2.0f, 2.0f};
-float cameraFront[] = {0.0f, 0.0f, -1.0f};
-float cameraUp[] = {0.0f, 1.0f, 0.0f};
-
-// Mouse Look Angles
- 
-float lastX = 400.0f;
-float lastY = 300.0f;
-int firstMouse = 1;
-
 void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
   (void)window;
-  if (firstMouse) {
-    lastX = (float)xpos;
-    lastY = (float)ypos;
-    firstMouse = 0;
+  if (player.camera.firstMouse) {
+    player.camera.lastX = (float)xpos;
+    player.camera.lastY = (float)ypos;
+    player.camera.firstMouse = 0;
   }
 
-  float xoffset = (float)xpos - lastX;
+  float xoffset = (float)xpos - player.camera.lastX;
   float yoffset =
-      lastY - (float)ypos; // Reversed since y-coordinates go from bottom to top
-  lastX = (float)xpos;
-  lastY = (float)ypos;
+      player.camera.lastY - (float)ypos; // Reversed since y-coordinates go from bottom to top
+  player.camera.lastX = (float)xpos;
+  player.camera.lastY = (float)ypos;
 
   float sensitivity = 0.1f;
   xoffset *= sensitivity;
@@ -212,17 +212,18 @@ void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
   float radYaw = player.camera.yaw * 3.14159265f / 180.0f;
   float radPitch = player.camera.pitch * 3.14159265f / 180.0f;
 
-  cameraFront[0] = cosf(radYaw) * cosf(radPitch);
-  cameraFront[1] = sinf(radPitch);
-  cameraFront[2] = sinf(radYaw) * cosf(radPitch);
+  player.camera.front.x = cosf(radYaw) * cosf(radPitch);
+  player.camera.front.y = sinf(radPitch);
+  player.camera.front.z = sinf(radYaw) * cosf(radPitch);
 
   // Normalize front vector
   float len =
-      sqrtf(cameraFront[0] * cameraFront[0] + cameraFront[1] * cameraFront[1] +
-            cameraFront[2] * cameraFront[2]);
-  cameraFront[0] /= len;
-  cameraFront[1] /= len;
-  cameraFront[2] /= len;
+      sqrtf(player.camera.front.x * player.camera.front.x +
+        player.camera.front.y * player.camera.front.y +
+        player.camera.front.z * player.camera.front.z);
+      player.camera.front.x /= len;
+      player.camera.front.y /= len;
+      player.camera.front.z /= len;
 }
 
 /**
@@ -532,39 +533,42 @@ const char *fragmentShaderSource =
     float cameraSpeed = 4.0f * deltaTime;
 
     // Horizontal movement vectors (ignore Y component so player stays level)
-    float frontXZ[3] = {cameraFront[0], 0.0f, cameraFront[2]};
-    float f_len = sqrtf(frontXZ[0] * frontXZ[0] + frontXZ[2] * frontXZ[2]);
+    Vec3 frontXZ = {player.camera.front.x, 0.0f, player.camera.front.z};
+    float f_len = sqrtf(frontXZ.x * frontXZ.x + frontXZ.z * frontXZ.z);
     if (f_len > 0.0f) {
-      frontXZ[0] /= f_len;
-      frontXZ[2] /= f_len;
+      frontXZ.x /= f_len;
+      frontXZ.z /= f_len;
     }
 
-    float right[3] = {frontXZ[1] * cameraUp[2] - frontXZ[2] * cameraUp[1],
-                      frontXZ[2] * cameraUp[0] - frontXZ[0] * cameraUp[2],
-                      frontXZ[0] * cameraUp[1] - frontXZ[1] * cameraUp[0]};
+    Vec3 right = {frontXZ.y * player.camera.up.z -
+                      frontXZ.z * player.camera.up.y,
+                  frontXZ.z * player.camera.up.x -
+                      frontXZ.x * player.camera.up.z,
+                  frontXZ.x * player.camera.up.y -
+                      frontXZ.y * player.camera.up.x};
     float r_len =
-        sqrtf(right[0] * right[0] + right[1] * right[1] + right[2] * right[2]);
+        sqrtf(right.x * right.x + right.y * right.y + right.z * right.z);
     if (r_len > 0.0f) {
-      right[0] /= r_len;
-      right[2] /= r_len;
+      right.x /= r_len;
+      right.z /= r_len;
     }
 
     // WASD Input (XZ plane only)
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
-      player.position.x += frontXZ[0] * cameraSpeed;
-      player.position.z += frontXZ[2] * cameraSpeed;
+      player.position.x += frontXZ.x * cameraSpeed;
+      player.position.z += frontXZ.z * cameraSpeed;
     }
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
-      player.position.x -= frontXZ[0] * cameraSpeed;
-      player.position.z -= frontXZ[2] * cameraSpeed;
+      player.position.x -= frontXZ.x * cameraSpeed;
+      player.position.z -= frontXZ.z * cameraSpeed;
     }
     if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
-      player.position.x -= right[0] * cameraSpeed;
-      player.position.z -= right[2] * cameraSpeed;
+      player.position.x -= right.x * cameraSpeed;
+      player.position.z -= right.z * cameraSpeed;
     }
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
-      player.position.x += right[0] * cameraSpeed;
-      player.position.z += right[2] * cameraSpeed;
+      player.position.x += right.x * cameraSpeed;
+      player.position.z += right.z * cameraSpeed;
     }
 
     float previousY = player.position.y;
@@ -610,10 +614,10 @@ const char *fragmentShaderSource =
                      proj);
     Vec3 cameraPosition = player.position;
     cameraPosition.y += player.eyeHeight;
-    float center[3] = {cameraPosition.x + cameraFront[0],
-                       cameraPosition.y + cameraFront[1],
-                       cameraPosition.z + cameraFront[2]};
-    mat4_lookat(cameraPosition, center, cameraUp, view);
+    Vec3 center = {cameraPosition.x + player.camera.front.x,
+             cameraPosition.y + player.camera.front.y,
+             cameraPosition.z + player.camera.front.z};
+    mat4_lookat(cameraPosition, center, player.camera.up, view);
 
     glBindVertexArray(VAO);
     glBindTexture(GL_TEXTURE_2D, texture);

@@ -40,10 +40,14 @@ typedef struct {
   Vec3 size;
 } Block;
 
+/** World-space origin used to center the starter platform. */
 const Vec3 CENTER = {0.0f, 0.0f, 0.0f};
+/** Downward acceleration in world units per second squared. */
 const float GRAVITY = 9.81f;
+/** Width, height, and depth of each default platform block, in world units. */
 const float BLOCK_SIZE = 1.0f;
 
+/** Shared player state updated by the input callback and game loop. */
 Player player = {.position = {.x = 0.0f, .y = 2.0f, .z = 2.0f},
                  .eyeHeight = 1.0f,
                  .camera = {.yaw = -90.0f,

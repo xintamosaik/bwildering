@@ -50,6 +50,13 @@ typedef struct {
   Vec3 size;
 } Block;
 
+enum { PLATFORM_BLOCKS_PER_SIDE = 32 };
+
+typedef struct {
+  Block blocks[PLATFORM_BLOCKS_PER_SIDE * PLATFORM_BLOCKS_PER_SIDE];
+  int blockCount;
+} World;
+
 /** World-space origin used to center the starter platform. */
 static const Vec3 CENTER = {0.0f, 0.0f, 0.0f};
 /** Downward acceleration in world units per second squared. */
@@ -261,12 +268,12 @@ static void update_camera(Camera *camera, MouseInput *input) {
 #pragma endregion
 
 #pragma region World Generation
-static int create_platform(Block blocks[], int blocksPerSide, Vec3 center,
-                           float blockSize) {
-  int blockCount = 0;
+static void create_platform(World *world, int blocksPerSide, Vec3 center,
+                            float blockSize) {
+  world->blockCount = 0;
   for (int x = 0; x < blocksPerSide; x++) {
     for (int z = 0; z < blocksPerSide; z++) {
-      blocks[blockCount++] = (Block){
+      world->blocks[world->blockCount++] = (Block){
           .position =
               {
                   .x = center.x +
@@ -279,15 +286,13 @@ static int create_platform(Block blocks[], int blocksPerSide, Vec3 center,
       };
     }
   }
-  return blockCount;
 }
 #pragma endregion
 
 #pragma region Player Physics
 /** Collision resolution handles downward crossings of block top surfaces only. */
 static void update_player(Player *updatedPlayer, PlayerInput input,
-                          float deltaTime, const Block blocks[],
-                          int blockCount) {
+                          float deltaTime, const World *world) {
   const float moveSpeed = 4.0f;
   Vec3 frontXZ = vec3_normalize(
       (Vec3){updatedPlayer->camera.front.x, 0.0f, updatedPlayer->camera.front.z});
@@ -305,8 +310,8 @@ static void update_player(Player *updatedPlayer, PlayerInput input,
   updatedPlayer->velocityY -= GRAVITY * deltaTime;
   updatedPlayer->position.y += updatedPlayer->velocityY * deltaTime;
 
-  for (int i = 0; i < blockCount; i++) {
-    const Block *block = &blocks[i];
+  for (int i = 0; i < world->blockCount; i++) {
+    const Block *block = &world->blocks[i];
     float halfWidth = block->size.x / 2.0f;
     float halfDepth = block->size.z / 2.0f;
     float blockTop = block->position.y + block->size.y / 2.0f;
@@ -568,10 +573,8 @@ static int run_application(void) {
  
   GLuint texture = create_grass_texture();
 
-  const int PLATFORM_BLOCKS_PER_SIDE = 32;
-  Block blocks[PLATFORM_BLOCKS_PER_SIDE * PLATFORM_BLOCKS_PER_SIDE];
-  int blockCount = create_platform(blocks, PLATFORM_BLOCKS_PER_SIDE, CENTER,
-                                   BLOCK_SIZE);
+  World world = {0};
+  create_platform(&world, PLATFORM_BLOCKS_PER_SIDE, CENTER, BLOCK_SIZE);
 
  
   float lastFrame = (float)glfwGetTime();
@@ -600,7 +603,7 @@ static int run_application(void) {
  
     update_camera(&application.player.camera, &application.mouseInput);
     PlayerInput input = read_player_input(window);
-    update_player(&application.player, input, deltaTime, blocks, blockCount);
+    update_player(&application.player, input, deltaTime, &world);
 
     glClearColor(0.15f, 0.15f, 0.2f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -617,8 +620,8 @@ static int run_application(void) {
 
     glBindVertexArray(VAO);
     glBindTexture(GL_TEXTURE_2D, texture);
-    for (int i = 0; i < blockCount; i++) {
-      Block *block = &blocks[i];
+    for (int i = 0; i < world.blockCount; i++) {
+      const Block *block = &world.blocks[i];
       mat4 model, temp;
       mat4_identity(model);
       model[0] = block->size.x;

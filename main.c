@@ -3,11 +3,13 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+
 typedef struct {
   float x;
   float y;
   float z;
 } Vec3;
+
 typedef struct {
   float yaw;
   float pitch;
@@ -26,14 +28,14 @@ typedef struct {
   Vec3 size;
 } Block;
 
+const Vec3 CENTER = {0.0f, 0.0f, 0.0f};
+const float GRAVITY = 9.81f;
+const float BLOCK_SIZE = 1.0f;
+
 Player player = {.position = {.x = 0.0f, .y = 2.0f, .z = 2.0f},
                  .eyeHeight = 1.0f,
                  .camera = {.yaw = -90.0f, .pitch = 0.0f}};
 
-const float gravity = 9.81f;
-const float platformSurfaceY = 1.0f;
-const float platformBlockSize = 1.0f;
-const int PLATFORM_BLOCKS_PER_SIDE = 8;
 // --- Tiny Custom Math Backend (id Software style) ---
 typedef float mat4[16];
 // --- Forward Declarations ---
@@ -340,6 +342,7 @@ int main(void) {
                pixels);
   free(pixels);
 
+  const int PLATFORM_BLOCKS_PER_SIDE = 8;
   Block blocks[PLATFORM_BLOCKS_PER_SIDE * PLATFORM_BLOCKS_PER_SIDE];
   int blockCount = 0;
   for (int x = 0; x < PLATFORM_BLOCKS_PER_SIDE; x++) {
@@ -348,12 +351,12 @@ int main(void) {
           .position =
               {
                   .x = (float)x - PLATFORM_BLOCKS_PER_SIDE / 2.0f +
-                       platformBlockSize / 2.0f,
-                  .y = platformSurfaceY - platformBlockSize / 2.0f,
+                       BLOCK_SIZE / 2.0f,
+                  .y = CENTER.y - BLOCK_SIZE / 2.0f,
                   .z = (float)z - PLATFORM_BLOCKS_PER_SIDE / 2.0f +
-                       platformBlockSize / 2.0f,
+                       BLOCK_SIZE / 2.0f,
               },
-          .size = {platformBlockSize, platformBlockSize, platformBlockSize},
+          .size = {BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE},
       };
     }
   }
@@ -409,7 +412,7 @@ int main(void) {
     player.grounded = 0;
 
     // Apply Gravity
-    player.velocityY -= gravity * deltaTime;
+    player.velocityY -= GRAVITY * deltaTime;
     player.position.y += player.velocityY * deltaTime;
 
     for (int i = 0; i < blockCount; i++) {

@@ -1,6 +1,8 @@
 #ifndef GAME_LOGIC_H
 #define GAME_LOGIC_H
 
+#include <stdint.h>
+
 typedef struct {
   float x;
   float y;
@@ -28,9 +30,18 @@ typedef struct {
   int jump;
 } PlayerInput;
 
+typedef enum {
+  BLOCK_TYPE_GRASS,
+  BLOCK_TYPE_STONE,
+  BLOCK_TYPE_WATER,
+  BLOCK_TYPE_SAND,
+  BLOCK_TYPE_COUNT
+} BlockType;
+
 typedef struct {
   Vec3 position;
   Vec3 size;
+  BlockType type;
 } Block;
 
 enum { WORLD_MAX_BLOCKS = 1024, PLATFORM_BLOCKS_PER_SIDE = 32 };
@@ -55,8 +66,9 @@ void mat4_lookat(Vec3 eye, Vec3 target, Vec3 up, mat4 dest);
 void mat4_rotate(mat4 dest, float angle, float x, float y, float z);
 void mat4_multiply(mat4 a, mat4 b, mat4 dest);
 int world_add_block(World *world, Block block);
+int block_type_color(BlockType type, Vec3 *color);
 int create_platform(World *world, int blocksPerSide, Vec3 center,
-                    float blockSize);
+                    float blockSize, uint32_t seed);
 void update_player(Player *updatedPlayer, PlayerInput input, float deltaTime,
                    const World *world);
 

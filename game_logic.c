@@ -4,6 +4,21 @@
 #include <stddef.h>
 
 static const float GRAVITY = 9.81f;
+static const Vec3 BLOCK_TYPE_COLORS[BLOCK_TYPE_COUNT] = {
+  [BLOCK_TYPE_GRASS] = {0.38f, 0.62f, 0.42f},
+  [BLOCK_TYPE_STONE] = {0.55f, 0.58f, 0.60f},
+  [BLOCK_TYPE_WATER] = {0.20f, 0.48f, 0.78f},
+  [BLOCK_TYPE_SAND] = {0.86f, 0.72f, 0.42f},
+};
+
+static uint32_t next_random(uint32_t *state) {
+  uint32_t value = *state;
+  value ^= value << 13;
+  value ^= value >> 17;
+  value ^= value << 5;
+  *state = value;
+  return value;
+}
 
 Vec3 vec3_add(Vec3 a, Vec3 b) {
   return (Vec3){a.x + b.x, a.y + b.y, a.z + b.z};
@@ -30,6 +45,14 @@ Vec3 vec3_cross(Vec3 a, Vec3 b) {
 }
 
 float vec3_dot(Vec3 a, Vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+
+int block_type_color(BlockType type, Vec3 *color) {
+  if (color == NULL || type < BLOCK_TYPE_GRASS || type >= BLOCK_TYPE_COUNT)
+    return 0;
+
+  *color = BLOCK_TYPE_COLORS[type];
+  return 1;
+}
 
 void mat4_rotate(mat4 dest, float angle, float x, float y, float z) {
   float c = cosf(angle);
@@ -111,7 +134,8 @@ void mat4_multiply(mat4 a, mat4 b, mat4 dest) {
 
 int world_add_block(World *world, Block block) {
   if (world == NULL || world->blockCount < 0 ||
-      world->blockCount >= WORLD_MAX_BLOCKS)
+      world->blockCount >= WORLD_MAX_BLOCKS ||
+      block.type < BLOCK_TYPE_GRASS || block.type >= BLOCK_TYPE_COUNT)
     return 0;
 
   world->blocks[world->blockCount++] = block;
@@ -119,12 +143,26 @@ int world_add_block(World *world, Block block) {
 }
 
 int create_platform(World *world, int blocksPerSide, Vec3 center,
-                    float blockSize) {
+                    float blockSize, uint32_t seed) {
   if (world == NULL || blocksPerSide <= 0 ||
       blocksPerSide > WORLD_MAX_BLOCKS / blocksPerSide)
     return 0;
 
+  int totalBlocks = blocksPerSide * blocksPerSide;
+  BlockType blockTypes[WORLD_MAX_BLOCKS];
+  for (int i = 0; i < totalBlocks; i++)
+    blockTypes[i] = (BlockType)(i % BLOCK_TYPE_COUNT);
+
+  uint32_t randomState = seed == 0 ? UINT32_C(0x6D2B79F5) : seed;
+  for (int i = totalBlocks - 1; i > 0; i--) {
+    int swapIndex = (int)(next_random(&randomState) % (uint32_t)(i + 1));
+    BlockType type = blockTypes[i];
+    blockTypes[i] = blockTypes[swapIndex];
+    blockTypes[swapIndex] = type;
+  }
+
   world->blockCount = 0;
+  int blockIndex = 0;
   for (int x = 0; x < blocksPerSide; x++) {
     for (int z = 0; z < blocksPerSide; z++) {
       Block block = {
@@ -137,6 +175,7 @@ int create_platform(World *world, int blocksPerSide, Vec3 center,
                        ((float)z - blocksPerSide / 2.0f + 0.5f) * blockSize,
               },
           .size = {blockSize, blockSize, blockSize},
+                .type = blockTypes[blockIndex++],
       };
       if (!world_add_block(world, block))
         return 0;

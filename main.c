@@ -3,6 +3,7 @@
 #include "game_logic.h"
 #include <math.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 
 #pragma region Types & Constants
@@ -50,6 +51,7 @@ typedef struct {
 static const Vec3 CENTER = {0.0f, 0.0f, 0.0f};
 /** Width, height, and depth of each default platform block, in world units. */
 static const float BLOCK_SIZE = 1.0f;
+static const uint32_t WORLD_SEED = UINT32_C(0x4B1D2A37);
 static const double FIXED_DELTA_TIME = 1.0 / 60.0;
 static const double MAX_FRAME_DELTA_TIME = 0.25;
 static const int FPS_TEXT_MAX_CHARS = 16;
@@ -464,6 +466,10 @@ static void render_world(const Renderer *renderer, const World *world,
 
   for (int i = 0; i < world->blockCount; i++) {
     const Block *block = &world->blocks[i];
+    Vec3 color;
+    if (!block_type_color(block->type, &color))
+      continue;
+
     mat4 model, temp;
     mat4_identity(model);
     model[0] = block->size.x;
@@ -477,7 +483,7 @@ static void render_world(const Renderer *renderer, const World *world,
     mat4_multiply(proj, temp, mvp);
 
     glBindVertexArray(renderer->vao);
-    glUniform3f(renderer->colorLocation, 0.38f, 0.62f, 0.42f);
+    glUniform3f(renderer->colorLocation, color.x, color.y, color.z);
     glUniformMatrix4fv(renderer->mvpLocation, 1, GL_FALSE, (float *)mvp);
     glDrawArrays(GL_TRIANGLES, 0, 36);
 
@@ -596,7 +602,7 @@ static int application_init(Application *application) {
                                  framebuffer_size_callback);
 
   if (!create_platform(&application->world, PLATFORM_BLOCKS_PER_SIDE, CENTER,
-                       BLOCK_SIZE)) {
+                       BLOCK_SIZE, WORLD_SEED)) {
     fprintf(stderr, "Failed to create platform: world capacity is %d blocks\n",
             WORLD_MAX_BLOCKS);
     goto fail;

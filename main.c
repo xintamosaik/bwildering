@@ -65,7 +65,7 @@ Player player = {.position = {.x = 0.0f, .y = 2.0f, .z = 2.0f},
  * code use these operations to build transforms without repeating component-wise
  * arithmetic.
  */
-#pragma region Vector and matrix utilities
+#pragma region Vector and matrix
 typedef float mat4[16];
 // --- Forward Declarations ---
 void mat4_identity(mat4 dest);
@@ -206,7 +206,7 @@ void mat4_multiply(mat4 a, mat4 b, mat4 dest) {
  * then refreshes the forward vector so the rest of the frame can use one
  * consistent orientation.
  */
-#pragma region Camera input and orientation
+#pragma region Camera
 /** Recomputes camera->front from its yaw and pitch, which are measured in degrees. */
 void update_camera_front(Camera *camera) {
   float radYaw = camera->yaw * 3.14159265f / 180.0f;
@@ -413,6 +413,29 @@ GLuint create_shader_program(void) {
 }
 
 /**
+ * Fills a caller-provided array with a centered, flat grid of cubic blocks.
+ * The array must hold blocksPerSide squared entries; returns the number written.
+ */
+int create_platform(Block blocks[], int blocksPerSide, Vec3 center,
+                    float blockSize) {
+  int blockCount = 0;
+  for (int x = 0; x < blocksPerSide; x++) {
+    for (int z = 0; z < blocksPerSide; z++) {
+      blocks[blockCount++] = (Block){
+          .position =
+              {
+                  .x = (float)x - blocksPerSide / 2.0f + blockSize / 2.0f,
+                  .y = center.y - blockSize / 2.0f,
+                  .z = (float)z - blocksPerSide / 2.0f + blockSize / 2.0f,
+              },
+          .size = {blockSize, blockSize, blockSize},
+      };
+    }
+  }
+  return blockCount;
+}
+
+/**
 
 
 
@@ -484,7 +507,7 @@ int main(void) {
  * attribute layout expected by the shaders; the MVP uniform location is kept
  * alongside it because the render loop uses that program-specific handle.
  */
-#pragma region Cube mesh and shader binding
+#pragma region Cube mesh shader
   GLuint VAO, VBO;
   create_cube_mesh(&VAO, &VBO);
   GLint mvpLoc = glGetUniformLocation(program, "mvp");
@@ -534,24 +557,10 @@ int main(void) {
  
   (blocks)
 */
-  const int PLATFORM_BLOCKS_PER_SIDE = 8;
+  const int PLATFORM_BLOCKS_PER_SIDE = 32;
   Block blocks[PLATFORM_BLOCKS_PER_SIDE * PLATFORM_BLOCKS_PER_SIDE];
-  int blockCount = 0;
-  for (int x = 0; x < PLATFORM_BLOCKS_PER_SIDE; x++) {
-    for (int z = 0; z < PLATFORM_BLOCKS_PER_SIDE; z++) {
-      blocks[blockCount++] = (Block){
-          .position =
-              {
-                  .x = (float)x - PLATFORM_BLOCKS_PER_SIDE / 2.0f +
-                       BLOCK_SIZE / 2.0f,
-                  .y = CENTER.y - BLOCK_SIZE / 2.0f,
-                  .z = (float)z - PLATFORM_BLOCKS_PER_SIDE / 2.0f +
-                       BLOCK_SIZE / 2.0f,
-              },
-          .size = {BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE},
-      };
-    }
-  }
+  int blockCount = create_platform(blocks, PLATFORM_BLOCKS_PER_SIDE, CENTER,
+                                   BLOCK_SIZE);
 
   /**
   
@@ -591,7 +600,7 @@ int main(void) {
  * A downward crossing of a block's top surface resolves the landing and marks
  * the player grounded; jump input is accepted only after that collision check.
  */
-#pragma region Player movement and physics
+#pragma region Player moves physics
     // --- Physics & Movement ---
     float cameraSpeed = 4.0f * deltaTime;
 

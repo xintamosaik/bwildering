@@ -46,20 +46,20 @@ typedef struct {
 } Block;
 
 /** World-space origin used to center the starter platform. */
-const Vec3 CENTER = {0.0f, 0.0f, 0.0f};
+static const Vec3 CENTER = {0.0f, 0.0f, 0.0f};
 /** Downward acceleration in world units per second squared. */
-const float GRAVITY = 9.81f;
+static const float GRAVITY = 9.81f;
 /** Width, height, and depth of each default platform block, in world units. */
-const float BLOCK_SIZE = 1.0f;
+static const float BLOCK_SIZE = 1.0f;
 
-Player player = {.position = {.x = 0.0f, .y = 2.0f, .z = 2.0f},
-                 .eyeHeight = 1.0f,
-                 .camera = {.yaw = -90.0f,
-                            .pitch = 0.0f,
-                            .front = {.x = 0.0f, .y = 0.0f, .z = -1.0f},
-                            .up = {.x = 0.0f, .y = 1.0f, .z = 0.0f}}};
+static Player player = {.position = {.x = 0.0f, .y = 2.0f, .z = 2.0f},
+                        .eyeHeight = 1.0f,
+                        .camera = {.yaw = -90.0f,
+                                   .pitch = 0.0f,
+                                   .front = {.x = 0.0f, .y = 0.0f, .z = -1.0f},
+                                   .up = {.x = 0.0f, .y = 1.0f, .z = 0.0f}}};
 
-MouseInput mouseInput = {.firstMouse = 1};
+static MouseInput mouseInput = {.firstMouse = 1};
 static int framebufferWidth;
 static int framebufferHeight;
 static float framebufferAspectRatio = 4.0f / 3.0f;
@@ -67,45 +67,45 @@ static float framebufferAspectRatio = 4.0f / 3.0f;
 #pragma endregion
 
 typedef float mat4[16];
-Vec3 vec3_add(Vec3 a, Vec3 b);
-Vec3 vec3_sub(Vec3 a, Vec3 b);
-Vec3 vec3_scale(Vec3 v, float scalar);
-Vec3 vec3_normalize(Vec3 v);
-Vec3 vec3_cross(Vec3 a, Vec3 b);
-float vec3_dot(Vec3 a, Vec3 b);
-void mat4_identity(mat4 dest);
-void mat4_perspective(float fov_radians, float aspect, float near, float far,
-                      mat4 dest);
-void mat4_lookat(Vec3 eye, Vec3 target, Vec3 up, mat4 dest);
-void mat4_rotate(mat4 dest, float angle, float x, float y, float z);
-void mat4_multiply(mat4 a, mat4 b, mat4 dest);
+static Vec3 vec3_add(Vec3 a, Vec3 b);
+static Vec3 vec3_sub(Vec3 a, Vec3 b);
+static Vec3 vec3_scale(Vec3 v, float scalar);
+static Vec3 vec3_normalize(Vec3 v);
+static Vec3 vec3_cross(Vec3 a, Vec3 b);
+static float vec3_dot(Vec3 a, Vec3 b);
+static void mat4_identity(mat4 dest);
+static void mat4_perspective(float fov_radians, float aspect, float near,
+                             float far, mat4 dest);
+static void mat4_lookat(Vec3 eye, Vec3 target, Vec3 up, mat4 dest);
+static void mat4_rotate(mat4 dest, float angle, float x, float y, float z);
+static void mat4_multiply(mat4 a, mat4 b, mat4 dest);
 
 #pragma region Vector Math
-Vec3 vec3_add(Vec3 a, Vec3 b) {
+static Vec3 vec3_add(Vec3 a, Vec3 b) {
   return (Vec3){a.x + b.x, a.y + b.y, a.z + b.z};
 }
 
-Vec3 vec3_sub(Vec3 a, Vec3 b) {
+static Vec3 vec3_sub(Vec3 a, Vec3 b) {
   return (Vec3){a.x - b.x, a.y - b.y, a.z - b.z};
 }
 
-Vec3 vec3_scale(Vec3 v, float scalar) {
+static Vec3 vec3_scale(Vec3 v, float scalar) {
   return (Vec3){v.x * scalar, v.y * scalar, v.z * scalar};
 }
 
-Vec3 vec3_normalize(Vec3 v) {
+static Vec3 vec3_normalize(Vec3 v) {
   float length = sqrtf(vec3_dot(v, v));
   if (length == 0.0f)
     return (Vec3){0.0f, 0.0f, 0.0f};
   return vec3_scale(v, 1.0f / length);
 }
 
-Vec3 vec3_cross(Vec3 a, Vec3 b) {
+static Vec3 vec3_cross(Vec3 a, Vec3 b) {
   return (Vec3){a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z,
                 a.x * b.y - a.y * b.x};
 }
 
-float vec3_dot(Vec3 a, Vec3 b) {
+static float vec3_dot(Vec3 a, Vec3 b) {
   return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
@@ -115,7 +115,7 @@ float vec3_dot(Vec3 a, Vec3 b) {
 /**
  * A zero-length axis produces the identity matrix.
  */
-void mat4_rotate(mat4 dest, float angle, float x, float y, float z) {
+static void mat4_rotate(mat4 dest, float angle, float x, float y, float z) {
   float c = cosf(angle);
   float s = sinf(angle);
   float len = sqrtf(x * x + y * y + z * z);
@@ -140,7 +140,7 @@ void mat4_rotate(mat4 dest, float angle, float x, float y, float z) {
   dest[10] = z * z * ic + c;
 }
 
-void mat4_identity(mat4 dest) {
+static void mat4_identity(mat4 dest) {
   for (int i = 0; i < 16; i++)
     dest[i] = 0.0f;
   dest[0] = dest[5] = dest[10] = dest[15] = 1.0f;
@@ -149,8 +149,8 @@ void mat4_identity(mat4 dest) {
 /**
  * Requires 0 < fov_radians < pi, aspect > 0, and 0 < near < far.
  */
-void mat4_perspective(float fov_radians, float aspect, float near, float far,
-                      mat4 dest) {
+static void mat4_perspective(float fov_radians, float aspect, float near,
+                             float far, mat4 dest) {
   for (int i = 0; i < 16; i++)
     dest[i] = 0.0f;
   float tanHalfFovy = tanf(fov_radians / 2.0f);
@@ -165,7 +165,7 @@ void mat4_perspective(float fov_radians, float aspect, float near, float far,
 /**
  * eye and target must differ, and up must not be parallel to the view direction.
  */
-void mat4_lookat(Vec3 eye, Vec3 target, Vec3 up, mat4 dest) {
+static void mat4_lookat(Vec3 eye, Vec3 target, Vec3 up, mat4 dest) {
   Vec3 f = vec3_normalize(vec3_sub(target, eye));
   Vec3 s = vec3_normalize(vec3_cross(f, up));
   Vec3 u = vec3_cross(s, f);
@@ -186,7 +186,7 @@ void mat4_lookat(Vec3 eye, Vec3 target, Vec3 up, mat4 dest) {
   dest[14] = vec3_dot(f, eye);
 }
 
-void mat4_multiply(mat4 a, mat4 b, mat4 dest) {
+static void mat4_multiply(mat4 a, mat4 b, mat4 dest) {
   mat4 res;
   for (int i = 0; i < 4; i++) {
     for (int j = 0; j < 4; j++) {
@@ -203,7 +203,7 @@ void mat4_multiply(mat4 a, mat4 b, mat4 dest) {
 
 
 #pragma region Input
-void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
+static void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
   if (glfwGetInputMode(window, GLFW_CURSOR) != GLFW_CURSOR_DISABLED)
     return;
   if (mouseInput.firstMouse) {
@@ -219,7 +219,7 @@ void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
   mouseInput.lastY = ypos;
 }
 
-PlayerInput read_player_input(GLFWwindow *window) {
+static PlayerInput read_player_input(GLFWwindow *window) {
   PlayerInput input = {0};
   input.forward = (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) -
                   (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS);
@@ -232,7 +232,7 @@ PlayerInput read_player_input(GLFWwindow *window) {
 #pragma endregion
 
 #pragma region Camera
-void update_camera_front(Camera *camera) {
+static void update_camera_front(Camera *camera) {
   float radYaw = camera->yaw * 3.14159265f / 180.0f;
   float radPitch = camera->pitch * 3.14159265f / 180.0f;
 
@@ -242,7 +242,7 @@ void update_camera_front(Camera *camera) {
   camera->front = vec3_normalize(camera->front);
 }
 
-void update_camera(Camera *camera, MouseInput *input) {
+static void update_camera(Camera *camera, MouseInput *input) {
   const float sensitivity = 0.1f;
   camera->yaw += (float)input->deltaX * sensitivity;
   camera->pitch += (float)input->deltaY * sensitivity;
@@ -260,8 +260,8 @@ void update_camera(Camera *camera, MouseInput *input) {
 #pragma endregion
 
 #pragma region World Generation
-int create_platform(Block blocks[], int blocksPerSide, Vec3 center,
-                    float blockSize) {
+static int create_platform(Block blocks[], int blocksPerSide, Vec3 center,
+                           float blockSize) {
   int blockCount = 0;
   for (int x = 0; x < blocksPerSide; x++) {
     for (int z = 0; z < blocksPerSide; z++) {
@@ -284,8 +284,9 @@ int create_platform(Block blocks[], int blocksPerSide, Vec3 center,
 
 #pragma region Player Physics
 /** Collision resolution handles downward crossings of block top surfaces only. */
-void update_player(Player *updatedPlayer, PlayerInput input, float deltaTime,
-                   const Block blocks[], int blockCount) {
+static void update_player(Player *updatedPlayer, PlayerInput input,
+                          float deltaTime, const Block blocks[],
+                          int blockCount) {
   const float moveSpeed = 4.0f;
   Vec3 frontXZ = vec3_normalize(
       (Vec3){updatedPlayer->camera.front.x, 0.0f, updatedPlayer->camera.front.z});
@@ -329,7 +330,7 @@ void update_player(Player *updatedPlayer, PlayerInput input, float deltaTime,
 #pragma endregion
 
 #pragma region Rendering
-GLuint create_grass_texture(void) {
+static GLuint create_grass_texture(void) {
   const int textureWidth = 16;
   const int textureHeight = 16;
   unsigned char pixels[16 * 16 * 3];
@@ -358,7 +359,7 @@ GLuint create_grass_texture(void) {
 }
 
 /** Requires a current OpenGL context and valid output pointers. */
-void create_cube_mesh(GLuint *vao, GLuint *vbo) {
+static void create_cube_mesh(GLuint *vao, GLuint *vbo) {
   const float vertices[] = {
       -0.5f, -0.5f, -0.5f, 0.0f, 0.0f, 0.5f, -0.5f, -0.5f, 1.0f, 0.0f, 0.5f,
       0.5f, -0.5f, 1.0f, 1.0f, 0.5f, 0.5f, -0.5f, 1.0f, 1.0f, -0.5f, 0.5f,
@@ -419,7 +420,7 @@ static GLuint compile_shader(GLenum type, const char *source) {
   return shader;
 }
 
-GLuint create_shader_program(void) {
+static GLuint create_shader_program(void) {
   const char *vertexShaderSource =
       "#version 330 core\n"
       "layout (location = 0) in vec3 aPos;\n"
@@ -480,7 +481,8 @@ GLuint create_shader_program(void) {
 #pragma endregion
 
 #pragma region Application
-void framebuffer_size_callback(GLFWwindow *window, int width, int height) {
+static void framebuffer_size_callback(GLFWwindow *window, int width,
+                                      int height) {
   (void)window;
   framebufferWidth = width;
   framebufferHeight = height;

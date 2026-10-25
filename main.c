@@ -22,9 +22,6 @@ typedef struct {
   float pitch;
   Vec3 front;
   Vec3 up;
-  float lastX;
-  float lastY;
-  int firstMouse;
 } Camera;
 
 typedef struct {
@@ -40,6 +37,14 @@ typedef struct {
   float strafe;
   int jump;
 } PlayerInput;
+
+typedef struct {
+  double lastX;
+  double lastY;
+  double deltaX;
+  double deltaY;
+  int firstMouse;
+} MouseInput;
 
 typedef struct {
   Vec3 position;
@@ -59,10 +64,10 @@ Player player = {.position = {.x = 0.0f, .y = 2.0f, .z = 2.0f},
                  .camera = {.yaw = -90.0f,
                             .pitch = 0.0f,
                             .front = {.x = 0.0f, .y = 0.0f, .z = -1.0f},
-                            .up = {.x = 0.0f, .y = 1.0f, .z = 0.0f},
-                            .lastX = 400.0f,
-                            .lastY = 300.0f,
-                            .firstMouse = 1}};
+                            .up = {.x = 0.0f, .y = 1.0f, .z = 0.0f}}};
+
+/** Cursor events accumulate here until the game loop consumes them. */
+MouseInput mouseInput = {.firstMouse = 1};
 
 /**
  * These helpers define the game's basic geometry vocabulary and matrix
@@ -224,34 +229,36 @@ void update_camera_front(Camera *camera) {
   camera->front = vec3_normalize(camera->front);
 }
 
-/** Updates the global player's camera angles and direction from cursor motion. */
+/** Stores cursor motion for the next frame without changing camera state. */
 void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
   (void)window;
-  if (player.camera.firstMouse) {
-    player.camera.lastX = (float)xpos;
-    player.camera.lastY = (float)ypos;
-    player.camera.firstMouse = 0;
+  if (mouseInput.firstMouse) {
+    mouseInput.lastX = xpos;
+    mouseInput.lastY = ypos;
+    mouseInput.firstMouse = 0;
+    return;
   }
 
-  float xoffset = (float)xpos - player.camera.lastX;
-  float yoffset =
-      player.camera.lastY - (float)ypos; // Reversed since y-coordinates go from bottom to top
-  player.camera.lastX = (float)xpos;
-  player.camera.lastY = (float)ypos;
+  mouseInput.deltaX += xpos - mouseInput.lastX;
+  mouseInput.deltaY += mouseInput.lastY - ypos;
+  mouseInput.lastX = xpos;
+  mouseInput.lastY = ypos;
+}
 
-  float sensitivity = 0.1f;
-  xoffset *= sensitivity;
-  yoffset *= sensitivity;
+/** Applies accumulated mouse motion to the camera and then clears the deltas. */
+void update_camera(Camera *camera, MouseInput *input) {
+  const float sensitivity = 0.1f;
+  camera->yaw += (float)input->deltaX * sensitivity;
+  camera->pitch += (float)input->deltaY * sensitivity;
+  input->deltaX = 0.0;
+  input->deltaY = 0.0;
 
-  player.camera.yaw += xoffset;
-  player.camera.pitch += yoffset;
+  if (camera->pitch > 89.0f)
+    camera->pitch = 89.0f;
+  if (camera->pitch < -89.0f)
+    camera->pitch = -89.0f;
 
-  if (player.camera.pitch > 89.0f)
-    player.camera.pitch = 89.0f;
-  if (player.camera.pitch < -89.0f)
-    player.camera.pitch = -89.0f;
-
-  update_camera_front(&player.camera);
+  update_camera_front(camera);
 }
 
 /** Converts the current WASD and jump key states into player movement intent. */
@@ -607,6 +614,8 @@ int main(void) {
   // LOOP
   float lastFrame = 0.0f;
   while (!glfwWindowShouldClose(window)) {
+    glfwPollEvents();
+
     float currentFrame = (float)glfwGetTime();
     float deltaTime = currentFrame - lastFrame;
     lastFrame = currentFrame;
@@ -624,6 +633,7 @@ int main(void) {
  * the player grounded; jump input is accepted only after that collision check.
  */
 #pragma region Player moves physics
+    update_camera(&player.camera, &mouseInput);
     PlayerInput input = read_player_input(window);
     update_player(&player, input, deltaTime, blocks, blockCount);
 
@@ -665,7 +675,6 @@ int main(void) {
     }
 
     glfwSwapBuffers(window);
-    glfwPollEvents();
   }
 
   glDeleteVertexArrays(1, &VAO);

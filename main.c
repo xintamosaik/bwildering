@@ -17,9 +17,11 @@ typedef struct {
 typedef struct {
   GLuint vao;
   GLuint vbo;
+  GLuint outlineVao;
+  GLuint outlineVbo;
   GLuint program;
-  GLuint texture;
   GLint mvpLocation;
+  GLint colorLocation;
   int framebufferWidth;
   int framebufferHeight;
 } Renderer;
@@ -110,36 +112,6 @@ static void update_camera(Camera *camera, MouseInput *input) {
 #pragma endregion
 
 #pragma region Rendering
-static GLuint create_grass_texture(void) {
-  const int textureWidth = 16;
-  const int textureHeight = 16;
-  unsigned char pixels[16 * 16 * 3];
-
-  for (int y = 0; y < textureHeight; y++) {
-    for (int x = 0; x < textureWidth; x++) {
-      int check = ((x / 4) + (y / 4)) % 2;
-      int index = (y * textureWidth + x) * 3;
-      pixels[index + 0] = check ? 34 : 58;
-      pixels[index + 1] = check ? 139 : 180;
-      pixels[index + 2] = check ? 34 : 58;
-    }
-  }
-
-  GLuint texture;
-  glGenTextures(1, &texture);
-  if (texture == 0)
-    return 0;
-  glBindTexture(GL_TEXTURE_2D, texture);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, textureWidth, textureHeight, 0,
-               GL_RGB, GL_UNSIGNED_BYTE, pixels);
-
-  return texture;
-}
-
 /** Requires a current OpenGL context and valid output pointers. */
 static int create_cube_mesh(GLuint *vao, GLuint *vbo) {
   const float vertices[] = {
@@ -182,6 +154,34 @@ static int create_cube_mesh(GLuint *vao, GLuint *vbo) {
   return 1;
 }
 
+static int create_cube_outline_mesh(GLuint *vao, GLuint *vbo) {
+  const float vertices[] = {
+      -0.5f, -0.5f, -0.5f, 0.5f, -0.5f, -0.5f,
+      0.5f, -0.5f, -0.5f, 0.5f, 0.5f, -0.5f,
+      0.5f, 0.5f, -0.5f, -0.5f, 0.5f, -0.5f,
+      -0.5f, 0.5f, -0.5f, -0.5f, -0.5f, -0.5f,
+      -0.5f, -0.5f, 0.5f, 0.5f, -0.5f, 0.5f,
+      0.5f, -0.5f, 0.5f, 0.5f, 0.5f, 0.5f,
+      0.5f, 0.5f, 0.5f, -0.5f, 0.5f, 0.5f,
+      -0.5f, 0.5f, 0.5f, -0.5f, -0.5f, 0.5f,
+      -0.5f, -0.5f, -0.5f, -0.5f, -0.5f, 0.5f,
+      0.5f, -0.5f, -0.5f, 0.5f, -0.5f, 0.5f,
+      0.5f, 0.5f, -0.5f, 0.5f, 0.5f, 0.5f,
+      -0.5f, 0.5f, -0.5f, -0.5f, 0.5f, 0.5f,
+  };
+
+  glGenVertexArrays(1, vao);
+  glGenBuffers(1, vbo);
+  if (*vao == 0 || *vbo == 0)
+    return 0;
+  glBindVertexArray(*vao);
+  glBindBuffer(GL_ARRAY_BUFFER, *vbo);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *)0);
+  glEnableVertexAttribArray(0);
+  return 1;
+}
+
 static GLuint compile_shader(GLenum type, const char *source) {
   GLuint shader = glCreateShader(type);
   if (shader == 0) {
@@ -209,21 +209,17 @@ static GLuint create_shader_program(void) {
   const char *vertexShaderSource =
       "#version 330 core\n"
       "layout (location = 0) in vec3 aPos;\n"
-      "layout (location = 1) in vec2 aTexCoord;\n"
-      "out vec2 TexCoord;\n"
       "uniform mat4 mvp;\n"
       "void main() {\n"
       "    gl_Position = mvp * vec4(aPos, 1.0);\n"
-      "    TexCoord = aTexCoord;\n"
       "}\n";
 
   const char *fragmentShaderSource =
       "#version 330 core\n"
-      "in vec2 TexCoord;\n"
       "out vec4 FragColor;\n"
-      "uniform sampler2D ourTexture;\n"
+      "uniform vec3 color;\n"
       "void main() {\n"
-      "    FragColor = texture(ourTexture, TexCoord);\n"
+      "    FragColor = vec4(color, 1.0);\n"
       "}\n";
 
   GLuint vertexShader = compile_shader(GL_VERTEX_SHADER, vertexShaderSource);
@@ -268,8 +264,10 @@ static void renderer_destroy(Renderer *renderer) {
     glDeleteVertexArrays(1, &renderer->vao);
   if (renderer->vbo != 0)
     glDeleteBuffers(1, &renderer->vbo);
-  if (renderer->texture != 0)
-    glDeleteTextures(1, &renderer->texture);
+  if (renderer->outlineVao != 0)
+    glDeleteVertexArrays(1, &renderer->outlineVao);
+  if (renderer->outlineVbo != 0)
+    glDeleteBuffers(1, &renderer->outlineVbo);
   if (renderer->program != 0)
     glDeleteProgram(renderer->program);
   *renderer = (Renderer){0};
@@ -283,16 +281,19 @@ static int renderer_init(Renderer *renderer) {
 
   if (!create_cube_mesh(&renderer->vao, &renderer->vbo))
     goto fail;
+  if (!create_cube_outline_mesh(&renderer->outlineVao, &renderer->outlineVbo))
+    goto fail;
 
   renderer->mvpLocation = glGetUniformLocation(renderer->program, "mvp");
   if (renderer->mvpLocation < 0) {
     fprintf(stderr, "Failed to locate mvp uniform\n");
     goto fail;
   }
-
-  renderer->texture = create_grass_texture();
-  if (renderer->texture == 0)
+  renderer->colorLocation = glGetUniformLocation(renderer->program, "color");
+  if (renderer->colorLocation < 0) {
+    fprintf(stderr, "Failed to locate color uniform\n");
     goto fail;
+  }
 
   return 1;
 
@@ -318,8 +319,6 @@ static void render_world(const Renderer *renderer, const World *world,
   Vec3 target = vec3_add(cameraPosition, player->camera.front);
   mat4_lookat(cameraPosition, target, player->camera.up, view);
 
-  glBindVertexArray(renderer->vao);
-  glBindTexture(GL_TEXTURE_2D, renderer->texture);
   for (int i = 0; i < world->blockCount; i++) {
     const Block *block = &world->blocks[i];
     mat4 model, temp;
@@ -334,8 +333,20 @@ static void render_world(const Renderer *renderer, const World *world,
     mat4_multiply(view, model, temp);
     mat4_multiply(proj, temp, mvp);
 
+    glBindVertexArray(renderer->vao);
+    glUniform3f(renderer->colorLocation, 0.38f, 0.62f, 0.42f);
     glUniformMatrix4fv(renderer->mvpLocation, 1, GL_FALSE, (float *)mvp);
     glDrawArrays(GL_TRIANGLES, 0, 36);
+
+    model[0] *= 1.015f;
+    model[5] *= 1.015f;
+    model[10] *= 1.015f;
+    mat4_multiply(view, model, temp);
+    mat4_multiply(proj, temp, mvp);
+    glBindVertexArray(renderer->outlineVao);
+    glUniform3f(renderer->colorLocation, 0.08f, 0.12f, 0.09f);
+    glUniformMatrix4fv(renderer->mvpLocation, 1, GL_FALSE, (float *)mvp);
+    glDrawArrays(GL_LINES, 0, 24);
   }
 }
 

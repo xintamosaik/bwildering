@@ -36,7 +36,26 @@ Player player = {.position = {.x = 0.0f, .y = 2.0f, .z = 2.0f},
                  .eyeHeight = 1.0f,
                  .camera = {.yaw = -90.0f, .pitch = 0.0f}};
 
-// --- Tiny Custom Math Backend (id Software style) ---
+/**
+
+
+                                           ▄▄       ▄▄▒         
+  ▄▒ ▄▄▄▄       ▄▄▄▄                        ▓▓▀   ▀▓▓           
+▄▀▓▄▀▀   ▀░▄  ▄▀▀   ▀░▄         ▄▄▄▄        █▓     ▓█  ▄▄▄▄     
+ ░░▌      ▐░░░       ▐▓▓     ▄░▀   ▀▀▄██▄  ▄██▄▄▄ ▄██▄▀▀   ▀░▄  
+ ░         ░█▌        █▓▌   ░░▌      ▐░█   ▐░█▀    █░▌      ▐░░ 
+  ▓        ██▌        ░▓▌  ▐░█        ██    ██     ██        █░▌
+ ▓▓        ▒█▌        ░ ▌  ▐██        ██    ██     ██        ██▌
+ ▒█        ▓▓▌        ▓▓▌  ▐█▓        █▓    █▓     ▓█        ▓█▌
+ ▓░        █▓▌        ░▄▌  ▐█▓        █▓    ░░     ▓█        ▓█▌
+▄█░       ▄▓▓▌       ▄░░▌   ▓▓▌      ▐██    ░█     ██       ▐▓▓ 
+ ▀▄        ▀▒▌        ▀▄▌    ▀▒▄   ▄▄▀██▄  ░░░▌   ▄██       ▒▀  
+   ▀░        ▀░         ▀░      ▀▀▀▀       ▀▒░▐                 
+
+
+(math)
+
+*/
 typedef float mat4[16];
 // --- Forward Declarations ---
 void mat4_identity(mat4 dest);
@@ -132,15 +151,34 @@ void mat4_multiply(mat4 a, mat4 b, mat4 dest) {
     dest[i] = res[i];
 }
 // ---------------------------
+/**
 
+
+
+
+                                                                       ▄▒ ▄▄▄▄                    
+                             ▄▒ ▄▄▄▄       ▄▄▄▄                      ▄▒█▄▀▀   ▀▒▄                 
+     ▄▄▄▄        ▄▄▄▄      ▄▀▓▄▀▀   ▀░▄  ▄▀▀   ▀░▄         ▄▄▄▄       ░░▌      ▐▓█       ▄▄▄▄     
+  ▄░▀   ▀█▄   ▄░▀   ▀▀▄██▄  ░░▌      ▐░░░       ▐▓▓     ▄░▀    ▀▒▄    █▓        ██▌   ▄░▀   ▀▀▄██▄
+ ░░▌     ▀   ░░▌      ▐░█   ░         ░█▌        █▓▌   ▒░▌      ▐     ▓▓        █░▌  ░░▌      ▐░█ 
+▐░█         ▐░█        ██    ▓        ██▌        ░▓▌  ▐▓         ▓ ▌  ▀▓        ░░▌ ▐░█        ██ 
+▐██         ▐██        ██   ▓▓        ▒█▌        ░ ▌  ▐░░        ▓▓▌  ▒▓▌      ▐░█  ▐██        ██ 
+▐█▓         ▐█▓        █▓   ▒█        ▓▓▌        ▓▓▌  ▐ ▓    ▄▄▄▄░░▌  ▓█▀▄▄   ▄░▀   ▐█▓        █▓ 
+▐█▓         ▐█▓        █▓   ▓░        █▓▌        ░▄▌  ▐██▀▀▀▀▀       ▄██  ▀▀▀▀▒▄    ▐█▓        █▓ 
+ ▓▓▌     ██  ▓▓▌      ▐██  ▄█░       ▄▓▓▌       ▄░░▌   ▓█▌      ▐▓▓   ▐█        ▀▄   ▓▓▌      ▐██ 
+  ▀▒▄   ▄█▀   ▀▒▄   ▄▄▀██▄  ▀▄        ▀▒▌        ▀▄▌    ▀▓▄    ▄░▀     █         ▐▌   ▀▒▄   ▄▄▀██▄
+     ▀▀▀▀        ▀▀▀▀         ▀░        ▀░         ▀░      ▀▀▀▀                  ▀       ▀▀▀▀     
+
+
+(camera)
+*/
 // Camera State Variables
 // float cameraPos[] = {0.0f, 2.0f, 2.0f};
 float cameraFront[] = {0.0f, 0.0f, -1.0f};
 float cameraUp[] = {0.0f, 1.0f, 0.0f};
 
 // Mouse Look Angles
-// float yaw = -90.0f;
-// float pitch = 0.0f;
+ 
 float lastX = 400.0f;
 float lastY = 300.0f;
 int firstMouse = 1;
@@ -187,26 +225,26 @@ void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
   cameraFront[2] /= len;
 }
 
-const char *vertexShaderSource =
-    "#version 330 core\n"
-    "layout (location = 0) in vec3 aPos;\n"
-    "layout (location = 1) in vec2 aTexCoord;\n" // Changed from color to UV
-                                                 // coordinates
-    "out vec2 TexCoord;\n"
-    "uniform mat4 mvp;\n"
-    "void main() {\n"
-    "    gl_Position = mvp * vec4(aPos, 1.0);\n"
-    "    TexCoord = aTexCoord;\n"
-    "}\0";
+/**
 
-const char *fragmentShaderSource =
-    "#version 330 core\n"
-    "in vec2 TexCoord;\n"
-    "out vec4 FragColor;\n"
-    "uniform sampler2D ourTexture;\n"
-    "void main() {\n"
-    "    FragColor = texture(ourTexture, TexCoord);\n"
-    "}\0";
+
+
+                                                              
+  ▄▒ ▄▄▄▄       ▄▄▄▄                             ▄▒ ▄▄▄▄      
+▄▀▓▄▀▀   ▀░▄  ▄▀▀   ▀░▄         ▄▄▄▄        ▄▒ ▄▀▓▄▀▀   ▀░▄   
+ ░░▌      ▐░░░       ▐▓▓     ▄░▀   ▀▀▄██▄ ▄▒█   ░░▌      ▐░░  
+ ░         ░█▌        █▓▌   ░░▌      ▐░█   ░░   ░         ░█▌ 
+  ▓        ██▌        ░▓▌  ▐░█        ██   ░▓    ▓        ██▌ 
+ ▓▓        ▒█▌        ░ ▌  ▐██        ██   ▓▓   ▓▓        ▒█▌ 
+ ▒█        ▓▓▌        ▓▓▌  ▐█▓        █▓   ▀▓   ▒█        ▓▓▌ 
+ ▓░        █▓▌        ░▄▌  ▐█▓        █▓   ▒▓   ▓░        █▓▌ 
+▄█░       ▄▓▓▌       ▄░░▌   ▓▓▌      ▐██  ▄██  ▄█░       ▄▓▓▌ 
+ ▀▄        ▀▒▌        ▀▄▌    ▀▒▄   ▄▄▀██▄  ▀▒   ▀▄        ▀▒▌ 
+   ▀░        ▀░         ▀░      ▀▀▀▀         ▀    ▀░        ▀░
+
+(main)
+
+*/    
 int main(void) {
 
   // 1. Initialize GLFW
@@ -244,7 +282,49 @@ int main(void) {
 
   glEnable(GL_DEPTH_TEST);
 
-  // Shaders
+/**
+
+
+
+                ▄▄▒                                  ▒▄▄                    ▄▒ ▄▄▄▄     
+              ▀▓▓                                      ▓▓▀                ▄▒█▄▀▀   ▀▒▄  
+     ▄▄▄▄      ▓█  ▄▄▄▄           ▄▄▄▄           ▄▄▄▄  █▓       ▄▄▄▄       ░░▌      ▐▓█ 
+  ▄▒▀    ▀░▄  ▄██▄▀▀   ▀░▄     ▄░▀   ▀▀▄██▄   ▄░▀   ▀▀▄██▄   ▄░▀    ▀▒▄    █▓        ██▌
+   ▌      ▐░▒  █░▌      ▐░░   ░░▌      ▐░█   ░░▌      ▐░█   ▒░▌      ▐     ▓▓        █░▌
+▐ ▓       ▀    ██        █░▌ ▐░█        ██  ▐░█        ██  ▐▓         ▓ ▌  ▀▓        ░░▌
+▐▓▓▌           ██        ██▌ ▐██        ██  ▐██        ██  ▐░░        ▓▓▌  ▒▓▌      ▐░█ 
+ ▀░█▄▄▄▄       ▓█        ▓█▌ ▐█▓        █▓  ▐█▓        █▓  ▐ ▓    ▄▄▄▄░░▌  ▓█▀▄▄   ▄░▀  
+  ▄   ▀▀▀▀██▄  ▓█        ▓█▌ ▐█▓        █▓  ▐█▓        █▓  ▐██▀▀▀▀▀       ▄██  ▀▀▀▀▒▄   
+ ▓▓▌      ▐█▓  ██       ▐▓▓   ▓▓▌      ▐██   ▓▓▌      ▐██   ▓█▌      ▐▓▓   ▐█        ▀▄ 
+  ▀░▄    ▄▓▀  ▄██       ▒▀     ▀▒▄   ▄▄▀██▄   ▀▒▄   ▄▄▀██▄   ▀▓▄    ▄░▀     █         ▐▌
+     ▀▀▀▀                         ▀▀▀▀           ▀▀▀▀ ▀▒█       ▀▀▀▀                  ▀ 
+
+
+
+(shader)
+*/
+const char *vertexShaderSource =
+    "#version 330 core\n"
+    "layout (location = 0) in vec3 aPos;\n"
+    "layout (location = 1) in vec2 aTexCoord;\n" // Changed from color to UV
+                                                 // coordinates
+    "out vec2 TexCoord;\n"
+    "uniform mat4 mvp;\n"
+    "void main() {\n"
+    "    gl_Position = mvp * vec4(aPos, 1.0);\n"
+    "    TexCoord = aTexCoord;\n"
+    "}\0";
+
+const char *fragmentShaderSource =
+    "#version 330 core\n"
+    "in vec2 TexCoord;\n"
+    "out vec4 FragColor;\n"
+    "uniform sampler2D ourTexture;\n"
+    "void main() {\n"
+    "    FragColor = texture(ourTexture, TexCoord);\n"
+    "}\0";
+
+
   GLuint vShader = glCreateShader(GL_VERTEX_SHADER);
   glShaderSource(vShader, 1, &vertexShaderSource, NULL);
   glCompileShader(vShader);
@@ -258,6 +338,22 @@ int main(void) {
   glDeleteShader(vShader);
   glDeleteShader(fShader);
 
+/**
+                               ▄▄▒                        
+                           ▀▓▓                          
+     ▄▄▄▄                   ▓█  ▄▄▄▄           ▄▄▄▄     
+  ▄░▀   ▀█▄   ▄▓       ▄   ▄██▄▀▀   ▀░▄     ▄░▀    ▀▒▄  
+ ░░▌     ▀   ▒▓▌      ▐▓▓   █░▌      ▐░░   ▒░▌      ▐   
+▐░█         ▐▓░        █▓▌  ██        █░▌ ▐▓         ▓ ▌
+▐██         ▐█░        ▓▓▌  ██        ██▌ ▐░░        ▓▓▌
+▐█▓         ▐░░        ▓░▌  ▓█        ▓█▌ ▐ ▓    ▄▄▄▄░░▌
+▐█▓         ▐▓░         ░▌  ▓█        ▓█▌ ▐██▀▀▀▀▀      
+ ▓▓▌     ██  ▓▓▌      ▐░░   ██▌      ▐▓▓   ▓█▌      ▐▓▓ 
+  ▀▒▄   ▄█▀   ▀▓▄░   ▄░▀   ▄██▀▄▄   ▄▒▀     ▀▓▄    ▄░▀  
+     ▀▀▀▀        ▀▀▀▀       █▒▀ ▀▀▀▀           ▀▀▀▀     
+
+  (cube)
+*/
   // Cube Vertex Data (Grass/Green styled with slight shade variation)
   //
   // Cube Vertex Data: [PosX, PosY, PosZ, U, V]
@@ -312,9 +408,31 @@ int main(void) {
   glEnableVertexAttribArray(1);
   GLint mvpLoc = glGetUniformLocation(program, "mvp");
 
-  float lastFrame = 0.0f;
+
+
+
+
 
   // Generate a procedural retro checkerboard texture in memory
+/**
+
+
+ ▄▄                                    ▄▄                      ▄▒ ▄▄▄▄                    
+  ▓▓▀                                   ▓▓▀                  ▄▒█▄▀▀   ▀▒▄                 
+  █▓         ▄▄▄▄                       █▓                    ░░▌      ▐▓█       ▄▄▄▄     
+ ▄██▄▄▄   ▄░▀    ▀▒▄     ░▄       ▄░   ▄██▄▄▄   ▄▓       ▄    █▓        ██▌   ▄░▀    ▀▒▄  
+ ▐░█▀    ▒░▌      ▐     ▐░░▌      ▐░░  ▐░█▀    ▒▓▌      ▐▓▓   ▓▓        █░▌  ▒░▌      ▐   
+  ██    ▐▓         ▓ ▌   ▀░▄     ▄░▀▀   ██    ▐▓░        █▓▌  ▀▓        ░░▌ ▐▓         ▓ ▌
+  ██    ▐░░        ▓▓▌     ▀▄▀▄▀▄▀▀     ██    ▐█░        ▓▓▌  ▒▓▌      ▐░█  ▐░░        ▓▓▌
+  █▓    ▐ ▓    ▄▄▄▄░░▌    ▄░▀   ▀░▄     █▓    ▐░░        ▓░▌  ▓█▀▄▄   ▄░▀   ▐ ▓    ▄▄▄▄░░▌
+  ░░    ▐██▀▀▀▀▀         ░░▌     ▐░░    ░░    ▐▓░         ░▌ ▄██  ▀▀▀▀▒▄    ▐██▀▀▀▀▀      
+  ░█     ▓█▌      ▐▓▓   ▐░█       █░▌   ░█     ▓▓▌      ▐░░   ▐█        ▀▄   ▓█▌      ▐▓▓ 
+ ░░░▌     ▀▓▄    ▄░▀     ▓▓▌     ▐▓▓   ░░░▌     ▀▓▄░   ▄░▀     █         ▐▌   ▀▓▄    ▄░▀  
+ ▀▒░▐        ▀▀▀▀         ▀▒     ▒▀    ▀▒░▐        ▀▀▀▀                  ▀       ▀▀▀▀     
+
+
+(texture)
+*/
   unsigned int texture;
   glGenTextures(1, &texture);
   glBindTexture(GL_TEXTURE_2D, texture);
@@ -361,14 +479,55 @@ int main(void) {
     }
   }
 
+  /**
+  
+  
+   ▄▄                                                 
+  ▓▓                                                
+  █▓         ▄▄▄▄           ▄▄▄▄        ▄▒ ▄▄▄▄     
+ ▄██      ▄▓▀    ▀░▄     ▄▓▀    ▀░▄   ▄▒█▄▀▀   ▀▒▄  
+ ▐░█     ▒▓▌      ▐▓▓   ▒▓▌      ▐▓▓   ░░▌      ▐▓█ 
+  ██    ▐▓░        █▓▌ ▐▓░        █▓▌  █▓        ██▌
+  ██    ▐█░        ▓▓▌ ▐█░        ▓▓▌  ▓▓        █░▌
+  █▓    ▐░░        ▓░▌ ▐░░        ▓░▌  ▀▓        ░░▌
+  ░░    ▐▓░         ░▌ ▐▓░         ░▌  ▒▓▌      ▐░█ 
+  ░█     ▓▓▌      ▐░░   ▓▓▌      ▐░░   ▓█▀▄▄   ▄░▀  
+ ░░░▌     ▀▓▄░   ▄░▀     ▀▓▄░   ▄░▀   ▄██  ▀▀▀▀     
+ ▀▒░▐        ▀▀▀▀           ▀▀▀▀       ▀▒           
+  
+  
+(loop)
+  */
+  // LOOP
+  float lastFrame = 0.0f;
   while (!glfwWindowShouldClose(window)) {
     float currentFrame = (float)glfwGetTime();
     float deltaTime = currentFrame - lastFrame;
     lastFrame = currentFrame;
 
+    // QUIT
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
       glfwSetWindowShouldClose(window, GLFW_TRUE);
 
+
+    /**
+    
+                                                                         
+  ▄▒ ▄▄▄▄       ▄▄▄▄                                                 
+▄▀▓▄▀▀   ▀░▄  ▄▀▀   ▀░▄         ▄▄▄▄                        ▄▄▄▄     
+ ░░▌      ▐░░░       ▐▓▓     ▄▓▀    ▀░▄     ▄▓     ▄     ▄░▀    ▀▒▄  
+ ░         ░█▌        █▓▌   ▒▓▌      ▐▓▓   ▒▓▌    ▐▓▓   ▒░▌      ▐   
+  ▓        ██▌        ░▓▌  ▐▓░        █▓▌ ▐▓░      █▓▌ ▐▓         ▓ ▌
+ ▓▓        ▒█▌        ░ ▌  ▐█░        ▓▓▌ ▐█░      ▓▓▌ ▐░░        ▓▓▌
+ ▒█        ▓▓▌        ▓▓▌  ▐░░        ▓░▌ ▐░░      ▓░▌ ▐ ▓    ▄▄▄▄░░▌
+ ▓░        █▓▌        ░▄▌  ▐▓░         ░▌ ▐▓░     ▐ ░  ▐██▀▀▀▀▀      
+▄█░       ▄▓▓▌       ▄░░▌   ▓▓▌      ▐░░   ▐▓▌    █░▀   ▓█▌      ▐▓▓ 
+ ▀▄        ▀▒▌        ▀▄▌    ▀▓▄░   ▄░▀     ▀▓▄ ▄░▀      ▀▓▄    ▄░▀  
+   ▀░        ▀░         ▀░      ▀▀▀▀          ▀█▀           ▀▀▀▀     
+    
+    
+  (move)
+    */
     // --- Physics & Movement ---
     float cameraSpeed = 4.0f * deltaTime;
 

@@ -36,6 +36,12 @@ typedef struct {
 } Player;
 
 typedef struct {
+  float forward;
+  float strafe;
+  int jump;
+} PlayerInput;
+
+typedef struct {
   Vec3 position;
   Vec3 size;
 } Block;
@@ -248,6 +254,17 @@ void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
   update_camera_front(&player.camera);
 }
 
+/** Converts the current WASD and jump key states into player movement intent. */
+PlayerInput read_player_input(GLFWwindow *window) {
+  PlayerInput input = {0};
+  input.forward = (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) -
+                  (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS);
+  input.strafe = (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) -
+                 (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS);
+  input.jump = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
+  return input;
+}
+
 #pragma endregion
 
 
@@ -436,6 +453,53 @@ int create_platform(Block blocks[], int blocksPerSide, Vec3 center,
 }
 
 /**
+ * Applies camera-relative movement, gravity, block-top landing, and jumping.
+ * Diagonal input is normalized to keep its speed equal to cardinal movement.
+ */
+void update_player(Player *updatedPlayer, PlayerInput input, float deltaTime,
+                   const Block blocks[], int blockCount) {
+  const float moveSpeed = 4.0f;
+  Vec3 frontXZ = vec3_normalize(
+      (Vec3){updatedPlayer->camera.front.x, 0.0f, updatedPlayer->camera.front.z});
+  Vec3 right = vec3_normalize(vec3_cross(frontXZ, updatedPlayer->camera.up));
+  Vec3 movement = vec3_add(vec3_scale(frontXZ, input.forward),
+                           vec3_scale(right, input.strafe));
+  if (vec3_dot(movement, movement) > 1.0f)
+    movement = vec3_normalize(movement);
+
+  updatedPlayer->position =
+      vec3_add(updatedPlayer->position, vec3_scale(movement, moveSpeed * deltaTime));
+
+  float previousY = updatedPlayer->position.y;
+  updatedPlayer->grounded = 0;
+  updatedPlayer->velocityY -= GRAVITY * deltaTime;
+  updatedPlayer->position.y += updatedPlayer->velocityY * deltaTime;
+
+  for (int i = 0; i < blockCount; i++) {
+    const Block *block = &blocks[i];
+    float halfWidth = block->size.x / 2.0f;
+    float halfDepth = block->size.z / 2.0f;
+    float blockTop = block->position.y + block->size.y / 2.0f;
+
+    if (updatedPlayer->position.x >= block->position.x - halfWidth &&
+        updatedPlayer->position.x <= block->position.x + halfWidth &&
+        updatedPlayer->position.z >= block->position.z - halfDepth &&
+        updatedPlayer->position.z <= block->position.z + halfDepth &&
+        previousY >= blockTop && updatedPlayer->position.y <= blockTop) {
+      updatedPlayer->position.y = blockTop;
+      updatedPlayer->velocityY = 0.0f;
+      updatedPlayer->grounded = 1;
+      break;
+    }
+  }
+
+  if (input.jump && updatedPlayer->grounded) {
+    updatedPlayer->velocityY = 5.0f;
+    updatedPlayer->grounded = 0;
+  }
+}
+
+/**
 
 
 
@@ -560,62 +624,8 @@ int main(void) {
  * the player grounded; jump input is accepted only after that collision check.
  */
 #pragma region Player moves physics
-    // --- Physics & Movement ---
-    float cameraSpeed = 4.0f * deltaTime;
-
-    // Horizontal movement vectors (ignore Y component so player stays level)
-    Vec3 frontXZ = vec3_normalize(
-      (Vec3){player.camera.front.x, 0.0f, player.camera.front.z});
-    Vec3 right = vec3_normalize(vec3_cross(frontXZ, player.camera.up));
-
-    // WASD Input (XZ plane only)
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
-      player.position.x += frontXZ.x * cameraSpeed;
-      player.position.z += frontXZ.z * cameraSpeed;
-    }
-    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
-      player.position.x -= frontXZ.x * cameraSpeed;
-      player.position.z -= frontXZ.z * cameraSpeed;
-    }
-    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
-      player.position.x -= right.x * cameraSpeed;
-      player.position.z -= right.z * cameraSpeed;
-    }
-    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
-      player.position.x += right.x * cameraSpeed;
-      player.position.z += right.z * cameraSpeed;
-    }
-
-    float previousY = player.position.y;
-    player.grounded = 0;
-
-    // Apply Gravity
-    player.velocityY -= GRAVITY * deltaTime;
-    player.position.y += player.velocityY * deltaTime;
-
-    for (int i = 0; i < blockCount; i++) {
-      Block *block = &blocks[i];
-      float halfWidth = block->size.x / 2.0f;
-      float halfDepth = block->size.z / 2.0f;
-      float blockTop = block->position.y + block->size.y / 2.0f;
-
-      if (player.position.x >= block->position.x - halfWidth &&
-          player.position.x <= block->position.x + halfWidth &&
-          player.position.z >= block->position.z - halfDepth &&
-          player.position.z <= block->position.z + halfDepth &&
-          previousY >= blockTop && player.position.y <= blockTop) {
-        player.position.y = blockTop;
-        player.velocityY = 0.0f;
-        player.grounded = 1;
-        break;
-      }
-    }
-
-    // Jump on Spacebar
-    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS && player.grounded) {
-      player.velocityY = 5.0f;
-      player.grounded = 0;
-    }
+    PlayerInput input = read_player_input(window);
+    update_player(&player, input, deltaTime, blocks, blockCount);
 
 #pragma endregion
 

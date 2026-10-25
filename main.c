@@ -693,8 +693,10 @@ int main(void) {
 
   glDeleteVertexArrays(1, &VAO);
   glDeleteBuffers(1, &VBO);
+  glDeleteTextures(1, &texture);
 
   glDeleteProgram(program);
+  glfwDestroyWindow(window);
   glfwTerminate();
   return 0;
 }

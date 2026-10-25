@@ -68,6 +68,9 @@ Player player = {.position = {.x = 0.0f, .y = 2.0f, .z = 2.0f},
 
 /** Cursor events accumulate here until the game loop consumes them. */
 MouseInput mouseInput = {.firstMouse = 1};
+static int framebufferWidth;
+static int framebufferHeight;
+static float framebufferAspectRatio = 4.0f / 3.0f;
 
 /**
  * These helpers define the game's basic geometry vocabulary and matrix
@@ -247,6 +250,15 @@ void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
   mouseInput.deltaY += mouseInput.lastY - ypos;
   mouseInput.lastX = xpos;
   mouseInput.lastY = ypos;
+}
+
+void framebuffer_size_callback(GLFWwindow *window, int width, int height) {
+  (void)window;
+  framebufferWidth = width;
+  framebufferHeight = height;
+  glViewport(0, 0, width, height);
+  if (width > 0 && height > 0)
+    framebufferAspectRatio = (float)width / (float)height;
 }
 
 /** Applies accumulated mouse motion to the camera and then clears the deltas. */
@@ -581,6 +593,13 @@ int main(void) {
     return -1;
   }
 
+  glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+  glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
+  if (framebufferWidth > 0 && framebufferHeight > 0)
+    framebufferAspectRatio =
+        (float)framebufferWidth / (float)framebufferHeight;
+  glViewport(0, 0, framebufferWidth, framebufferHeight);
+
   glEnable(GL_DEPTH_TEST);
 
   GLuint program = create_shader_program();
@@ -665,8 +684,8 @@ int main(void) {
 
     // Build matrices (Wider 75-degree FOV for proper first-person scale)
     mat4 proj, view, mvp;
-    mat4_perspective(75.0f * (3.14159f / 180.0f), 800.0f / 600.0f, 0.1f, 100.0f,
-                     proj);
+    mat4_perspective(75.0f * (3.14159f / 180.0f), framebufferAspectRatio,
+             0.1f, 100.0f, proj);
     Vec3 cameraPosition = player.position;
     cameraPosition.y += player.eyeHeight;
     Vec3 target = vec3_add(cameraPosition, player.camera.front);

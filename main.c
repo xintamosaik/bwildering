@@ -10,6 +10,13 @@ typedef struct {
   float z;
 } Vec3;
 
+Vec3 vec3_add(Vec3 a, Vec3 b);
+Vec3 vec3_sub(Vec3 a, Vec3 b);
+Vec3 vec3_scale(Vec3 v, float scalar);
+Vec3 vec3_normalize(Vec3 v);
+Vec3 vec3_cross(Vec3 a, Vec3 b);
+float vec3_dot(Vec3 a, Vec3 b);
+
 typedef struct {
   float yaw;
   float pitch;
@@ -67,14 +74,43 @@ Player player = {.position = {.x = 0.0f, .y = 2.0f, .z = 2.0f},
 (math)
 
 */
+#pragma region Math
 typedef float mat4[16];
 // --- Forward Declarations ---
 void mat4_identity(mat4 dest);
 void mat4_perspective(float fov_radians, float aspect, float near, float far,
                       mat4 dest);
-void mat4_lookat(Vec3 eye, Vec3 center, Vec3 up, mat4 dest);
+void mat4_lookat(Vec3 eye, Vec3 target, Vec3 up, mat4 dest);
 void mat4_rotate(mat4 dest, float angle, float x, float y, float z);
 void mat4_multiply(mat4 a, mat4 b, mat4 dest);
+
+Vec3 vec3_add(Vec3 a, Vec3 b) {
+  return (Vec3){a.x + b.x, a.y + b.y, a.z + b.z};
+}
+
+Vec3 vec3_sub(Vec3 a, Vec3 b) {
+  return (Vec3){a.x - b.x, a.y - b.y, a.z - b.z};
+}
+
+Vec3 vec3_scale(Vec3 v, float scalar) {
+  return (Vec3){v.x * scalar, v.y * scalar, v.z * scalar};
+}
+
+Vec3 vec3_normalize(Vec3 v) {
+  float length = sqrtf(vec3_dot(v, v));
+  if (length == 0.0f)
+    return (Vec3){0.0f, 0.0f, 0.0f};
+  return vec3_scale(v, 1.0f / length);
+}
+
+Vec3 vec3_cross(Vec3 a, Vec3 b) {
+  return (Vec3){a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z,
+                a.x * b.y - a.y * b.x};
+}
+
+float vec3_dot(Vec3 a, Vec3 b) {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
+}
 
 void mat4_rotate(mat4 dest, float angle, float x, float y, float z) {
   float c = cosf(angle);
@@ -116,37 +152,25 @@ void mat4_perspective(float fov_radians, float aspect, float near, float far,
   dest[14] = -(2.0f * far * near) / (far - near);
 }
 
-void mat4_lookat(Vec3 eye, Vec3 center, Vec3 up, mat4 dest) {
-  float f[3] = {center.x - eye.x, center.y - eye.y, center.z - eye.z};
-  float flen = sqrtf(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
-  f[0] /= flen;
-  f[1] /= flen;
-  f[2] /= flen;
-
-  float s[3] = {f[1] * up.z - f[2] * up.y, f[2] * up.x - f[0] * up.z,
-                f[0] * up.y - f[1] * up.x};
-  float slen = sqrtf(s[0] * s[0] + s[1] * s[1] + s[2] * s[2]);
-  s[0] /= slen;
-  s[1] /= slen;
-  s[2] /= slen;
-
-  float u[3] = {s[1] * f[2] - s[2] * f[1], s[2] * f[0] - s[0] * f[2],
-                s[0] * f[1] - s[1] * f[0]};
+void mat4_lookat(Vec3 eye, Vec3 target, Vec3 up, mat4 dest) {
+  Vec3 f = vec3_normalize(vec3_sub(target, eye));
+  Vec3 s = vec3_normalize(vec3_cross(f, up));
+  Vec3 u = vec3_cross(s, f);
 
   mat4_identity(dest);
-  dest[0] = s[0];
-  dest[4] = s[1];
-  dest[8] = s[2];
-  dest[1] = u[0];
-  dest[5] = u[1];
-  dest[9] = u[2];
-  dest[2] = -f[0];
-  dest[6] = -f[1];
-  dest[10] = -f[2];
+  dest[0] = s.x;
+  dest[4] = s.y;
+  dest[8] = s.z;
+  dest[1] = u.x;
+  dest[5] = u.y;
+  dest[9] = u.z;
+  dest[2] = -f.x;
+  dest[6] = -f.y;
+  dest[10] = -f.z;
 
-  dest[12] = -(s[0] * eye.x + s[1] * eye.y + s[2] * eye.z);
-  dest[13] = -(u[0] * eye.x + u[1] * eye.y + u[2] * eye.z);
-  dest[14] = (f[0] * eye.x + f[1] * eye.y + f[2] * eye.z);
+  dest[12] = -vec3_dot(s, eye);
+  dest[13] = -vec3_dot(u, eye);
+  dest[14] = vec3_dot(f, eye);
 }
 
 void mat4_multiply(mat4 a, mat4 b, mat4 dest) {
@@ -161,6 +185,8 @@ void mat4_multiply(mat4 a, mat4 b, mat4 dest) {
   for (int i = 0; i < 16; i++)
     dest[i] = res[i];
 }
+
+#pragma endregion
 // ---------------------------
 /**
 
@@ -216,14 +242,7 @@ void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
   player.camera.front.y = sinf(radPitch);
   player.camera.front.z = sinf(radYaw) * cosf(radPitch);
 
-  // Normalize front vector
-  float len =
-      sqrtf(player.camera.front.x * player.camera.front.x +
-        player.camera.front.y * player.camera.front.y +
-        player.camera.front.z * player.camera.front.z);
-      player.camera.front.x /= len;
-      player.camera.front.y /= len;
-      player.camera.front.z /= len;
+  player.camera.front = vec3_normalize(player.camera.front);
 }
 
 /**
@@ -304,6 +323,7 @@ int main(void) {
 
 (shader)
 */
+#pragma region shader
 const char *vertexShaderSource =
     "#version 330 core\n"
     "layout (location = 0) in vec3 aPos;\n"
@@ -339,6 +359,7 @@ const char *fragmentShaderSource =
   glDeleteShader(vShader);
   glDeleteShader(fShader);
 
+#pragma endregion
 /**
                                ▄▄▒                        
                            ▀▓▓                          
@@ -355,6 +376,7 @@ const char *fragmentShaderSource =
 
   (cube)
 */
+#pragma region cube
   // Cube Vertex Data (Grass/Green styled with slight shade variation)
   //
   // Cube Vertex Data: [PosX, PosY, PosZ, U, V]
@@ -415,6 +437,8 @@ const char *fragmentShaderSource =
 
 
   // Generate a procedural retro checkerboard texture in memory
+#pragma endregion
+
 /**
 
 
@@ -556,25 +580,9 @@ const char *fragmentShaderSource =
     float cameraSpeed = 4.0f * deltaTime;
 
     // Horizontal movement vectors (ignore Y component so player stays level)
-    Vec3 frontXZ = {player.camera.front.x, 0.0f, player.camera.front.z};
-    float f_len = sqrtf(frontXZ.x * frontXZ.x + frontXZ.z * frontXZ.z);
-    if (f_len > 0.0f) {
-      frontXZ.x /= f_len;
-      frontXZ.z /= f_len;
-    }
-
-    Vec3 right = {frontXZ.y * player.camera.up.z -
-                      frontXZ.z * player.camera.up.y,
-                  frontXZ.z * player.camera.up.x -
-                      frontXZ.x * player.camera.up.z,
-                  frontXZ.x * player.camera.up.y -
-                      frontXZ.y * player.camera.up.x};
-    float r_len =
-        sqrtf(right.x * right.x + right.y * right.y + right.z * right.z);
-    if (r_len > 0.0f) {
-      right.x /= r_len;
-      right.z /= r_len;
-    }
+    Vec3 frontXZ = vec3_normalize(
+      (Vec3){player.camera.front.x, 0.0f, player.camera.front.z});
+    Vec3 right = vec3_normalize(vec3_cross(frontXZ, player.camera.up));
 
     // WASD Input (XZ plane only)
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
@@ -637,10 +645,8 @@ const char *fragmentShaderSource =
                      proj);
     Vec3 cameraPosition = player.position;
     cameraPosition.y += player.eyeHeight;
-    Vec3 center = {cameraPosition.x + player.camera.front.x,
-             cameraPosition.y + player.camera.front.y,
-             cameraPosition.z + player.camera.front.z};
-    mat4_lookat(cameraPosition, center, player.camera.up, view);
+    Vec3 target = vec3_add(cameraPosition, player.camera.front);
+    mat4_lookat(cameraPosition, target, player.camera.up, view);
 
     glBindVertexArray(VAO);
     glBindTexture(GL_TEXTURE_2D, texture);

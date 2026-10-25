@@ -626,7 +626,7 @@ int main(void) {
 (loop)
   */
   // LOOP
-  float lastFrame = 0.0f;
+  float lastFrame = (float)glfwGetTime();
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
 

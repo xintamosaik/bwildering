@@ -558,12 +558,6 @@ int main(void) {
 
   glewExperimental = GL_TRUE;
   glewInit();
-  // Set texture wrapping/filtering options
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-                  GL_NEAREST); // Pixel-art style scaling!
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
   glEnable(GL_DEPTH_TEST);
 

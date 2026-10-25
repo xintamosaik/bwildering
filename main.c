@@ -448,9 +448,11 @@ int create_platform(Block blocks[], int blocksPerSide, Vec3 center,
       blocks[blockCount++] = (Block){
           .position =
               {
-                  .x = (float)x - blocksPerSide / 2.0f + blockSize / 2.0f,
+                     .x = center.x +
+                       ((float)x - blocksPerSide / 2.0f + 0.5f) * blockSize,
                   .y = center.y - blockSize / 2.0f,
-                  .z = (float)z - blocksPerSide / 2.0f + blockSize / 2.0f,
+                     .z = center.z +
+                       ((float)z - blocksPerSide / 2.0f + 0.5f) * blockSize,
               },
           .size = {blockSize, blockSize, blockSize},
       };

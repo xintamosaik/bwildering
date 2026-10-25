@@ -41,6 +41,11 @@ typedef struct {
 } MouseInput;
 
 typedef struct {
+  Player player;
+  MouseInput mouseInput;
+} Application;
+
+typedef struct {
   Vec3 position;
   Vec3 size;
 } Block;
@@ -52,14 +57,6 @@ static const float GRAVITY = 9.81f;
 /** Width, height, and depth of each default platform block, in world units. */
 static const float BLOCK_SIZE = 1.0f;
 
-static Player player = {.position = {.x = 0.0f, .y = 2.0f, .z = 2.0f},
-                        .eyeHeight = 1.0f,
-                        .camera = {.yaw = -90.0f,
-                                   .pitch = 0.0f,
-                                   .front = {.x = 0.0f, .y = 0.0f, .z = -1.0f},
-                                   .up = {.x = 0.0f, .y = 1.0f, .z = 0.0f}}};
-
-static MouseInput mouseInput = {.firstMouse = 1};
 static int framebufferWidth;
 static int framebufferHeight;
 static float framebufferAspectRatio = 4.0f / 3.0f;
@@ -206,17 +203,21 @@ static void mat4_multiply(mat4 a, mat4 b, mat4 dest) {
 static void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
   if (glfwGetInputMode(window, GLFW_CURSOR) != GLFW_CURSOR_DISABLED)
     return;
-  if (mouseInput.firstMouse) {
-    mouseInput.lastX = xpos;
-    mouseInput.lastY = ypos;
-    mouseInput.firstMouse = 0;
+  Application *application = glfwGetWindowUserPointer(window);
+  if (application == NULL)
+    return;
+  MouseInput *mouseInput = &application->mouseInput;
+  if (mouseInput->firstMouse) {
+    mouseInput->lastX = xpos;
+    mouseInput->lastY = ypos;
+    mouseInput->firstMouse = 0;
     return;
   }
 
-  mouseInput.deltaX += xpos - mouseInput.lastX;
-  mouseInput.deltaY += mouseInput.lastY - ypos;
-  mouseInput.lastX = xpos;
-  mouseInput.lastY = ypos;
+  mouseInput->deltaX += xpos - mouseInput->lastX;
+  mouseInput->deltaY += mouseInput->lastY - ypos;
+  mouseInput->lastX = xpos;
+  mouseInput->lastY = ypos;
 }
 
 static PlayerInput read_player_input(GLFWwindow *window) {
@@ -492,6 +493,15 @@ static void framebuffer_size_callback(GLFWwindow *window, int width,
 }
 
 static int run_application(void) {
+  Application application = {
+      .player = {.position = {.x = 0.0f, .y = 2.0f, .z = 2.0f},
+                 .eyeHeight = 1.0f,
+                 .camera = {.yaw = -90.0f,
+                            .pitch = 0.0f,
+                            .front = {.x = 0.0f, .y = 0.0f, .z = -1.0f},
+                            .up = {.x = 0.0f, .y = 1.0f, .z = 0.0f}}},
+      .mouseInput = {.firstMouse = 1},
+  };
 
   if (!glfwInit()) {
     fprintf(stderr, "Failed to initialize GLFW\n");
@@ -521,8 +531,9 @@ static int run_application(void) {
   }
   glfwMakeContextCurrent(window);
 
-  glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+  glfwSetWindowUserPointer(window, &application);
   glfwSetCursorPosCallback(window, mouse_callback);
+  glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
   glewExperimental = GL_TRUE;
   GLenum glewStatus = glewInit();
@@ -579,17 +590,17 @@ static int run_application(void) {
       glfwSetInputMode(window, GLFW_CURSOR,
                        cursorCaptured ? GLFW_CURSOR_NORMAL
                                       : GLFW_CURSOR_DISABLED);
-      mouseInput.firstMouse = 1;
-      mouseInput.deltaX = 0.0;
-      mouseInput.deltaY = 0.0;
+      application.mouseInput.firstMouse = 1;
+      application.mouseInput.deltaX = 0.0;
+      application.mouseInput.deltaY = 0.0;
     }
     escapeWasDown = escapeIsDown;
 
 
  
-    update_camera(&player.camera, &mouseInput);
+    update_camera(&application.player.camera, &application.mouseInput);
     PlayerInput input = read_player_input(window);
-    update_player(&player, input, deltaTime, blocks, blockCount);
+    update_player(&application.player, input, deltaTime, blocks, blockCount);
 
     glClearColor(0.15f, 0.15f, 0.2f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -599,10 +610,10 @@ static int run_application(void) {
     mat4 proj, view, mvp;
     mat4_perspective(75.0f * (3.14159f / 180.0f), framebufferAspectRatio,
              0.1f, 100.0f, proj);
-    Vec3 cameraPosition = player.position;
-    cameraPosition.y += player.eyeHeight;
-    Vec3 target = vec3_add(cameraPosition, player.camera.front);
-    mat4_lookat(cameraPosition, target, player.camera.up, view);
+    Vec3 cameraPosition = application.player.position;
+    cameraPosition.y += application.player.eyeHeight;
+    Vec3 target = vec3_add(cameraPosition, application.player.camera.front);
+    mat4_lookat(cameraPosition, target, application.player.camera.up, view);
 
     glBindVertexArray(VAO);
     glBindTexture(GL_TEXTURE_2D, texture);

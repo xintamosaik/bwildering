@@ -1,6 +1,7 @@
 #ifndef GAME_LOGIC_H
 #define GAME_LOGIC_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 typedef struct {
@@ -44,8 +45,21 @@ typedef struct {
   BlockType type;
 } Block;
 
+typedef struct {
+  float x;
+  float y;
+  float z;
+} SurfaceVertex;
+
+typedef struct {
+  SurfaceVertex *vertices;
+  size_t vertexCount;
+  size_t firstVertex[BLOCK_TYPE_COUNT];
+  size_t typeVertexCount[BLOCK_TYPE_COUNT];
+} PlatformSurfaceMesh;
+
 enum {
-  PLATFORM_BLOCKS_PER_SIDE = 48,
+  PLATFORM_BLOCKS_PER_SIDE = 192,
   WORLD_MAX_BLOCKS = PLATFORM_BLOCKS_PER_SIDE * PLATFORM_BLOCKS_PER_SIDE
 };
 
@@ -72,6 +86,9 @@ int world_add_block(World *world, Block block);
 int block_type_color(BlockType type, Vec3 *color);
 int create_platform(World *world, int blocksPerSide, Vec3 center,
                     float blockSize, uint32_t seed);
+int platform_surface_mesh_build(const World *world, int blocksPerSide,
+                                PlatformSurfaceMesh *mesh);
+void platform_surface_mesh_destroy(PlatformSurfaceMesh *mesh);
 void update_player(Player *updatedPlayer, PlayerInput input, float deltaTime,
                    const World *world);
 

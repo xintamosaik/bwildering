@@ -1,6 +1,7 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include "game_logic.h"
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -16,10 +17,10 @@ typedef struct {
 } MouseInput;
 
 typedef struct {
-  GLuint vao;
-  GLuint vbo;
-  GLuint outlineVao;
-  GLuint outlineVbo;
+  GLuint platformVao;
+  GLuint platformVbo;
+  GLint firstVertex[BLOCK_TYPE_COUNT];
+  GLsizei vertexCount[BLOCK_TYPE_COUNT];
   GLuint textVao;
   GLuint textVbo;
   GLuint program;
@@ -120,76 +121,6 @@ static void update_camera(Camera *camera, MouseInput *input) {
 #pragma endregion
 
 #pragma region Rendering
-/** Requires a current OpenGL context and valid output pointers. */
-static int create_cube_mesh(GLuint *vao, GLuint *vbo) {
-  const float vertices[] = {
-      -0.5f, -0.5f, -0.5f, 0.0f, 0.0f, 0.5f, -0.5f, -0.5f, 1.0f, 0.0f, 0.5f,
-      0.5f, -0.5f, 1.0f, 1.0f, 0.5f, 0.5f, -0.5f, 1.0f, 1.0f, -0.5f, 0.5f,
-      -0.5f, 0.0f, 1.0f, -0.5f, -0.5f, -0.5f, 0.0f, 0.0f,
-
-      -0.5f, -0.5f, 0.5f, 0.0f, 0.0f, 0.5f, -0.5f, 0.5f, 1.0f, 0.0f, 0.5f,
-      0.5f, 0.5f, 1.0f, 1.0f, 0.5f, 0.5f, 0.5f, 1.0f, 1.0f, -0.5f, 0.5f,
-      0.5f, 0.0f, 1.0f, -0.5f, -0.5f, 0.5f, 0.0f, 0.0f,
-
-      -0.5f, 0.5f, 0.5f, 1.0f, 0.0f, -0.5f, 0.5f, -0.5f, 1.0f, 1.0f, -0.5f,
-      -0.5f, -0.5f, 0.0f, 1.0f, -0.5f, -0.5f, -0.5f, 0.0f, 1.0f, -0.5f,
-      -0.5f, 0.5f, 0.0f, 0.0f, -0.5f, 0.5f, 0.5f, 1.0f, 0.0f,
-
-      0.5f, 0.5f, 0.5f, 1.0f, 0.0f, 0.5f, 0.5f, -0.5f, 1.0f, 1.0f, 0.5f,
-      -0.5f, -0.5f, 0.0f, 1.0f, 0.5f, -0.5f, -0.5f, 0.0f, 1.0f, 0.5f,
-      -0.5f, 0.5f, 0.0f, 0.0f, 0.5f, 0.5f, 0.5f, 1.0f, 0.0f,
-
-      -0.5f, -0.5f, -0.5f, 0.0f, 1.0f, 0.5f, -0.5f, -0.5f, 1.0f, 1.0f, 0.5f,
-      -0.5f, 0.5f, 1.0f, 0.0f, 0.5f, -0.5f, 0.5f, 1.0f, 0.0f, -0.5f, -0.5f,
-      0.5f, 0.0f, 0.0f, -0.5f, -0.5f, -0.5f, 0.0f, 1.0f,
-
-      -0.5f, 0.5f, -0.5f, 0.0f, 1.0f, 0.5f, 0.5f, -0.5f, 1.0f, 1.0f, 0.5f,
-      0.5f, 0.5f, 1.0f, 0.0f, 0.5f, 0.5f, 0.5f, 1.0f, 0.0f, -0.5f, 0.5f,
-      0.5f, 0.0f, 0.0f, -0.5f, 0.5f, -0.5f, 0.0f, 1.0f};
-
-  glGenVertexArrays(1, vao);
-  glGenBuffers(1, vbo);
-  if (*vao == 0 || *vbo == 0)
-    return 0;
-  glBindVertexArray(*vao);
-  glBindBuffer(GL_ARRAY_BUFFER, *vbo);
-  glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void *)0);
-  glEnableVertexAttribArray(0);
-  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float),
-                        (void *)(3 * sizeof(float)));
-  glEnableVertexAttribArray(1);
-  return 1;
-}
-
-static int create_cube_outline_mesh(GLuint *vao, GLuint *vbo) {
-  const float vertices[] = {
-      -0.5f, -0.5f, -0.5f, 0.5f, -0.5f, -0.5f,
-      0.5f, -0.5f, -0.5f, 0.5f, 0.5f, -0.5f,
-      0.5f, 0.5f, -0.5f, -0.5f, 0.5f, -0.5f,
-      -0.5f, 0.5f, -0.5f, -0.5f, -0.5f, -0.5f,
-      -0.5f, -0.5f, 0.5f, 0.5f, -0.5f, 0.5f,
-      0.5f, -0.5f, 0.5f, 0.5f, 0.5f, 0.5f,
-      0.5f, 0.5f, 0.5f, -0.5f, 0.5f, 0.5f,
-      -0.5f, 0.5f, 0.5f, -0.5f, -0.5f, 0.5f,
-      -0.5f, -0.5f, -0.5f, -0.5f, -0.5f, 0.5f,
-      0.5f, -0.5f, -0.5f, 0.5f, -0.5f, 0.5f,
-      0.5f, 0.5f, -0.5f, 0.5f, 0.5f, 0.5f,
-      -0.5f, 0.5f, -0.5f, -0.5f, 0.5f, 0.5f,
-  };
-
-  glGenVertexArrays(1, vao);
-  glGenBuffers(1, vbo);
-  if (*vao == 0 || *vbo == 0)
-    return 0;
-  glBindVertexArray(*vao);
-  glBindBuffer(GL_ARRAY_BUFFER, *vbo);
-  glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *)0);
-  glEnableVertexAttribArray(0);
-  return 1;
-}
-
 static GLuint compile_shader(GLenum type, const char *source) {
   GLuint shader = glCreateShader(type);
   if (shader == 0) {
@@ -268,14 +199,10 @@ static GLuint create_shader_program(void) {
 }
 
 static void renderer_destroy(Renderer *renderer) {
-  if (renderer->vao != 0)
-    glDeleteVertexArrays(1, &renderer->vao);
-  if (renderer->vbo != 0)
-    glDeleteBuffers(1, &renderer->vbo);
-  if (renderer->outlineVao != 0)
-    glDeleteVertexArrays(1, &renderer->outlineVao);
-  if (renderer->outlineVbo != 0)
-    glDeleteBuffers(1, &renderer->outlineVbo);
+  if (renderer->platformVao != 0)
+    glDeleteVertexArrays(1, &renderer->platformVao);
+  if (renderer->platformVbo != 0)
+    glDeleteBuffers(1, &renderer->platformVbo);
   if (renderer->textVao != 0)
     glDeleteVertexArrays(1, &renderer->textVao);
   if (renderer->textVbo != 0)
@@ -289,11 +216,6 @@ static int renderer_init(Renderer *renderer) {
   *renderer = (Renderer){0};
   renderer->program = create_shader_program();
   if (renderer->program == 0)
-    goto fail;
-
-  if (!create_cube_mesh(&renderer->vao, &renderer->vbo))
-    goto fail;
-  if (!create_cube_outline_mesh(&renderer->outlineVao, &renderer->outlineVbo))
     goto fail;
 
   glGenVertexArrays(1, &renderer->textVao);
@@ -324,6 +246,53 @@ static int renderer_init(Renderer *renderer) {
 
 fail:
   renderer_destroy(renderer);
+  return 0;
+}
+
+static int renderer_upload_platform_mesh(Renderer *renderer,
+                                         const PlatformSurfaceMesh *mesh) {
+  if (mesh == NULL || mesh->vertices == NULL || mesh->vertexCount == 0 ||
+      mesh->vertexCount > (size_t)PTRDIFF_MAX / sizeof(*mesh->vertices))
+    return 0;
+
+  for (int type = 0; type < BLOCK_TYPE_COUNT; type++) {
+    if (mesh->firstVertex[type] > INT_MAX ||
+        mesh->typeVertexCount[type] > INT_MAX)
+      return 0;
+  }
+
+  glGenVertexArrays(1, &renderer->platformVao);
+  glGenBuffers(1, &renderer->platformVbo);
+  if (renderer->platformVao == 0 || renderer->platformVbo == 0)
+    goto fail;
+
+  glBindVertexArray(renderer->platformVao);
+  glBindBuffer(GL_ARRAY_BUFFER, renderer->platformVbo);
+  glBufferData(GL_ARRAY_BUFFER,
+               (GLsizeiptr)(mesh->vertexCount * sizeof(*mesh->vertices)),
+               mesh->vertices, GL_STATIC_DRAW);
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(SurfaceVertex),
+                        (void *)0);
+  glEnableVertexAttribArray(0);
+  if (glGetError() != GL_NO_ERROR)
+    goto fail;
+
+  for (int type = 0; type < BLOCK_TYPE_COUNT; type++) {
+    renderer->firstVertex[type] = (GLint)mesh->firstVertex[type];
+    renderer->vertexCount[type] = (GLsizei)mesh->typeVertexCount[type];
+  }
+  glBindVertexArray(0);
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  return 1;
+
+fail:
+  if (renderer->platformVao != 0)
+    glDeleteVertexArrays(1, &renderer->platformVao);
+  if (renderer->platformVbo != 0)
+    glDeleteBuffers(1, &renderer->platformVbo);
+  renderer->platformVao = 0;
+  renderer->platformVbo = 0;
+  fprintf(stderr, "Failed to upload the platform surface mesh\n");
   return 0;
 }
 
@@ -447,8 +416,7 @@ static void render_fps(const Renderer *renderer, int fps) {
   glEnable(GL_DEPTH_TEST);
 }
 
-static void render_world(const Renderer *renderer, const World *world,
-                         const Player *player) {
+static void render_world(const Renderer *renderer, const Player *player) {
   if (renderer->framebufferWidth <= 0 || renderer->framebufferHeight <= 0)
     return;
 
@@ -463,39 +431,19 @@ static void render_world(const Renderer *renderer, const World *world,
   cameraPosition.y += player->eyeHeight;
   Vec3 target = vec3_add(cameraPosition, player->camera.front);
   mat4_lookat(cameraPosition, target, player->camera.up, view);
+  mat4_multiply(proj, view, mvp);
 
-  for (int i = 0; i < world->blockCount; i++) {
-    const Block *block = &world->blocks[i];
-    Vec3 color;
-    if (!block_type_color(block->type, &color))
+  glBindVertexArray(renderer->platformVao);
+  glUniformMatrix4fv(renderer->mvpLocation, 1, GL_FALSE, (float *)mvp);
+  for (int type = 0; type < BLOCK_TYPE_COUNT; type++) {
+    if (renderer->vertexCount[type] == 0)
       continue;
-
-    mat4 model, temp;
-    mat4_identity(model);
-    model[0] = block->size.x;
-    model[5] = block->size.y;
-    model[10] = block->size.z;
-    model[12] = block->position.x;
-    model[13] = block->position.y;
-    model[14] = block->position.z;
-
-    mat4_multiply(view, model, temp);
-    mat4_multiply(proj, temp, mvp);
-
-    glBindVertexArray(renderer->vao);
+    Vec3 color;
+    if (!block_type_color((BlockType)type, &color))
+      continue;
     glUniform3f(renderer->colorLocation, color.x, color.y, color.z);
-    glUniformMatrix4fv(renderer->mvpLocation, 1, GL_FALSE, (float *)mvp);
-    glDrawArrays(GL_TRIANGLES, 0, 36);
-
-    model[0] *= 1.015f;
-    model[5] *= 1.015f;
-    model[10] *= 1.015f;
-    mat4_multiply(view, model, temp);
-    mat4_multiply(proj, temp, mvp);
-    glBindVertexArray(renderer->outlineVao);
-    glUniform3f(renderer->colorLocation, 0.08f, 0.12f, 0.09f);
-    glUniformMatrix4fv(renderer->mvpLocation, 1, GL_FALSE, (float *)mvp);
-    glDrawArrays(GL_LINES, 0, 24);
+    glDrawArrays(GL_TRIANGLES, renderer->firstVertex[type],
+                 renderer->vertexCount[type]);
   }
 }
 
@@ -608,6 +556,18 @@ static int application_init(Application *application) {
             WORLD_MAX_BLOCKS);
     goto fail;
   }
+  PlatformSurfaceMesh platformMesh = {0};
+  if (!platform_surface_mesh_build(&application->world,
+                                   PLATFORM_BLOCKS_PER_SIDE, &platformMesh)) {
+    fprintf(stderr, "Failed to build the platform surface mesh\n");
+    goto fail;
+  }
+  int meshUploaded =
+      renderer_upload_platform_mesh(&application->renderer, &platformMesh);
+  platform_surface_mesh_destroy(&platformMesh);
+  if (!meshUploaded)
+    goto fail;
+
   application->lastFrame = glfwGetTime();
   application->fpsWindowStart = application->lastFrame;
   return 1;
@@ -670,8 +630,7 @@ static void application_update(Application *application) {
 static void application_render(const Application *application) {
   glClearColor(0.15f, 0.15f, 0.2f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-  render_world(&application->renderer, &application->world,
-               &application->player);
+  render_world(&application->renderer, &application->player);
   render_fps(&application->renderer, application->fps);
   glfwSwapBuffers(application->window);
 }

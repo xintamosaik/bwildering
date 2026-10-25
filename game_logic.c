@@ -2,6 +2,7 @@
 
 #include <math.h>
 #include <stddef.h>
+#include <stdlib.h>
 
 static const float GRAVITY = 9.81f;
 static const Vec3 BLOCK_TYPE_COLORS[BLOCK_TYPE_COUNT] = {
@@ -191,6 +192,122 @@ int create_platform(World *world, int blocksPerSide, Vec3 center,
     }
   }
   return 1;
+}
+
+static void append_surface_quad(SurfaceVertex *vertices, size_t *cursor,
+                                Vec3 first, Vec3 second, Vec3 third,
+                                Vec3 fourth) {
+  vertices[(*cursor)++] = (SurfaceVertex){first.x, first.y, first.z};
+  vertices[(*cursor)++] = (SurfaceVertex){second.x, second.y, second.z};
+  vertices[(*cursor)++] = (SurfaceVertex){third.x, third.y, third.z};
+  vertices[(*cursor)++] = (SurfaceVertex){first.x, first.y, first.z};
+  vertices[(*cursor)++] = (SurfaceVertex){third.x, third.y, third.z};
+  vertices[(*cursor)++] = (SurfaceVertex){fourth.x, fourth.y, fourth.z};
+}
+
+int platform_surface_mesh_build(const World *world, int blocksPerSide,
+                                PlatformSurfaceMesh *mesh) {
+  if (world == NULL || mesh == NULL || blocksPerSide <= 0)
+    return 0;
+
+  size_t side = (size_t)blocksPerSide;
+  if (side > SIZE_MAX / side)
+    return 0;
+  size_t expectedBlockCount = side * side;
+  if (world->blockCount < 0 ||
+      (size_t)world->blockCount != expectedBlockCount)
+    return 0;
+
+  size_t quadCounts[BLOCK_TYPE_COUNT] = {0};
+  for (size_t index = 0; index < expectedBlockCount; index++) {
+    const Block *block = &world->blocks[index];
+    if (block->type < BLOCK_TYPE_GRASS || block->type >= BLOCK_TYPE_COUNT)
+      return 0;
+
+    quadCounts[block->type]++;
+    size_t x = index / side;
+    size_t z = index % side;
+    if (x == 0)
+      quadCounts[block->type]++;
+    if (x + 1 == side)
+      quadCounts[block->type]++;
+    if (z == 0)
+      quadCounts[block->type]++;
+    if (z + 1 == side)
+      quadCounts[block->type]++;
+  }
+
+  PlatformSurfaceMesh result = {0};
+  size_t totalQuads = 0;
+  for (int type = 0; type < BLOCK_TYPE_COUNT; type++) {
+    if (quadCounts[type] > SIZE_MAX / 6 ||
+        totalQuads > SIZE_MAX - quadCounts[type])
+      return 0;
+    result.firstVertex[type] = totalQuads * 6;
+    result.typeVertexCount[type] = quadCounts[type] * 6;
+    totalQuads += quadCounts[type];
+  }
+  if (totalQuads > SIZE_MAX / (6 * sizeof(SurfaceVertex)))
+    return 0;
+  result.vertexCount = totalQuads * 6;
+  result.vertices = malloc(result.vertexCount * sizeof(*result.vertices));
+  if (result.vertices == NULL)
+    return 0;
+
+  size_t cursors[BLOCK_TYPE_COUNT];
+  for (int type = 0; type < BLOCK_TYPE_COUNT; type++)
+    cursors[type] = result.firstVertex[type];
+
+  for (size_t index = 0; index < expectedBlockCount; index++) {
+    const Block *block = &world->blocks[index];
+    size_t x = index / side;
+    size_t z = index % side;
+    float halfX = block->size.x / 2.0f;
+    float halfY = block->size.y / 2.0f;
+    float halfZ = block->size.z / 2.0f;
+    float left = block->position.x - halfX;
+    float right = block->position.x + halfX;
+    float bottom = block->position.y - halfY;
+    float top = block->position.y + halfY;
+    float back = block->position.z - halfZ;
+    float front = block->position.z + halfZ;
+    size_t *cursor = &cursors[block->type];
+
+    append_surface_quad(
+        result.vertices, cursor, (Vec3){left, top, back},
+        (Vec3){left, top, front}, (Vec3){right, top, front},
+        (Vec3){right, top, back});
+    if (x == 0)
+      append_surface_quad(
+          result.vertices, cursor, (Vec3){left, bottom, front},
+          (Vec3){left, top, front}, (Vec3){left, top, back},
+          (Vec3){left, bottom, back});
+    if (x + 1 == side)
+      append_surface_quad(
+          result.vertices, cursor, (Vec3){right, bottom, back},
+          (Vec3){right, top, back}, (Vec3){right, top, front},
+          (Vec3){right, bottom, front});
+    if (z == 0)
+      append_surface_quad(
+          result.vertices, cursor, (Vec3){left, bottom, back},
+          (Vec3){left, top, back}, (Vec3){right, top, back},
+          (Vec3){right, bottom, back});
+    if (z + 1 == side)
+      append_surface_quad(
+          result.vertices, cursor, (Vec3){right, bottom, front},
+          (Vec3){right, top, front}, (Vec3){left, top, front},
+          (Vec3){left, bottom, front});
+  }
+
+  *mesh = result;
+  return 1;
+}
+
+void platform_surface_mesh_destroy(PlatformSurfaceMesh *mesh) {
+  if (mesh == NULL)
+    return;
+  free(mesh->vertices);
+  *mesh = (PlatformSurfaceMesh){0};
 }
 
 void update_player(Player *updatedPlayer, PlayerInput input, float deltaTime,

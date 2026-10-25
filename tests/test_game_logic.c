@@ -160,13 +160,13 @@ static void test_configured_platform_geometry_and_seed(void) {
   Vec3 center = {0.0f, 0.0f, 0.0f};
   const float blockSize = 1.0f;
   const int side = PLATFORM_BLOCKS_PER_SIDE;
+  const int totalBlocks = side * side;
 
-  assert(side == 48);
-  assert(WORLD_MAX_BLOCKS == 2304);
+  assert(side == 192);
   assert(create_platform(&world, side, center, blockSize, UINT32_C(0x4B1D2A37)));
   assert(create_platform(&repeated, side, center, blockSize,
                          UINT32_C(0x4B1D2A37)));
-  assert(world.blockCount == WORLD_MAX_BLOCKS);
+  assert(world.blockCount == totalBlocks);
 
   int typeCounts[BLOCK_TYPE_COUNT] = {0};
   for (int x = 0; x < side; x++) {
@@ -191,7 +191,97 @@ static void test_configured_platform_geometry_and_seed(void) {
   }
 
   for (int type = 0; type < BLOCK_TYPE_COUNT; type++)
-    assert(typeCounts[type] == WORLD_MAX_BLOCKS / BLOCK_TYPE_COUNT);
+    assert(typeCounts[type] == totalBlocks / BLOCK_TYPE_COUNT);
+}
+
+static void test_platform_surface_mesh(void) {
+  World single = {0};
+  PlatformSurfaceMesh singleMesh = {0};
+  assert(create_platform(&single, 1, (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 1));
+  assert(platform_surface_mesh_build(&single, 1, &singleMesh));
+  assert(singleMesh.vertexCount == 30);
+  for (int type = 0; type < BLOCK_TYPE_COUNT; type++) {
+    if ((BlockType)type == single.blocks[0].type)
+      assert(singleMesh.typeVertexCount[type] == 30);
+    else
+      assert(singleMesh.typeVertexCount[type] == 0);
+  }
+  platform_surface_mesh_destroy(&singleMesh);
+  assert(singleMesh.vertices == NULL);
+  assert(singleMesh.vertexCount == 0);
+
+  World world = {0};
+  PlatformSurfaceMesh mesh = {0};
+  assert(create_platform(&world, 2, (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 2));
+  assert(platform_surface_mesh_build(&world, 2, &mesh));
+  assert(mesh.vertexCount == (2 * 2 + 4 * 2) * 6);
+
+  size_t topTriangles = 0;
+  size_t negativeXTriangles = 0;
+  size_t positiveXTriangles = 0;
+  size_t negativeZTriangles = 0;
+  size_t positiveZTriangles = 0;
+  for (size_t index = 0; index < mesh.vertexCount; index += 3) {
+    const SurfaceVertex *first = &mesh.vertices[index];
+    const SurfaceVertex *second = &mesh.vertices[index + 1];
+    const SurfaceVertex *third = &mesh.vertices[index + 2];
+    float edge1x = second->x - first->x;
+    float edge1y = second->y - first->y;
+    float edge1z = second->z - first->z;
+    float edge2x = third->x - first->x;
+    float edge2y = third->y - first->y;
+    float edge2z = third->z - first->z;
+    float normalX = edge1y * edge2z - edge1z * edge2y;
+    float normalY = edge1z * edge2x - edge1x * edge2z;
+    float normalZ = edge1x * edge2y - edge1y * edge2x;
+
+    if (normalY > 0.0f)
+      topTriangles++;
+    else if (normalX < 0.0f)
+      negativeXTriangles++;
+    else if (normalX > 0.0f)
+      positiveXTriangles++;
+    else if (normalZ < 0.0f)
+      negativeZTriangles++;
+    else if (normalZ > 0.0f)
+      positiveZTriangles++;
+    assert(first->x >= -1.0f && first->x <= 1.0f);
+    assert(first->y >= -1.0f && first->y <= 0.0f);
+    assert(first->z >= -1.0f && first->z <= 1.0f);
+    assert(second->x >= -1.0f && second->x <= 1.0f);
+    assert(second->y >= -1.0f && second->y <= 0.0f);
+    assert(second->z >= -1.0f && second->z <= 1.0f);
+    assert(third->x >= -1.0f && third->x <= 1.0f);
+    assert(third->y >= -1.0f && third->y <= 0.0f);
+    assert(third->z >= -1.0f && third->z <= 1.0f);
+  }
+  assert(topTriangles == 2 * 2 * 2);
+  assert(negativeXTriangles == 4);
+  assert(positiveXTriangles == 4);
+  assert(negativeZTriangles == 4);
+  assert(positiveZTriangles == 4);
+
+  size_t previousEnd = 0;
+  size_t expectedTypeVertices[BLOCK_TYPE_COUNT] = {0};
+  for (int x = 0; x < 2; x++) {
+    for (int z = 0; z < 2; z++) {
+      const Block *block = &world.blocks[x * 2 + z];
+      size_t faces = 1 + (x == 0) + (x == 1) + (z == 0) + (z == 1);
+      expectedTypeVertices[block->type] += faces * 6;
+    }
+  }
+  for (int type = 0; type < BLOCK_TYPE_COUNT; type++) {
+    assert(mesh.firstVertex[type] == previousEnd);
+    assert(mesh.typeVertexCount[type] % 6 == 0);
+    assert(mesh.typeVertexCount[type] == expectedTypeVertices[type]);
+    previousEnd += mesh.typeVertexCount[type];
+  }
+  assert(previousEnd == mesh.vertexCount);
+
+  PlatformSurfaceMesh invalidMesh = {0};
+  assert(!platform_surface_mesh_build(&world, 1, &invalidMesh));
+  assert(invalidMesh.vertices == NULL);
+  platform_surface_mesh_destroy(&mesh);
 }
 
 static void test_platform_rejects_invalid_requests_without_mutation(void) {
@@ -284,6 +374,7 @@ int main(void) {
   test_platform_generates_seeded_block_types();
   test_platform_balances_non_divisible_type_counts();
   test_configured_platform_geometry_and_seed();
+  test_platform_surface_mesh();
   test_platform_rejects_invalid_requests_without_mutation();
   test_world_rejects_invalid_block_type();
   test_diagonal_movement_is_normalized();

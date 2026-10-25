@@ -54,7 +54,9 @@ Player player = {.position = {.x = 0.0f, .y = 2.0f, .z = 2.0f},
                             .lastY = 300.0f,
                             .firstMouse = 1}};
 
- 
+/**
+ * Math
+ */ 
 #pragma region Math
 typedef float mat4[16];
 // --- Forward Declarations ---
@@ -168,7 +170,8 @@ void mat4_multiply(mat4 a, mat4 b, mat4 dest) {
 }
 
 #pragma endregion
-// ---------------------------
+
+
 /**
 
 
@@ -510,7 +513,9 @@ const char *fragmentShaderSource =
 
 
  
-
+/**
+ * Movement
+ */
 #pragma region movement
     // --- Physics & Movement ---
     float cameraSpeed = 4.0f * deltaTime;

@@ -535,6 +535,39 @@ fail:
   return 0;
 }
 
+static void render_world(const Renderer *renderer, const World *world,
+                         const Player *player) {
+  glUseProgram(renderer->program);
+
+  mat4 proj, view, mvp;
+  mat4_perspective(75.0f * (3.14159f / 180.0f), framebufferAspectRatio,
+                   0.1f, 100.0f, proj);
+  Vec3 cameraPosition = player->position;
+  cameraPosition.y += player->eyeHeight;
+  Vec3 target = vec3_add(cameraPosition, player->camera.front);
+  mat4_lookat(cameraPosition, target, player->camera.up, view);
+
+  glBindVertexArray(renderer->vao);
+  glBindTexture(GL_TEXTURE_2D, renderer->texture);
+  for (int i = 0; i < world->blockCount; i++) {
+    const Block *block = &world->blocks[i];
+    mat4 model, temp;
+    mat4_identity(model);
+    model[0] = block->size.x;
+    model[5] = block->size.y;
+    model[10] = block->size.z;
+    model[12] = block->position.x;
+    model[13] = block->position.y;
+    model[14] = block->position.z;
+
+    mat4_multiply(view, model, temp);
+    mat4_multiply(proj, temp, mvp);
+
+    glUniformMatrix4fv(renderer->mvpLocation, 1, GL_FALSE, (float *)mvp);
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+  }
+}
+
 #pragma endregion
 
 #pragma region Application
@@ -651,36 +684,7 @@ static int run_application(void) {
 
     glClearColor(0.15f, 0.15f, 0.2f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    glUseProgram(renderer.program);
-
-    mat4 proj, view, mvp;
-    mat4_perspective(75.0f * (3.14159f / 180.0f), framebufferAspectRatio,
-             0.1f, 100.0f, proj);
-    Vec3 cameraPosition = application.player.position;
-    cameraPosition.y += application.player.eyeHeight;
-    Vec3 target = vec3_add(cameraPosition, application.player.camera.front);
-    mat4_lookat(cameraPosition, target, application.player.camera.up, view);
-
-    glBindVertexArray(renderer.vao);
-    glBindTexture(GL_TEXTURE_2D, renderer.texture);
-    for (int i = 0; i < world.blockCount; i++) {
-      const Block *block = &world.blocks[i];
-      mat4 model, temp;
-      mat4_identity(model);
-      model[0] = block->size.x;
-      model[5] = block->size.y;
-      model[10] = block->size.z;
-      model[12] = block->position.x;
-      model[13] = block->position.y;
-      model[14] = block->position.z;
-
-      mat4_multiply(view, model, temp);
-      mat4_multiply(proj, temp, mvp);
-
-      glUniformMatrix4fv(renderer.mvpLocation, 1, GL_FALSE, (float *)mvp);
-      glDrawArrays(GL_TRIANGLES, 0, 36);
-    }
+    render_world(&renderer, &world, &application.player);
 
     glfwSwapBuffers(window);
   }

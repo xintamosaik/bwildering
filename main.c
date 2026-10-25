@@ -67,18 +67,22 @@ void mat4_lookat(Vec3 eye, Vec3 target, Vec3 up, mat4 dest);
 void mat4_rotate(mat4 dest, float angle, float x, float y, float z);
 void mat4_multiply(mat4 a, mat4 b, mat4 dest);
 
+/** Returns the component-wise sum of two vectors. */
 Vec3 vec3_add(Vec3 a, Vec3 b) {
   return (Vec3){a.x + b.x, a.y + b.y, a.z + b.z};
 }
 
+/** Returns the component-wise difference a - b. */
 Vec3 vec3_sub(Vec3 a, Vec3 b) {
   return (Vec3){a.x - b.x, a.y - b.y, a.z - b.z};
 }
 
+/** Returns v multiplied by scalar. */
 Vec3 vec3_scale(Vec3 v, float scalar) {
   return (Vec3){v.x * scalar, v.y * scalar, v.z * scalar};
 }
 
+/** Returns v with unit length, or the zero vector when v has zero length. */
 Vec3 vec3_normalize(Vec3 v) {
   float length = sqrtf(vec3_dot(v, v));
   if (length == 0.0f)
@@ -86,16 +90,20 @@ Vec3 vec3_normalize(Vec3 v) {
   return vec3_scale(v, 1.0f / length);
 }
 
+/** Returns the right-handed cross product a x b. */
 Vec3 vec3_cross(Vec3 a, Vec3 b) {
   return (Vec3){a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z,
                 a.x * b.y - a.y * b.x};
 }
 
+/** Returns the dot product of a and b. */
 float vec3_dot(Vec3 a, Vec3 b) {
   return a.x * b.x + a.y * b.y + a.z * b.z;
 }
-
-
+/**
+ * Builds a column-major rotation matrix for angle radians around an axis.
+ * The axis must be nonzero; the matrix is written to dest.
+ */
 void mat4_rotate(mat4 dest, float angle, float x, float y, float z) {
   float c = cosf(angle);
   float s = sinf(angle);
@@ -117,12 +125,17 @@ void mat4_rotate(mat4 dest, float angle, float x, float y, float z) {
   dest[10] = z * z * ic + c;
 }
 
+/** Writes the 4x4 identity matrix to dest in column-major order. */
 void mat4_identity(mat4 dest) {
   for (int i = 0; i < 16; i++)
     dest[i] = 0.0f;
   dest[0] = dest[5] = dest[10] = dest[15] = 1.0f;
 }
 
+/**
+ * Writes a perspective projection matrix to dest.
+ * Requires 0 < fov_radians < pi, aspect > 0, and 0 < near < far.
+ */
 void mat4_perspective(float fov_radians, float aspect, float near, float far,
                       mat4 dest) {
   for (int i = 0; i < 16; i++)
@@ -136,6 +149,10 @@ void mat4_perspective(float fov_radians, float aspect, float near, float far,
   dest[14] = -(2.0f * far * near) / (far - near);
 }
 
+/**
+ * Builds a column-major view matrix looking from eye toward target.
+ * eye and target must differ, and up must not be parallel to the view direction.
+ */
 void mat4_lookat(Vec3 eye, Vec3 target, Vec3 up, mat4 dest) {
   Vec3 f = vec3_normalize(vec3_sub(target, eye));
   Vec3 s = vec3_normalize(vec3_cross(f, up));
@@ -157,6 +174,7 @@ void mat4_lookat(Vec3 eye, Vec3 target, Vec3 up, mat4 dest) {
   dest[14] = vec3_dot(f, eye);
 }
 
+/** Writes the column-major product a * b to dest; dest may alias either input. */
 void mat4_multiply(mat4 a, mat4 b, mat4 dest) {
   mat4 res;
   for (int i = 0; i < 4; i++) {
@@ -177,6 +195,7 @@ void mat4_multiply(mat4 a, mat4 b, mat4 dest) {
  * camera
 */
 #pragma region camera
+/** Recomputes camera->front from its yaw and pitch, which are measured in degrees. */
 void update_camera_front(Camera *camera) {
   float radYaw = camera->yaw * 3.14159265f / 180.0f;
   float radPitch = camera->pitch * 3.14159265f / 180.0f;
@@ -187,6 +206,7 @@ void update_camera_front(Camera *camera) {
   camera->front = vec3_normalize(camera->front);
 }
 
+/** Updates the global player's camera angles and direction from cursor motion. */
 void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
   (void)window;
   if (player.camera.firstMouse) {
@@ -220,6 +240,10 @@ void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
 
 
 
+/**
+ * Creates and uploads the procedural 16x16 grass checker texture.
+ * Requires a current OpenGL context; returns the generated texture handle.
+ */
 GLuint create_grass_texture(void) {
   const int textureWidth = 16;
   const int textureHeight = 16;
@@ -248,6 +272,10 @@ GLuint create_grass_texture(void) {
   return texture;
 }
 
+/**
+ * Creates the cube VAO/VBO and configures position and UV attributes.
+ * Requires a current OpenGL context and valid output pointers; leaves the VAO bound.
+ */
 void create_cube_mesh(GLuint *vao, GLuint *vbo) {
   const float vertices[] = {
       -0.5f, -0.5f, -0.5f, 0.0f, 0.0f, 0.5f, -0.5f, -0.5f, 1.0f, 0.0f, 0.5f,
@@ -286,6 +314,7 @@ void create_cube_mesh(GLuint *vao, GLuint *vbo) {
   glEnableVertexAttribArray(1);
 }
 
+/** Compiles one shader stage; returns 0 and prints the compiler log on failure. */
 static GLuint compile_shader(GLenum type, const char *source) {
   GLuint shader = glCreateShader(type);
   if (shader == 0) {
@@ -309,6 +338,10 @@ static GLuint compile_shader(GLenum type, const char *source) {
   return shader;
 }
 
+/**
+ * Compiles and links the application's textured-cube shaders.
+ * Requires a current OpenGL context; returns 0 and logs details on failure.
+ */
 GLuint create_shader_program(void) {
   const char *vertexShaderSource =
       "#version 330 core\n"
@@ -388,6 +421,7 @@ GLuint create_shader_program(void) {
 
 */
 
+/** Initializes the window and OpenGL resources, runs the game loop, then cleans up. */
 int main(void) {
 
   // 1. Initialize GLFW

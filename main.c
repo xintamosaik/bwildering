@@ -361,6 +361,8 @@ static GLuint create_grass_texture(void) {
 
   GLuint texture;
   glGenTextures(1, &texture);
+  if (texture == 0)
+    return 0;
   glBindTexture(GL_TEXTURE_2D, texture);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
@@ -373,7 +375,7 @@ static GLuint create_grass_texture(void) {
 }
 
 /** Requires a current OpenGL context and valid output pointers. */
-static void create_cube_mesh(GLuint *vao, GLuint *vbo) {
+static int create_cube_mesh(GLuint *vao, GLuint *vbo) {
   const float vertices[] = {
       -0.5f, -0.5f, -0.5f, 0.0f, 0.0f, 0.5f, -0.5f, -0.5f, 1.0f, 0.0f, 0.5f,
       0.5f, -0.5f, 1.0f, 1.0f, 0.5f, 0.5f, -0.5f, 1.0f, 1.0f, -0.5f, 0.5f,
@@ -401,6 +403,8 @@ static void create_cube_mesh(GLuint *vao, GLuint *vbo) {
 
   glGenVertexArrays(1, vao);
   glGenBuffers(1, vbo);
+  if (*vao == 0 || *vbo == 0)
+    return 0;
   glBindVertexArray(*vao);
   glBindBuffer(GL_ARRAY_BUFFER, *vbo);
   glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
@@ -409,6 +413,7 @@ static void create_cube_mesh(GLuint *vao, GLuint *vbo) {
   glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float),
                         (void *)(3 * sizeof(float)));
   glEnableVertexAttribArray(1);
+  return 1;
 }
 
 static GLuint compile_shader(GLenum type, const char *source) {
@@ -492,6 +497,44 @@ static GLuint create_shader_program(void) {
   return program;
 }
 
+static void renderer_destroy(Renderer *renderer) {
+  if (renderer->vao != 0)
+    glDeleteVertexArrays(1, &renderer->vao);
+  if (renderer->vbo != 0)
+    glDeleteBuffers(1, &renderer->vbo);
+  if (renderer->texture != 0)
+    glDeleteTextures(1, &renderer->texture);
+  if (renderer->program != 0)
+    glDeleteProgram(renderer->program);
+  *renderer = (Renderer){0};
+}
+
+static int renderer_init(Renderer *renderer) {
+  *renderer = (Renderer){0};
+  renderer->program = create_shader_program();
+  if (renderer->program == 0)
+    goto fail;
+
+  if (!create_cube_mesh(&renderer->vao, &renderer->vbo))
+    goto fail;
+
+  renderer->mvpLocation = glGetUniformLocation(renderer->program, "mvp");
+  if (renderer->mvpLocation < 0) {
+    fprintf(stderr, "Failed to locate mvp uniform\n");
+    goto fail;
+  }
+
+  renderer->texture = create_grass_texture();
+  if (renderer->texture == 0)
+    goto fail;
+
+  return 1;
+
+fail:
+  renderer_destroy(renderer);
+  return 0;
+}
+
 #pragma endregion
 
 #pragma region Application
@@ -567,19 +610,12 @@ static int run_application(void) {
 
   glEnable(GL_DEPTH_TEST);
 
-  Renderer renderer = {0};
-  renderer.program = create_shader_program();
-  if (renderer.program == 0) {
+  Renderer renderer;
+  if (!renderer_init(&renderer)) {
     glfwDestroyWindow(window);
     glfwTerminate();
     return -1;
   }
- 
-  create_cube_mesh(&renderer.vao, &renderer.vbo);
-  renderer.mvpLocation = glGetUniformLocation(renderer.program, "mvp");
-
- 
-  renderer.texture = create_grass_texture();
 
   World world = {0};
   create_platform(&world, PLATFORM_BLOCKS_PER_SIDE, CENTER, BLOCK_SIZE);
@@ -649,11 +685,7 @@ static int run_application(void) {
     glfwSwapBuffers(window);
   }
 
-  glDeleteVertexArrays(1, &renderer.vao);
-  glDeleteBuffers(1, &renderer.vbo);
-  glDeleteTextures(1, &renderer.texture);
-
-  glDeleteProgram(renderer.program);
+  renderer_destroy(&renderer);
   glfwDestroyWindow(window);
   glfwTerminate();
   return 0;

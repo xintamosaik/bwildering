@@ -529,7 +529,8 @@ static void application_shutdown(Application *application) {
 
 static int application_init(Application *application) {
   *application = (Application){
-      .player = {.position = {.x = 0.0f, .y = 2.0f, .z = 2.0f},
+      .player = {.position = {.x = 0.5f, .y = 0.0f, .z = 0.5f},
+           .grounded = 1,
                  .eyeHeight = 1.0f,
                  .camera = {.yaw = -90.0f,
                             .pitch = 0.0f,

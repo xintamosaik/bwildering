@@ -154,6 +154,46 @@ static void test_platform_balances_non_divisible_type_counts(void) {
   assert(maximum == 7);
 }
 
+static void test_configured_platform_geometry_and_seed(void) {
+  World world = {0};
+  World repeated = {0};
+  Vec3 center = {0.0f, 0.0f, 0.0f};
+  const float blockSize = 1.0f;
+  const int side = PLATFORM_BLOCKS_PER_SIDE;
+
+  assert(side == 48);
+  assert(WORLD_MAX_BLOCKS == 2304);
+  assert(create_platform(&world, side, center, blockSize, UINT32_C(0x4B1D2A37)));
+  assert(create_platform(&repeated, side, center, blockSize,
+                         UINT32_C(0x4B1D2A37)));
+  assert(world.blockCount == WORLD_MAX_BLOCKS);
+
+  int typeCounts[BLOCK_TYPE_COUNT] = {0};
+  for (int x = 0; x < side; x++) {
+    for (int z = 0; z < side; z++) {
+      int index = x * side + z;
+      const Block *block = &world.blocks[index];
+      const Block *sameSeedBlock = &repeated.blocks[index];
+      float expectedX = center.x + ((float)x - side / 2.0f + 0.5f) * blockSize;
+      float expectedZ = center.z + ((float)z - side / 2.0f + 0.5f) * blockSize;
+
+      assert_near(block->position.x, expectedX);
+      assert_near(block->position.y, center.y - blockSize / 2.0f);
+      assert_near(block->position.z, expectedZ);
+      assert_near(block->size.x, blockSize);
+      assert_near(block->size.y, blockSize);
+      assert_near(block->size.z, blockSize);
+      assert(block->type >= BLOCK_TYPE_GRASS);
+      assert(block->type < BLOCK_TYPE_COUNT);
+      assert(block->type == sameSeedBlock->type);
+      typeCounts[block->type]++;
+    }
+  }
+
+  for (int type = 0; type < BLOCK_TYPE_COUNT; type++)
+    assert(typeCounts[type] == WORLD_MAX_BLOCKS / BLOCK_TYPE_COUNT);
+}
+
 static void test_platform_rejects_invalid_requests_without_mutation(void) {
   World world = {0};
   Block original = {
@@ -165,7 +205,8 @@ static void test_platform_rejects_invalid_requests_without_mutation(void) {
 
   assert(!create_platform(&world, 0, (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 1));
   assert(!create_platform(&world, -1, (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 1));
-  assert(!create_platform(&world, 33, (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 1));
+  assert(!create_platform(&world, PLATFORM_BLOCKS_PER_SIDE + 1,
+                          (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 1));
   assert(!create_platform(NULL, 1, (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 1));
   assert(world.blockCount == 1);
   assert(world.blocks[0].position.x == original.position.x);
@@ -242,6 +283,7 @@ int main(void) {
   test_block_type_palette();
   test_platform_generates_seeded_block_types();
   test_platform_balances_non_divisible_type_counts();
+  test_configured_platform_geometry_and_seed();
   test_platform_rejects_invalid_requests_without_mutation();
   test_world_rejects_invalid_block_type();
   test_diagonal_movement_is_normalized();

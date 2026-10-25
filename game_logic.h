@@ -44,7 +44,10 @@ typedef struct {
   BlockType type;
 } Block;
 
-enum { WORLD_MAX_BLOCKS = 1024, PLATFORM_BLOCKS_PER_SIDE = 32 };
+enum {
+  PLATFORM_BLOCKS_PER_SIDE = 48,
+  WORLD_MAX_BLOCKS = PLATFORM_BLOCKS_PER_SIDE * PLATFORM_BLOCKS_PER_SIDE
+};
 
 typedef struct {
   Block blocks[WORLD_MAX_BLOCKS];

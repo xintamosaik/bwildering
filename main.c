@@ -95,6 +95,7 @@ float vec3_dot(Vec3 a, Vec3 b) {
   return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
+
 void mat4_rotate(mat4 dest, float angle, float x, float y, float z) {
   float c = cosf(angle);
   float s = sinf(angle);
@@ -193,6 +194,17 @@ void mat4_multiply(mat4 a, mat4 b, mat4 dest) {
 
 (camera)
 */
+#pragma region camera
+void update_camera_front(Camera *camera) {
+  float radYaw = camera->yaw * 3.14159265f / 180.0f;
+  float radPitch = camera->pitch * 3.14159265f / 180.0f;
+
+  camera->front.x = cosf(radYaw) * cosf(radPitch);
+  camera->front.y = sinf(radPitch);
+  camera->front.z = sinf(radYaw) * cosf(radPitch);
+  camera->front = vec3_normalize(camera->front);
+}
+
 void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
   (void)window;
   if (player.camera.firstMouse) {
@@ -219,16 +231,10 @@ void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
   if (player.camera.pitch < -89.0f)
     player.camera.pitch = -89.0f;
 
-  float radYaw = player.camera.yaw * 3.14159265f / 180.0f;
-  float radPitch = player.camera.pitch * 3.14159265f / 180.0f;
-
-  player.camera.front.x = cosf(radYaw) * cosf(radPitch);
-  player.camera.front.y = sinf(radPitch);
-  player.camera.front.z = sinf(radYaw) * cosf(radPitch);
-
-  player.camera.front = vec3_normalize(player.camera.front);
+  update_camera_front(&player.camera);
 }
 
+#pragma endregion
 /**
 
 

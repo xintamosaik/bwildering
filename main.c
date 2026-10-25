@@ -41,11 +41,6 @@ typedef struct {
 } MouseInput;
 
 typedef struct {
-  Player player;
-  MouseInput mouseInput;
-} Application;
-
-typedef struct {
   GLuint vao;
   GLuint vbo;
   GLuint program;
@@ -64,6 +59,18 @@ typedef struct {
   Block blocks[PLATFORM_BLOCKS_PER_SIDE * PLATFORM_BLOCKS_PER_SIDE];
   int blockCount;
 } World;
+
+typedef struct {
+  GLFWwindow *window;
+  Player player;
+  MouseInput mouseInput;
+  Renderer renderer;
+  World world;
+  float lastFrame;
+  int escapeWasDown;
+  int glfwInitialized;
+  int rendererInitialized;
+} Application;
 
 /** World-space origin used to center the starter platform. */
 static const Vec3 CENTER = {0.0f, 0.0f, 0.0f};
@@ -581,8 +588,23 @@ static void framebuffer_size_callback(GLFWwindow *window, int width,
     framebufferAspectRatio = (float)width / (float)height;
 }
 
-static int run_application(void) {
-  Application application = {
+static void application_shutdown(Application *application) {
+  if (application->rendererInitialized) {
+    renderer_destroy(&application->renderer);
+    application->rendererInitialized = 0;
+  }
+  if (application->window != NULL) {
+    glfwDestroyWindow(application->window);
+    application->window = NULL;
+  }
+  if (application->glfwInitialized) {
+    glfwTerminate();
+    application->glfwInitialized = 0;
+  }
+}
+
+static int application_init(Application *application) {
+  *application = (Application){
       .player = {.position = {.x = 0.0f, .y = 2.0f, .z = 2.0f},
                  .eyeHeight = 1.0f,
                  .camera = {.yaw = -90.0f,
@@ -594,48 +616,51 @@ static int run_application(void) {
 
   if (!glfwInit()) {
     fprintf(stderr, "Failed to initialize GLFW\n");
-    return -1;
+    return 0;
   }
+  application->glfwInitialized = 1;
 
   if (glfwGetPlatform() == GLFW_PLATFORM_WAYLAND) {
     fprintf(stderr,
             "GLFW selected Wayland; retrying with X11 for GLEW compatibility\n");
     glfwTerminate();
+    application->glfwInitialized = 0;
     glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
     if (!glfwInit()) {
       fprintf(stderr, "Failed to initialize GLFW with the X11 platform\n");
-      return -1;
+      return 0;
     }
+    application->glfwInitialized = 1;
   }
 
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-  GLFWwindow *window = glfwCreateWindow(800, 600, "bwildering 0.1", NULL, NULL);
-  if (!window) {
+  application->window =
+      glfwCreateWindow(800, 600, "bwildering 0.1", NULL, NULL);
+  if (application->window == NULL) {
     fprintf(stderr, "Failed to create GLFW window\n");
-    glfwTerminate();
-    return -1;
+    goto fail;
   }
-  glfwMakeContextCurrent(window);
+  glfwMakeContextCurrent(application->window);
 
-  glfwSetWindowUserPointer(window, &application);
-  glfwSetCursorPosCallback(window, mouse_callback);
-  glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+  glfwSetWindowUserPointer(application->window, application);
+  glfwSetCursorPosCallback(application->window, mouse_callback);
+  glfwSetInputMode(application->window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
   glewExperimental = GL_TRUE;
   GLenum glewStatus = glewInit();
   if (glewStatus != GLEW_OK) {
     fprintf(stderr, "Failed to initialize GLEW: %s\n",
             glewGetErrorString(glewStatus));
-    glfwDestroyWindow(window);
-    glfwTerminate();
-    return -1;
+    goto fail;
   }
 
-  glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
-  glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
+  glfwSetFramebufferSizeCallback(application->window,
+                                 framebuffer_size_callback);
+  glfwGetFramebufferSize(application->window, &framebufferWidth,
+                         &framebufferHeight);
   if (framebufferWidth > 0 && framebufferHeight > 0)
     framebufferAspectRatio =
         (float)framebufferWidth / (float)framebufferHeight;
@@ -643,60 +668,68 @@ static int run_application(void) {
 
   glEnable(GL_DEPTH_TEST);
 
-  Renderer renderer;
-  if (!renderer_init(&renderer)) {
-    glfwDestroyWindow(window);
-    glfwTerminate();
-    return -1;
-  }
+  if (!renderer_init(&application->renderer))
+    goto fail;
+  application->rendererInitialized = 1;
 
-  World world = {0};
-  create_platform(&world, PLATFORM_BLOCKS_PER_SIDE, CENTER, BLOCK_SIZE);
+  create_platform(&application->world, PLATFORM_BLOCKS_PER_SIDE, CENTER,
+                  BLOCK_SIZE);
+  application->lastFrame = (float)glfwGetTime();
+  return 1;
 
- 
-  float lastFrame = (float)glfwGetTime();
-  int escapeWasDown = GLFW_FALSE;
-  while (!glfwWindowShouldClose(window)) {
-    glfwPollEvents();
-
-    float currentFrame = (float)glfwGetTime();
-    float deltaTime = currentFrame - lastFrame;
-    lastFrame = currentFrame;
-
-    int escapeIsDown = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
-    if (escapeIsDown && !escapeWasDown) {
-      int cursorCaptured =
-          glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED;
-      glfwSetInputMode(window, GLFW_CURSOR,
-                       cursorCaptured ? GLFW_CURSOR_NORMAL
-                                      : GLFW_CURSOR_DISABLED);
-      application.mouseInput.firstMouse = 1;
-      application.mouseInput.deltaX = 0.0;
-      application.mouseInput.deltaY = 0.0;
-    }
-    escapeWasDown = escapeIsDown;
-
-
- 
-    update_camera(&application.player.camera, &application.mouseInput);
-    PlayerInput input = read_player_input(window);
-    update_player(&application.player, input, deltaTime, &world);
-
-    glClearColor(0.15f, 0.15f, 0.2f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    render_world(&renderer, &world, &application.player);
-
-    glfwSwapBuffers(window);
-  }
-
-  renderer_destroy(&renderer);
-  glfwDestroyWindow(window);
-  glfwTerminate();
+fail:
+  application_shutdown(application);
   return 0;
+}
+
+static void application_update(Application *application) {
+  GLFWwindow *window = application->window;
+  glfwPollEvents();
+
+  float currentFrame = (float)glfwGetTime();
+  float deltaTime = currentFrame - application->lastFrame;
+  application->lastFrame = currentFrame;
+
+  int escapeIsDown = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
+  if (escapeIsDown && !application->escapeWasDown) {
+    int cursorCaptured =
+        glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED;
+    glfwSetInputMode(window, GLFW_CURSOR,
+                     cursorCaptured ? GLFW_CURSOR_NORMAL
+                                    : GLFW_CURSOR_DISABLED);
+    application->mouseInput.firstMouse = 1;
+    application->mouseInput.deltaX = 0.0;
+    application->mouseInput.deltaY = 0.0;
+  }
+  application->escapeWasDown = escapeIsDown;
+
+  update_camera(&application->player.camera, &application->mouseInput);
+  PlayerInput input = read_player_input(window);
+  update_player(&application->player, input, deltaTime, &application->world);
+}
+
+static void application_render(const Application *application) {
+  glClearColor(0.15f, 0.15f, 0.2f, 1.0f);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  render_world(&application->renderer, &application->world,
+               &application->player);
+  glfwSwapBuffers(application->window);
 }
 
 #pragma endregion
 
 #pragma region Main
-int main(void) { return run_application(); }
+int main(void) {
+  Application application;
+  if (!application_init(&application))
+    return EXIT_FAILURE;
+
+  while (!glfwWindowShouldClose(application.window)) {
+    application_update(&application);
+    application_render(&application);
+  }
+
+  application_shutdown(&application);
+  return EXIT_SUCCESS;
+}
 #pragma endregion

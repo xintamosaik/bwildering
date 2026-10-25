@@ -367,6 +367,27 @@ static void test_jump_requires_grounding(void) {
   assert_near(airborne.velocityY, -9.81f * 0.1f);
 }
 
+static void test_random_bounded_output_range(void) {
+  uint32_t state = 0x12345678u;
+  assert(random_bounded(&state, 0u) == 0u);
+
+  for (uint32_t upperBound = 1; upperBound <= 17; upperBound++) {
+    uint32_t min = UINT32_MAX;
+    uint32_t max = 0u;
+    for (int i = 0; i < 20000; i++) {
+      state = (state * 1103515245u + 12345u) & UINT32_MAX;
+      uint32_t value = random_bounded(&state, upperBound);
+      assert(value < upperBound);
+      if (value < min)
+        min = value;
+      if (value > max)
+        max = value;
+    }
+    assert(min == 0u);
+    assert(max == upperBound - 1u || upperBound == 1u);
+  }
+}
+
 int main(void) {
   test_vector_normalization();
   test_matrix_multiply_identity();
@@ -381,6 +402,7 @@ int main(void) {
   test_landing_on_block();
   test_falling_off_platform_edge();
   test_jump_requires_grounding();
+  test_random_bounded_output_range();
   puts("All game logic tests passed.");
   return 0;
 }

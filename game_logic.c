@@ -209,12 +209,12 @@ static void append_surface_quad(SurfaceVertex *vertices, size_t *cursor,
   vertices[(*cursor)++] = (SurfaceVertex){fourth.x, fourth.y, fourth.z};
 }
 
-int platform_surface_mesh_build(const World *world, int blocksPerSide,
+int platform_surface_mesh_build(const World *world, int platformBlocksPerSide,
                                 PlatformSurfaceMesh *mesh) {
-  if (world == NULL || mesh == NULL || blocksPerSide <= 0)
+  if (world == NULL || mesh == NULL || platformBlocksPerSide <= 0)
     return 0;
 
-  size_t side = (size_t)blocksPerSide;
+  size_t side = (size_t)platformBlocksPerSide;
   if (side > SIZE_MAX / side)
     return 0;
   size_t expectedBlockCount = side * side;

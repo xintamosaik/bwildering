@@ -87,7 +87,10 @@ uint32_t random_bounded(uint32_t *state, uint32_t upperBound);
 int block_type_color(BlockType type, Vec3 *color);
 int create_platform(World *world, int blocksPerSide, Vec3 center,
                     float blockSize, uint32_t seed);
-int platform_surface_mesh_build(const World *world, int blocksPerSide,
+/* Builds the top and perimeter faces of a complete, regularly ordered
+  platform from create_platform(); this is not a general voxel-world mesher.
+  Blocks must be stored x-major/z-minor and total blocksPerSide squared. */
+int platform_surface_mesh_build(const World *world, int platformBlocksPerSide,
                                 PlatformSurfaceMesh *mesh);
 void platform_surface_mesh_destroy(PlatformSurfaceMesh *mesh);
 void update_player(Player *updatedPlayer, PlayerInput input, float deltaTime,

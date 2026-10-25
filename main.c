@@ -538,6 +538,17 @@ int main(void) {
     return -1;
   }
 
+  if (glfwGetPlatform() == GLFW_PLATFORM_WAYLAND) {
+    fprintf(stderr,
+            "GLFW selected Wayland; retrying with X11 for GLEW compatibility\n");
+    glfwTerminate();
+    glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
+    if (!glfwInit()) {
+      fprintf(stderr, "Failed to initialize GLFW with the X11 platform\n");
+      return -1;
+    }
+  }
+
   // Configure OpenGL version 3.3 Core Profile
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
@@ -557,7 +568,14 @@ int main(void) {
   glfwSetCursorPosCallback(window, mouse_callback);
 
   glewExperimental = GL_TRUE;
-  glewInit();
+  GLenum glewStatus = glewInit();
+  if (glewStatus != GLEW_OK) {
+    fprintf(stderr, "Failed to initialize GLEW: %s\n",
+            glewGetErrorString(glewStatus));
+    glfwDestroyWindow(window);
+    glfwTerminate();
+    return -1;
+  }
 
   glEnable(GL_DEPTH_TEST);
 

@@ -46,6 +46,8 @@ typedef struct {
   GLuint program;
   GLuint texture;
   GLint mvpLocation;
+  int framebufferWidth;
+  int framebufferHeight;
 } Renderer;
 
 typedef struct {
@@ -78,10 +80,6 @@ static const Vec3 CENTER = {0.0f, 0.0f, 0.0f};
 static const float GRAVITY = 9.81f;
 /** Width, height, and depth of each default platform block, in world units. */
 static const float BLOCK_SIZE = 1.0f;
-
-static int framebufferWidth;
-static int framebufferHeight;
-static float framebufferAspectRatio = 4.0f / 3.0f;
 
 #pragma endregion
 
@@ -544,11 +542,16 @@ fail:
 
 static void render_world(const Renderer *renderer, const World *world,
                          const Player *player) {
+  if (renderer->framebufferWidth <= 0 || renderer->framebufferHeight <= 0)
+    return;
+
   glUseProgram(renderer->program);
 
   mat4 proj, view, mvp;
-  mat4_perspective(75.0f * (3.14159f / 180.0f), framebufferAspectRatio,
-                   0.1f, 100.0f, proj);
+  float aspectRatio = (float)renderer->framebufferWidth /
+                      (float)renderer->framebufferHeight;
+  mat4_perspective(75.0f * (3.14159f / 180.0f), aspectRatio, 0.1f, 100.0f,
+                   proj);
   Vec3 cameraPosition = player->position;
   cameraPosition.y += player->eyeHeight;
   Vec3 target = vec3_add(cameraPosition, player->camera.front);
@@ -580,12 +583,12 @@ static void render_world(const Renderer *renderer, const World *world,
 #pragma region Application
 static void framebuffer_size_callback(GLFWwindow *window, int width,
                                       int height) {
-  (void)window;
-  framebufferWidth = width;
-  framebufferHeight = height;
+  Application *application = glfwGetWindowUserPointer(window);
+  if (application == NULL)
+    return;
+  application->renderer.framebufferWidth = width;
+  application->renderer.framebufferHeight = height;
   glViewport(0, 0, width, height);
-  if (width > 0 && height > 0)
-    framebufferAspectRatio = (float)width / (float)height;
 }
 
 static void application_shutdown(Application *application) {
@@ -657,20 +660,19 @@ static int application_init(Application *application) {
     goto fail;
   }
 
-  glfwSetFramebufferSizeCallback(application->window,
-                                 framebuffer_size_callback);
-  glfwGetFramebufferSize(application->window, &framebufferWidth,
-                         &framebufferHeight);
-  if (framebufferWidth > 0 && framebufferHeight > 0)
-    framebufferAspectRatio =
-        (float)framebufferWidth / (float)framebufferHeight;
-  glViewport(0, 0, framebufferWidth, framebufferHeight);
-
   glEnable(GL_DEPTH_TEST);
 
   if (!renderer_init(&application->renderer))
     goto fail;
   application->rendererInitialized = 1;
+
+  glfwGetFramebufferSize(application->window,
+                          &application->renderer.framebufferWidth,
+                          &application->renderer.framebufferHeight);
+  glViewport(0, 0, application->renderer.framebufferWidth,
+             application->renderer.framebufferHeight);
+  glfwSetFramebufferSizeCallback(application->window,
+                                 framebuffer_size_callback);
 
   create_platform(&application->world, PLATFORM_BLOCKS_PER_SIDE, CENTER,
                   BLOCK_SIZE);

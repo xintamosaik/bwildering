@@ -20,6 +20,15 @@ static uint32_t next_random(uint32_t *state) {
   return value;
 }
 
+static uint32_t bounded_random(uint32_t *state, uint32_t upperBound) {
+  uint32_t limit = UINT32_MAX - (UINT32_MAX % upperBound);
+  uint32_t value;
+  do {
+    value = next_random(state);
+  } while (value > limit);
+  return (value - 1) % upperBound;
+}
+
 Vec3 vec3_add(Vec3 a, Vec3 b) {
   return (Vec3){a.x + b.x, a.y + b.y, a.z + b.z};
 }
@@ -155,7 +164,7 @@ int create_platform(World *world, int blocksPerSide, Vec3 center,
 
   uint32_t randomState = seed == 0 ? UINT32_C(0x6D2B79F5) : seed;
   for (int i = totalBlocks - 1; i > 0; i--) {
-    int swapIndex = (int)(next_random(&randomState) % (uint32_t)(i + 1));
+    int swapIndex = (int)bounded_random(&randomState, (uint32_t)(i + 1));
     BlockType type = blockTypes[i];
     blockTypes[i] = blockTypes[swapIndex];
     blockTypes[swapIndex] = type;

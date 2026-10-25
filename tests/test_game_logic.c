@@ -90,26 +90,88 @@ static void test_platform_generates_seeded_block_types(void) {
   World first = {0};
   World sameSeed = {0};
   World differentSeed = {0};
+  World zeroSeed = {0};
+  World sameZeroSeed = {0};
   Vec3 center = {0.0f, 0.0f, 0.0f};
   assert(create_platform(&first, 8, center, 1.0f, 42));
   assert(create_platform(&sameSeed, 8, center, 1.0f, 42));
   assert(create_platform(&differentSeed, 8, center, 1.0f, 43));
+  assert(create_platform(&zeroSeed, 8, center, 1.0f, 0));
+  assert(create_platform(&sameZeroSeed, 8, center, 1.0f, 0));
   assert(first.blockCount == 64);
   assert_near(first.blocks[0].position.x, -3.5f);
   assert_near(first.blocks[0].position.y, -0.5f);
   assert_near(first.blocks[0].position.z, -3.5f);
 
   int typeCounts[BLOCK_TYPE_COUNT] = {0};
+  int matchingNeighbors = 0;
   int differsFromOtherSeed = 0;
   for (int i = 0; i < first.blockCount; i++) {
     assert(first.blocks[i].type == sameSeed.blocks[i].type);
+    assert(zeroSeed.blocks[i].type == sameZeroSeed.blocks[i].type);
+    assert(first.blocks[i].position.x == sameSeed.blocks[i].position.x);
+    assert(first.blocks[i].position.y == sameSeed.blocks[i].position.y);
+    assert(first.blocks[i].position.z == sameSeed.blocks[i].position.z);
     if (first.blocks[i].type != differentSeed.blocks[i].type)
       differsFromOtherSeed = 1;
+    assert(first.blocks[i].type >= BLOCK_TYPE_GRASS);
+    assert(first.blocks[i].type < BLOCK_TYPE_COUNT);
     typeCounts[first.blocks[i].type]++;
+
+    int x = i / 8;
+    int z = i % 8;
+    if (x + 1 < 8 &&
+        first.blocks[i].type == first.blocks[i + 8].type)
+      matchingNeighbors++;
+    if (z + 1 < 8 &&
+        first.blocks[i].type == first.blocks[i + 1].type)
+      matchingNeighbors++;
   }
   assert(differsFromOtherSeed);
+  assert(matchingNeighbors < 56);
   for (int type = 0; type < BLOCK_TYPE_COUNT; type++)
     assert(typeCounts[type] == first.blockCount / BLOCK_TYPE_COUNT);
+}
+
+static void test_platform_balances_non_divisible_type_counts(void) {
+  World world = {0};
+  assert(create_platform(&world, 5, (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 99));
+  assert(world.blockCount == 25);
+
+  int typeCounts[BLOCK_TYPE_COUNT] = {0};
+  for (int i = 0; i < world.blockCount; i++)
+    typeCounts[world.blocks[i].type]++;
+
+  int minimum = typeCounts[0];
+  int maximum = typeCounts[0];
+  for (int type = 1; type < BLOCK_TYPE_COUNT; type++) {
+    if (typeCounts[type] < minimum)
+      minimum = typeCounts[type];
+    if (typeCounts[type] > maximum)
+      maximum = typeCounts[type];
+  }
+  assert(minimum == 6);
+  assert(maximum == 7);
+}
+
+static void test_platform_rejects_invalid_requests_without_mutation(void) {
+  World world = {0};
+  Block original = {
+      .position = {1.0f, 2.0f, 3.0f},
+      .size = {4.0f, 5.0f, 6.0f},
+      .type = BLOCK_TYPE_STONE,
+  };
+  assert(world_add_block(&world, original));
+
+  assert(!create_platform(&world, 0, (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 1));
+  assert(!create_platform(&world, -1, (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 1));
+  assert(!create_platform(&world, 33, (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 1));
+  assert(!create_platform(NULL, 1, (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 1));
+  assert(world.blockCount == 1);
+  assert(world.blocks[0].position.x == original.position.x);
+  assert(world.blocks[0].position.y == original.position.y);
+  assert(world.blocks[0].position.z == original.position.z);
+  assert(world.blocks[0].type == original.type);
 }
 
 static void test_world_rejects_invalid_block_type(void) {
@@ -179,6 +241,8 @@ int main(void) {
   test_matrix_multiply_identity();
   test_block_type_palette();
   test_platform_generates_seeded_block_types();
+  test_platform_balances_non_divisible_type_counts();
+  test_platform_rejects_invalid_requests_without_mutation();
   test_world_rejects_invalid_block_type();
   test_diagonal_movement_is_normalized();
   test_landing_on_block();

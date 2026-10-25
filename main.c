@@ -286,6 +286,87 @@ void create_cube_mesh(GLuint *vao, GLuint *vbo) {
   glEnableVertexAttribArray(1);
 }
 
+static GLuint compile_shader(GLenum type, const char *source) {
+  GLuint shader = glCreateShader(type);
+  if (shader == 0) {
+    fprintf(stderr, "Failed to create shader\n");
+    return 0;
+  }
+
+  glShaderSource(shader, 1, &source, NULL);
+  glCompileShader(shader);
+
+  GLint success;
+  glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+  if (!success) {
+    char log[512];
+    glGetShaderInfoLog(shader, sizeof(log), NULL, log);
+    fprintf(stderr, "Shader compilation failed: %s\n", log);
+    glDeleteShader(shader);
+    return 0;
+  }
+
+  return shader;
+}
+
+GLuint create_shader_program(void) {
+  const char *vertexShaderSource =
+      "#version 330 core\n"
+      "layout (location = 0) in vec3 aPos;\n"
+      "layout (location = 1) in vec2 aTexCoord;\n"
+      "out vec2 TexCoord;\n"
+      "uniform mat4 mvp;\n"
+      "void main() {\n"
+      "    gl_Position = mvp * vec4(aPos, 1.0);\n"
+      "    TexCoord = aTexCoord;\n"
+      "}\n";
+
+  const char *fragmentShaderSource =
+      "#version 330 core\n"
+      "in vec2 TexCoord;\n"
+      "out vec4 FragColor;\n"
+      "uniform sampler2D ourTexture;\n"
+      "void main() {\n"
+      "    FragColor = texture(ourTexture, TexCoord);\n"
+      "}\n";
+
+  GLuint vertexShader = compile_shader(GL_VERTEX_SHADER, vertexShaderSource);
+  if (vertexShader == 0)
+    return 0;
+
+  GLuint fragmentShader = compile_shader(GL_FRAGMENT_SHADER, fragmentShaderSource);
+  if (fragmentShader == 0) {
+    glDeleteShader(vertexShader);
+    return 0;
+  }
+
+  GLuint program = glCreateProgram();
+  if (program == 0) {
+    fprintf(stderr, "Failed to create shader program\n");
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+    return 0;
+  }
+
+  glAttachShader(program, vertexShader);
+  glAttachShader(program, fragmentShader);
+  glLinkProgram(program);
+  glDeleteShader(vertexShader);
+  glDeleteShader(fragmentShader);
+
+  GLint success;
+  glGetProgramiv(program, GL_LINK_STATUS, &success);
+  if (!success) {
+    char log[512];
+    glGetProgramInfoLog(program, sizeof(log), NULL, log);
+    fprintf(stderr, "Shader program linking failed: %s\n", log);
+    glDeleteProgram(program);
+    return 0;
+  }
+
+  return program;
+}
+
 /**
 
 
@@ -344,46 +425,12 @@ int main(void) {
 
   glEnable(GL_DEPTH_TEST);
 
-/**
- * 
- */ 
-#pragma region shader
-const char *vertexShaderSource =
-    "#version 330 core\n"
-    "layout (location = 0) in vec3 aPos;\n"
-    "layout (location = 1) in vec2 aTexCoord;\n" // Changed from color to UV
-                                                 // coordinates
-    "out vec2 TexCoord;\n"
-    "uniform mat4 mvp;\n"
-    "void main() {\n"
-    "    gl_Position = mvp * vec4(aPos, 1.0);\n"
-    "    TexCoord = aTexCoord;\n"
-    "}\0";
-
-const char *fragmentShaderSource =
-    "#version 330 core\n"
-    "in vec2 TexCoord;\n"
-    "out vec4 FragColor;\n"
-    "uniform sampler2D ourTexture;\n"
-    "void main() {\n"
-    "    FragColor = texture(ourTexture, TexCoord);\n"
-    "}\0";
-
-
-  GLuint vShader = glCreateShader(GL_VERTEX_SHADER);
-  glShaderSource(vShader, 1, &vertexShaderSource, NULL);
-  glCompileShader(vShader);
-  GLuint fShader = glCreateShader(GL_FRAGMENT_SHADER);
-  glShaderSource(fShader, 1, &fragmentShaderSource, NULL);
-  glCompileShader(fShader);
-  GLuint program = glCreateProgram();
-  glAttachShader(program, vShader);
-  glAttachShader(program, fShader);
-  glLinkProgram(program);
-  glDeleteShader(vShader);
-  glDeleteShader(fShader);
-
-#pragma endregion
+  GLuint program = create_shader_program();
+  if (program == 0) {
+    glfwDestroyWindow(window);
+    glfwTerminate();
+    return -1;
+  }
  
 /**
  * 

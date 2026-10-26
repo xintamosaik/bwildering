@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <limits.h>
 
@@ -456,7 +457,144 @@ static void test_random_bounded_output_range(void) {
   }
 }
 
+static void test_seeded_terrain(void) {
+  World world = {0}, repeated = {0}, other = {0};
+  const Vec3 center = {12.0f, -3.0f, 8.0f};
+  const int side = PLATFORM_BLOCKS_PER_SIDE;
+  const uint32_t seed = UINT32_C(0x4B1D2A37);
+  assert(create_terrain(&world, side, center, 2.0f, seed));
+  assert(create_terrain(&repeated, side, center, 2.0f, seed));
+  assert(create_terrain(&other, side, center, 2.0f, seed + 1));
+  assert(world.blockCount == side * side);
+  assert(memcmp(world.tiles, repeated.tiles, sizeof(world.tiles)) == 0);
+  assert(memcmp(world.elevations, repeated.elevations, sizeof(world.elevations)) == 0);
+  assert(memcmp(world.elevations, other.elevations, sizeof(world.elevations)) != 0);
+  int minimum = 255, maximum = 0;
+  int materials[BLOCK_TYPE_COUNT] = {0};
+  size_t expectedQuads = 0;
+  for (int x = 0; x < side; x++) {
+    for (int z = 0; z < side; z++) {
+      const int index = world_index(x, z, side);
+      const int height = world.elevations[index];
+      assert(height <= 15);
+      if (height < minimum) minimum = height;
+      if (height > maximum) maximum = height;
+      materials[world.tiles[index]]++;
+      const Vec3 position = world_cell_to_position(&world, x, z);
+      assert_near(world_surface_height(&world, position.x, position.z),
+                  center.y + 2.0f * height);
+      assert_near(position.y + 1.0f, center.y + 2.0f * height);
+      const int dx[] = {-1, 1, 0, 0};
+      const int dz[] = {0, 0, -1, 1};
+      expectedQuads++;
+      for (int direction = 0; direction < 4; direction++) {
+        const int neighbor = world_index(x + dx[direction], z + dz[direction], side);
+        if (neighbor < 0 || height > world.elevations[neighbor])
+          expectedQuads++;
+        if (neighbor >= 0)
+          assert(abs(height - world.elevations[neighbor]) <= 1);
+      }
+    }
+  }
+  assert(maximum - minimum >= 8);
+  assert(materials[BLOCK_TYPE_GRASS] > 0);
+  assert(materials[BLOCK_TYPE_SAND] > 0);
+  assert(materials[BLOCK_TYPE_STONE] > 0);
+  PlatformSurfaceMesh mesh = {0};
+  assert(platform_surface_mesh_build(&world, side, &mesh));
+  assert(mesh.vertexCount == expectedQuads * 6);
+  for (size_t i = 0; i < mesh.vertexCount; i++) {
+    assert(mesh.vertices[i].y >= center.y - 2.0f);
+    assert(mesh.vertices[i].y <= center.y + maximum * 2.0f);
+  }
+  platform_surface_mesh_destroy(&mesh);
+  const World original = world;
+  assert(!create_terrain(&world, 0, center, 2.0f, seed));
+  assert(!create_terrain(&world, side + 1, center, 2.0f, seed));
+  assert(!create_terrain(&world, side, center, NAN, seed));
+  assert(memcmp(&world, &original, sizeof(world)) == 0);
+  assert(create_platform(&world, side, center, 2.0f, seed));
+  for (int i = 0; i < world.blockCount; i++)
+    assert(world.elevations[i] == 0);
+  assert(create_terrain(&world, 1, center, 2.0f, 0));
+  assert(create_terrain(&repeated, 1, center, 2.0f, 0));
+  assert(world.elevations[0] == repeated.elevations[0]);
+}
+
+static void test_terrain_cliff_mesh(void) {
+  World world = {0};
+  assert(create_platform(&world, 2, (Vec3){0}, 1, 1));
+  for (int i = 0; i < 4; i++)
+    world.tiles[i] = BLOCK_TYPE_GRASS;
+  /* A raised corner reveals two internal cliffs, plus its outer walls. */
+  world.elevations[0] = 3;
+  PlatformSurfaceMesh mesh = {0};
+  assert(platform_surface_mesh_build(&world, 2, &mesh));
+  assert(mesh.vertexCount == (4 + 8 + 2) * 6);
+  int cliffs = 0;
+  for (size_t i = 0; i < mesh.vertexCount; i += 6) {
+    const SurfaceVertex *v = &mesh.vertices[i];
+    const Vec3 a = {v[1].x-v[0].x, v[1].y-v[0].y, v[1].z-v[0].z};
+    const Vec3 b = {v[2].x-v[0].x, v[2].y-v[0].y, v[2].z-v[0].z};
+    const Vec3 normal = vec3_cross(a, b);
+    if (normal.x > 0 && v[0].x == 0) {
+      assert_near(v[0].y, 0);
+      assert_near(v[1].y, 3);
+      cliffs++;
+    }
+    if (normal.z > 0 && v[0].z == 0) {
+      assert_near(v[0].y, 0);
+      assert_near(v[1].y, 3);
+      cliffs++;
+    }
+    assert(normal.y >= 0);
+  }
+  assert(cliffs == 2);
+  platform_surface_mesh_destroy(&mesh);
+}
+
+static void test_terrain_collision(void) {
+  World world = {0};
+  assert(create_platform(&world, 3, (Vec3){0}, 1, 1));
+  /* Raised column directly to the right of the center cell. */
+  world.elevations[world_index(2, 1, 3)] = 1;
+  assert_near(world_surface_height(&world, 1, 0), 1);
+  assert(isnan(world_surface_height(&world, 2, 0)));
+  assert(isnan(world_surface_height(&world, NAN, 0)));
+  assert(isnan(world_surface_height(NULL, 0, 0)));
+
+  Player player = make_player((Vec3){0, 0, 0}, 1);
+  update_player(&player, (PlayerInput){.strafe = 1}, 0.25f, &world);
+  assert(player.position.x < 0.5f);
+  assert(player.grounded);
+  assert_near(player.position.y, 0);
+  /* A long movement cannot skip the raised column. */
+  player = make_player((Vec3){0, 0, 0}, 1);
+  update_player(&player, (PlayerInput){.strafe = 1}, 2, &world);
+  assert(player.position.x < 0.5f);
+  /* Jumping over a one-block step lands on its top. */
+  player = make_player((Vec3){0.25f, 0, 0}, 1);
+  update_player(&player, (PlayerInput){.jump = 1}, 0.01f, &world);
+  for (int i = 0; i < 30; i++)
+    update_player(&player, (PlayerInput){.strafe = 1}, 0.01f, &world);
+  assert(player.position.x > 0.5f);
+  for (int i = 0; i < 100; i++)
+    update_player(&player, (PlayerInput){0}, 0.01f, &world);
+  assert(player.grounded);
+  assert_near(player.position.y, 1);
+  /* Walking down begins falling and lands on the lower neighbor. */
+  update_player(&player, (PlayerInput){.strafe = -1}, 0.15f, &world);
+  assert(!player.grounded);
+  for (int i = 0; i < 100; i++)
+    update_player(&player, (PlayerInput){0}, 0.01f, &world);
+  assert(player.grounded);
+  assert_near(player.position.y, 0);
+}
+
 int main(void) {
+  test_seeded_terrain();
+  test_terrain_cliff_mesh();
+  test_terrain_collision();
   test_vector_normalization();
   test_matrix_multiply_identity();
   test_block_type_palette();

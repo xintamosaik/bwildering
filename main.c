@@ -149,7 +149,9 @@ static GLuint create_shader_program(void) {
       "#version 330 core\n"
       "layout (location = 0) in vec3 aPos;\n"
       "uniform mat4 mvp;\n"
+      "out vec3 worldPosition;\n"
       "void main() {\n"
+      "    worldPosition = aPos;\n"
       "    gl_Position = mvp * vec4(aPos, 1.0);\n"
       "}\n";
 
@@ -157,8 +159,12 @@ static GLuint create_shader_program(void) {
       "#version 330 core\n"
       "out vec4 FragColor;\n"
       "uniform vec3 color;\n"
+      "in vec3 worldPosition;\n"
       "void main() {\n"
-      "    FragColor = vec4(color, 1.0);\n"
+      "    vec3 normal = normalize(cross(dFdx(worldPosition), dFdy(worldPosition)));\n"
+      "    if (!gl_FrontFacing) normal = -normal;\n"
+      "    float light = 0.45 + 0.55 * max(dot(normal, normalize(vec3(-0.4, 1.0, 0.3))), 0.0);\n"
+      "    FragColor = vec4(color * light, 1.0);\n"
       "}\n";
 
   const GLuint vertexShader = compile_shader(GL_VERTEX_SHADER, vertexShaderSource);
@@ -556,13 +562,15 @@ static int application_init(Application *application) {
   glfwSetFramebufferSizeCallback(application->window,
                                  framebuffer_size_callback);
 
-  if (!create_platform(&application->world, PLATFORM_BLOCKS_PER_SIDE, CENTER,
+  if (!create_terrain(&application->world, PLATFORM_BLOCKS_PER_SIDE, CENTER,
                        BLOCK_SIZE, WORLD_SEED)) {
-    fprintf(stderr, "Failed to create platform: world capacity is %d blocks\n",
+    fprintf(stderr, "Failed to create terrain: world capacity is %d blocks\n",
             WORLD_MAX_BLOCKS);
     application_shutdown(application);
     return 0;
   }
+  application->player.position.y = world_surface_height(
+      &application->world, application->player.position.x, application->player.position.z);
   PlatformSurfaceMesh platformMesh = {0};
   if (!platform_surface_mesh_build(&application->world,
                                    PLATFORM_BLOCKS_PER_SIDE, &platformMesh)) {

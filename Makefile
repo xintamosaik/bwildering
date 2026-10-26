@@ -42,7 +42,7 @@ test-sanitize:
 	./test_pause_menu_sanitize
 
 clean:
-	rm -f streaming_capture terrain_capture visibility_capture performance_capture $(TARGET) $(TEST_TARGET) test_allocation_failures test_renderer test_pause_menu test_game_logic_sanitize test_allocation_failures_sanitize test_pause_menu_sanitize
+	rm -f mesh_query_benchmark mesh_query_profile streaming_capture terrain_capture visibility_capture performance_capture $(TARGET) $(TEST_TARGET) test_allocation_failures test_renderer test_pause_menu test_game_logic_sanitize test_allocation_failures_sanitize test_pause_menu_sanitize
 
 run: all
 	./$(TARGET)
@@ -60,3 +60,10 @@ visibility_capture: tests/visibility_capture.c $(SRC) game_logic.h performance.h
 
 terrain_capture: tests/terrain_capture.c $(SRC) game_logic.h performance.h
 	$(CC) $(CFLAGS) tests/terrain_capture.c game_logic.c voxel_world.c -o $@ $(LDFLAGS)
+
+# Headless CPU benchmark; profile timings include instrumentation overhead.
+mesh_query_benchmark: tests/mesh_query_benchmark.c tests/mesh_query_baseline.inc voxel_world.c game_logic.c game_logic.h
+	$(CC) $(CFLAGS) tests/mesh_query_benchmark.c game_logic.c -o $@ -lm
+
+mesh_query_profile: tests/mesh_query_benchmark.c tests/mesh_query_baseline.inc voxel_world.c game_logic.c game_logic.h
+	$(CC) $(CFLAGS) -DMESH_QUERY_PROFILE tests/mesh_query_benchmark.c game_logic.c -o $@ -lm

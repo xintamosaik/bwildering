@@ -981,6 +981,34 @@ static size_t assert_reference_section_faces(const World *world, int cx, int sy,
   return faceCount;
 }
 
+/* A new build must observe edits and residency changes, including partial
+   chunks and the terrain/edit elevation boundaries. */
+static void test_mesh_neighbor_cache_lifetime(void) {
+  const int heights[] = {WORLD_COORD_MIN, -129, -128, -1, 0, 383, 384, WORLD_COORD_MAX};
+  for (size_t i = 0; i < sizeof(heights) / sizeof(heights[0]); i++) {
+    World world = {0};
+    assert(world_init_region(&world, -17, -9, 33, (Vec3){12, -3, 8}, 0.5f));
+    world.proceduralTerrain = 1;
+    world.terrainSeed = 1;
+    int y = heights[i], sy = voxel_section_coord(y);
+    assert_reference_section_faces(&world, -2, sy, -1);
+    BlockType old = world_get_block(&world, -17, y, -9);
+    assert(world_set_block(&world, -17, y, -9,
+                           old == BLOCK_TYPE_EMPTY ? BLOCK_TYPE_SNOW : BLOCK_TYPE_EMPTY));
+    assert_reference_section_faces(&world, -2, sy, -1);
+    /* Adjacent column alternates between synthetic and resident storage. */
+    assert_reference_section_faces(&world, -1, sy, -1);
+    assert(world_materialize_chunk(&world, -1, -1));
+    assert_reference_section_faces(&world, -2, sy, -1);
+    assert_reference_section_faces(&world, -1, sy, -1);
+    world_release_chunk(&world, -1, -1);
+    assert_reference_section_faces(&world, -2, sy, -1);
+    assert(world_set_block(&world, -17, y, -9, old));
+    assert_reference_section_faces(&world, -2, sy, -1);
+    world_destroy(&world);
+  }
+}
+
 static void test_hidden_section_neighbor_edits(void) {
   const int step[6][3] = {{-1,0,0}, {1,0,0}, {0,-1,0},
                          {0,1,0}, {0,0,-1}, {0,0,1}};
@@ -1852,6 +1880,7 @@ int main(void) {
   test_section_faces_and_replacement();
   test_dirty_neighbors();
   test_hidden_section_neighbor_edits();
+  test_mesh_neighbor_cache_lifetime();
   test_cave_and_ceiling_collision();
   test_thin_walls_at_section_boundaries();
   test_vertical_contacts_at_section_boundaries();

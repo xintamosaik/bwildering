@@ -4,6 +4,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Benchmark hooks compile away in normal builds. */
+#ifndef MESH_BENCH_LOOKUP_BEGIN
+#define MESH_BENCH_LOOKUP_BEGIN() ((void)0)
+#define MESH_BENCH_LOOKUP_END() ((void)0)
+#define MESH_BENCH_VISIT() ((void)0)
+#define MESH_BENCH_QUERY_BEGIN() ((void)0)
+#define MESH_BENCH_QUERY_END() ((void)0)
+#define MESH_BENCH_SAMPLE(seed, x, z) terrain_sample_column(seed, x, z)
+#endif
+
 int voxel_floor_div(int coordinate, int divisor) {
   return coordinate / divisor - (coordinate % divisor < 0);
 }
@@ -122,10 +132,14 @@ static Subchunk **section_slot(Chunk *chunk, int y) {
 }
 
 const Subchunk *world_section(const World *world, int x, int y, int z) {
+  MESH_BENCH_LOOKUP_BEGIN();
   const Chunk *chunk = find_chunk(world, x, z);
-  if (!chunk) return NULL;
-  const Subchunk *s = chunk->sections;
-  while (s && s->sectionY < y) s = s->next;
+  const Subchunk *s = chunk ? chunk->sections : NULL;
+  while (s && s->sectionY < y) {
+    MESH_BENCH_VISIT();
+    s = s->next;
+  }
+  MESH_BENCH_LOOKUP_END();
   return s && s->sectionY == y ? s : NULL;
 }
 
@@ -155,7 +169,7 @@ BlockType world_get_block(const World *world, int x, int y, int z) {
   const Chunk *chunk = find_chunk(world, voxel_section_coord(x), voxel_section_coord(z));
   if (world->proceduralTerrain && !chunk->terrainReady &&
       y >= TERRAIN_BASE_Y && y < (WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT) * SECTION_SIZE)
-    return terrain_column_block(terrain_sample_column(world->terrainSeed, x, z), y);
+    return terrain_column_block(MESH_BENCH_SAMPLE(world->terrainSeed, x, z), y);
   return BLOCK_TYPE_EMPTY;
 }
 
@@ -179,7 +193,7 @@ static Subchunk *terrain_section(const World *world, int cx, int sy, int cz,
           wz < world->minZ || wz >= world->minZ + world->blocksPerSide)
         continue;
       TerrainColumn column = columns ? columns[x][z] :
-          terrain_sample_column(world->terrainSeed, wx, wz);
+          MESH_BENCH_SAMPLE(world->terrainSeed, wx, wz);
       for (int y = 0; y < SECTION_SIZE; y++) {
         BlockType type = terrain_column_block(column, sy * SECTION_SIZE + y);
         section->blocks[(x * SECTION_SIZE + y) * SECTION_SIZE + z] = (uint8_t)type;
@@ -416,6 +430,34 @@ void section_mesh_destroy(SectionMesh *mesh) {
   *mesh = (SectionMesh){0};
 }
 
+/* Build-local cache: only face neighbours are read; no persistent invalidation
+   or ownership is needed. Allocated sections (including empty edit markers)
+   always take precedence over procedural terrain. */
+typedef struct {
+  const Subchunk *sections[6];
+  const Chunk *chunks[6];
+  TerrainColumn columns[SECTION_SIZE + 2][SECTION_SIZE + 2];
+  uint8_t sampled[SECTION_SIZE + 2][SECTION_SIZE + 2];
+} MeshNeighbors;
+
+static BlockType mesh_boundary_block(const World *world, MeshNeighbors *cache,
+                                     int d, int cx, int sy, int cz,
+                                     int x, int y, int z) {
+  int wx = cx * SECTION_SIZE + x, wy = sy * SECTION_SIZE + y,
+      wz = cz * SECTION_SIZE + z;
+  if (!in_bounds(world, wx, wy, wz)) return BLOCK_TYPE_EMPTY;
+  if (cache->sections[d])
+    return (BlockType)cache->sections[d]->blocks[block_index(x, y, z)];
+  if (!world->proceduralTerrain || !cache->chunks[d] || cache->chunks[d]->terrainReady ||
+      wy < TERRAIN_BASE_Y || wy >= (WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT) * SECTION_SIZE)
+    return BLOCK_TYPE_EMPTY;
+  if (!cache->sampled[x + 1][z + 1]) {
+    cache->columns[x + 1][z + 1] = MESH_BENCH_SAMPLE(world->terrainSeed, wx, wz);
+    cache->sampled[x + 1][z + 1] = 1;
+  }
+  return terrain_column_block(cache->columns[x + 1][z + 1], wy);
+}
+
 int section_mesh_build(const World *world, int cx, int sy, int cz, SectionMesh *mesh) {
   const Chunk *chunk = find_chunk(world, cx, cz);
   if (!mesh || !chunk || sy < voxel_section_coord(WORLD_COORD_MIN) ||
@@ -444,6 +486,35 @@ int section_mesh_build(const World *world, int cx, int sy, int cz, SectionMesh *
   }
   const int dx[6] = {-1, 1, 0, 0, 0, 0}, dy[6] = {0, 0, -1, 1, 0, 0},
             dz[6] = {0, 0, 0, 0, -1, 1};
+  MeshNeighbors neighbors;
+  memset(neighbors.sampled, 0, sizeof(neighbors.sampled));
+  uint8_t visible[SECTION_VOLUME] = {0};
+  size_t counts[BLOCK_TYPE_COUNT] = {0};
+  MESH_BENCH_QUERY_BEGIN();
+  for (int d = 0; d < 6; d++) {
+    neighbors.sections[d] = world_section(world, cx + dx[d], sy + dy[d], cz + dz[d]);
+    neighbors.chunks[d] = find_chunk(world, cx + dx[d], cz + dz[d]);
+  }
+  for (int x = 0; x < SECTION_SIZE; x++)
+    for (int y = 0; y < SECTION_SIZE; y++)
+      for (int z = 0; z < SECTION_SIZE; z++) {
+        int index = (x * SECTION_SIZE + y) * SECTION_SIZE + z;
+        BlockType type = (BlockType)section->blocks[index];
+        if (type == BLOCK_TYPE_EMPTY) continue;
+        if (!block_is_solid(type)) { free(temporary); return 0; }
+        for (int d = 0; d < 6; d++) {
+          int nx = x + dx[d], ny = y + dy[d], nz = z + dz[d];
+          BlockType other = nx >= 0 && nx < SECTION_SIZE &&
+              ny >= 0 && ny < SECTION_SIZE && nz >= 0 && nz < SECTION_SIZE ?
+              (BlockType)section->blocks[(nx * SECTION_SIZE + ny) * SECTION_SIZE + nz] :
+              mesh_boundary_block(world, &neighbors, d, cx, sy, cz, nx, ny, nz);
+          if (block_face_visible(type, other)) {
+            visible[index] |= (uint8_t)(1u << d);
+            counts[type] += 6;
+          }
+        }
+      }
+  MESH_BENCH_QUERY_END();
   /* Counterclockwise corners viewed from outside: -X,+X,-Y,+Y,-Z,+Z. */
   static const int corners[6][4][3] = {{{0, 0, 1}, {0, 1, 1}, {0, 1, 0}, {0, 0, 0}},
                                        {{1, 0, 0}, {1, 1, 0}, {1, 1, 1}, {1, 0, 1}},
@@ -451,58 +522,41 @@ int section_mesh_build(const World *world, int cx, int sy, int cz, SectionMesh *
                                        {{0, 1, 0}, {0, 1, 1}, {1, 1, 1}, {1, 1, 0}},
                                        {{0, 0, 0}, {0, 1, 0}, {1, 1, 0}, {1, 0, 0}},
                                        {{1, 0, 1}, {1, 1, 1}, {0, 1, 1}, {0, 0, 1}}};
-  size_t counts[BLOCK_TYPE_COUNT] = {0};
-  /* Two passes retain contiguous per-material draw ranges. */
-  for (int pass = 0; pass < 2; pass++) {
-    size_t cursors[BLOCK_TYPE_COUNT];
-    for (int t = 0; t < BLOCK_TYPE_COUNT; t++)
-      cursors[t] = result.firstVertex[t];
-    for (int x = 0; x < 16; x++)
-      for (int y = 0; y < 16; y++)
-        for (int z = 0; z < 16; z++) {
-          BlockType type = (BlockType)section->blocks[(x * 16 + y) * 16 + z];
-          if (type == BLOCK_TYPE_EMPTY)
-            continue;
-          if (!block_is_solid(type)) {
-            section_mesh_destroy(&result);
-            free(temporary);
-            return 0;
-          }
-          int wx = cx * 16 + x, wy = sy * 16 + y, wz = cz * 16 + z;
-          for (int d = 0; d < 6; d++) {
-            if (!block_face_visible(
-                    type, world_get_block(world, wx + dx[d], wy + dy[d], wz + dz[d])))
-              continue;
-            if (pass == 0) {
-              counts[type] += 6;
-              continue;
-            }
-            static const int order[6] = {0, 1, 2, 0, 2, 3};
-            for (int v = 0; v < 6; v++) {
-              const int *corner = corners[d][order[v]];
-              result.vertices[cursors[type]++] =
-                  (SurfaceVertex){world->origin.x + (wx + corner[0]) * world->blockSize,
-                                  world->origin.y + (wy + corner[1]) * world->blockSize,
-                                  world->origin.z + (wz + corner[2]) * world->blockSize};
-            }
+  for (int t = 0; t < BLOCK_TYPE_COUNT; t++) {
+    result.firstVertex[t] = result.vertexCount;
+    result.typeVertexCount[t] = counts[t];
+    result.vertexCount += counts[t];
+  }
+  /* A section has at most 4096*6*6 vertices. */
+  result.vertices = result.vertexCount
+                        ? malloc(result.vertexCount * sizeof(*result.vertices)) : NULL;
+  if (result.vertexCount && !result.vertices) {
+    free(temporary);
+    return 0;
+  }
+  size_t cursors[BLOCK_TYPE_COUNT];
+  memcpy(cursors, result.firstVertex, sizeof(cursors));
+  /* Reuse the visibility mask while emitting contiguous material ranges. */
+  for (int x = 0; x < SECTION_SIZE; x++)
+    for (int y = 0; y < SECTION_SIZE; y++)
+      for (int z = 0; z < SECTION_SIZE; z++) {
+        int index = (x * SECTION_SIZE + y) * SECTION_SIZE + z;
+        if (!visible[index]) continue;
+        BlockType type = (BlockType)section->blocks[index];
+        int wx = cx * SECTION_SIZE + x, wy = sy * SECTION_SIZE + y,
+            wz = cz * SECTION_SIZE + z;
+        for (int d = 0; d < 6; d++) {
+          if (!(visible[index] & (1u << d))) continue;
+          static const int order[6] = {0, 1, 2, 0, 2, 3};
+          for (int v = 0; v < 6; v++) {
+            const int *corner = corners[d][order[v]];
+            result.vertices[cursors[type]++] =
+                (SurfaceVertex){world->origin.x + (wx + corner[0]) * world->blockSize,
+                                world->origin.y + (wy + corner[1]) * world->blockSize,
+                                world->origin.z + (wz + corner[2]) * world->blockSize};
           }
         }
-    if (pass == 0) {
-      for (int t = 0; t < BLOCK_TYPE_COUNT; t++) {
-        result.firstVertex[t] = result.vertexCount;
-        result.typeVertexCount[t] = counts[t];
-        result.vertexCount += counts[t];
       }
-      /* A section has at most 4096*6*6 vertices. */
-      result.vertices = result.vertexCount
-                            ? malloc(result.vertexCount * sizeof(*result.vertices))
-                            : NULL;
-      if (result.vertexCount && !result.vertices) {
-        free(temporary);
-        return 0;
-      }
-    }
-  }
   section_mesh_destroy(mesh);
   *mesh = result;
   free(temporary);

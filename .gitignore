@@ -13,3 +13,6 @@ visibility_capture
 
 terrain_capture
 streaming_capture
+
+mesh_query_benchmark
+mesh_query_profile

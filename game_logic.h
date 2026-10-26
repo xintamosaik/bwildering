@@ -51,19 +51,38 @@ typedef struct {
   size_t vertexCount;
   size_t firstVertex[BLOCK_TYPE_COUNT];
   size_t typeVertexCount[BLOCK_TYPE_COUNT];
-} PlatformSurfaceMesh;
+} SectionMesh;
 
 enum {
   PLATFORM_BLOCKS_PER_SIDE = 192,
-  WORLD_MAX_BLOCKS = PLATFORM_BLOCKS_PER_SIDE * PLATFORM_BLOCKS_PER_SIDE
+  SECTION_SIZE = 16,
+  SECTION_VOLUME = 16 * 16 * 16,
+  WORLD_MIN_SECTION_Y = -2,
+  WORLD_SECTION_COUNT = 4
 };
 
 typedef struct {
-  uint8_t tiles[WORLD_MAX_BLOCKS];
-  uint8_t elevations[WORLD_MAX_BLOCKS]; /* Top height in block units above center.y. */
-  int blockCount; /* Occupied cells, not the grid capacity. */
-  int blocksPerSide;
-  Vec3 center; /* Horizontal center and reference top height (elevation zero). */
+  uint8_t blocks[SECTION_VOLUME];
+  size_t voxelCount;
+  int dirty;
+} Subchunk;
+
+typedef struct {
+  int x, z;
+  Subchunk *sections[WORLD_SECTION_COUNT];
+} Chunk;
+
+/* Owning type: initialize to zero, destroy explicitly, and do not copy by value.
+   Missing sections read as air. Bounds are horizontal side length and Y [-32,32).
+   Voxel coordinates are signed; render positions use origin + voxel * blockSize. */
+typedef struct {
+  Chunk *chunks;
+  size_t chunkCount;
+  size_t sectionCount;
+  size_t voxelCount;
+  int minChunkX, minChunkZ, chunksPerSide;
+  int minX, minZ, blocksPerSide;
+  Vec3 origin;
   float blockSize;
 } World;
 
@@ -81,18 +100,22 @@ void mat4_perspective(float fov_radians, float aspect, float near, float far,
 void mat4_lookat(Vec3 eye, Vec3 target, Vec3 up, mat4 dest);
 void mat4_rotate(mat4 dest, float angle, float x, float y, float z);
 void mat4_multiply(const mat4 a, const mat4 b, mat4 dest);
-/* Grid storage is x-major/z-minor. Invalid coordinates map to -1/EMPTY.
-   Each occupied cell is a solid column from center.y - blockSize to its top. */
-int world_index(int x, int z, int side);
-/* Requires a valid world and in-range coordinates.
-   Returns the center of the column's topmost cube. */
-Vec3 world_cell_to_position(const World *world, int x, int z);
-BlockType world_block_at(const World *world, int x, int z);
-int world_is_solid(const World *world, int x, int z);
-/* Returns the surface under a world-space point, or NAN outside occupied terrain. */
+int voxel_section_coord(int coordinate);
+int voxel_local_coord(int coordinate);
+int block_is_solid(BlockType type);
+int block_face_visible(BlockType type, BlockType neighbor);
+/* Initialization/generation replace an existing initialized world only on success.
+   side is 1..192; blockSize must be finite and >= 0.001 world units, and
+   individual cells must be representable by floats throughout the world.
+   center.x/z center the footprint; center.y is the voxel Y=0 reference plane. */
+int world_init(World *world, int side, Vec3 center, float blockSize);
+void world_destroy(World *world);
+Subchunk *world_section(const World *world, int chunkX, int sectionY, int chunkZ);
+BlockType world_get_block(const World *world, int x, int y, int z);
+/* Returns success, including identical writes; rejects invalid types/bounds. */
+int world_set_block(World *world, int x, int y, int z, BlockType type);
+/* Highest occupied surface, for spawn selection (not cave collision). */
 float world_surface_height(const World *world, float x, float z);
-/* Use this setter to keep blockCount consistent when editing occupancy. */
-int world_set_block(World *world, int x, int z, BlockType type);
 uint32_t random_bounded(uint32_t *state, uint32_t upperBound);
 int block_type_color(BlockType type, Vec3 *color);
 int create_platform(World *world, int blocksPerSide, Vec3 center,
@@ -100,12 +123,10 @@ int create_platform(World *world, int blocksPerSide, Vec3 center,
 /* Seeded, smooth terraced hills with elevation-dependent surface materials. */
 int create_terrain(World *world, int blocksPerSide, Vec3 center,
                    float blockSize, uint32_t seed);
-/* Builds exposed tops and sides, including sides around empty cells; no bottoms.
-   platformBlocksPerSide must match the world's grid size.
-   Pass an empty/destroyed mesh; failure leaves it unchanged. */
-int platform_surface_mesh_build(const World *world, int platformBlocksPerSide,
-                                PlatformSurfaceMesh *mesh);
-void platform_surface_mesh_destroy(PlatformSurfaceMesh *mesh);
+/* Transactionally replaces an initialized CPU mesh. Empty sections are valid. */
+int section_mesh_build(const World *world, int chunkX, int sectionY, int chunkZ,
+                       SectionMesh *mesh);
+void section_mesh_destroy(SectionMesh *mesh);
 void update_player(Player *updatedPlayer, PlayerInput input, float deltaTime,
                    const World *world);
 

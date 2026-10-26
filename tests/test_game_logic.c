@@ -1,33 +1,30 @@
 #include "../game_logic.h"
-
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <time.h>
 
 static void assert_near(float actual, float expected) {
   assert(fabsf(actual - expected) < 0.0001f);
 }
-
 static World single_block_world(void) {
   World world = {0};
-  assert(create_platform(&world, 1, (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 1));
-  return world;
+  assert(create_platform(&world, 1, (Vec3){0}, 1, 1));
+  return world; /* Move ownership to the caller. */
 }
-
 static Player make_player(Vec3 position, int grounded) {
-  return (Player){
-      .position = position,
-      .grounded = grounded,
-      .camera = {
-          .front = {0.0f, 0.0f, -1.0f},
-          .up = {0.0f, 1.0f, 0.0f},
-      },
-  };
+  return (Player){.position = position,
+                  .grounded = grounded,
+                  .camera = {.front = {0, 0, -1}, .up = {0, 1, 0}}};
 }
-
+static void set_column(World *world, int gridX, int gridZ, int height, BlockType type) {
+  for (int y = -32; y < 32; y++)
+    assert(world_set_block(world, world->minX + gridX, y, world->minZ + gridZ,
+                           y >= -1 && y < height ? type : BLOCK_TYPE_EMPTY));
+}
 static void test_vector_normalization(void) {
   Vec3 normalized = vec3_normalize((Vec3){3.0f, 0.0f, 4.0f});
   assert_near(normalized.x, 0.6f);
@@ -42,7 +39,7 @@ static void test_vector_normalization(void) {
 
 static void test_matrix_multiply_identity(void) {
   mat4 identity;
-  mat4 original = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f,
+  mat4 original = {1.0f, 2.0f,  3.0f,  4.0f,  5.0f,  6.0f,  7.0f,  8.0f,
                    9.0f, 10.0f, 11.0f, 12.0f, 13.0f, 14.0f, 15.0f, 16.0f};
   mat4 result;
   mat4_identity(identity);
@@ -76,8 +73,7 @@ static void test_block_type_palette(void) {
 
   for (int first = 0; first < BLOCK_TYPE_COUNT; first++) {
     for (int second = first + 1; second < BLOCK_TYPE_COUNT; second++) {
-      assert(colors[first].x != colors[second].x ||
-             colors[first].y != colors[second].y ||
+      assert(colors[first].x != colors[second].x || colors[first].y != colors[second].y ||
              colors[first].z != colors[second].z);
     }
   }
@@ -89,312 +85,18 @@ static void test_block_type_palette(void) {
   assert_near(color.x, 9.0f);
 }
 
-static void test_platform_generates_seeded_block_types(void) {
-  World first = {0};
-  World sameSeed = {0};
-  World differentSeed = {0};
-  World zeroSeed = {0};
-  World sameZeroSeed = {0};
-  const Vec3 center = {.x = 0.0f, .y = 0.0f, .z = 0.0f};
-  assert(create_platform(&first, 8, center, 1.0f, 42));
-  assert(create_platform(&sameSeed, 8, center, 1.0f, 42));
-  assert(create_platform(&differentSeed, 8, center, 1.0f, 43));
-  assert(create_platform(&zeroSeed, 8, center, 1.0f, 0));
-  assert(create_platform(&sameZeroSeed, 8, center, 1.0f, 0));
-  assert(first.blockCount == 64);
-  assert_near(world_cell_to_position(&first, 0, 0).x, -3.5f);
-  assert_near(world_cell_to_position(&first, 0, 0).y, -0.5f);
-  assert_near(world_cell_to_position(&first, 0, 0).z, -3.5f);
-
-  int typeCounts[BLOCK_TYPE_COUNT] = {0};
-  int matchingNeighbors = 0;
-  int differsFromOtherSeed = 0;
-  for (int i = 0; i < first.blockCount; i++) {
-    assert(first.tiles[i] == sameSeed.tiles[i]);
-    assert(zeroSeed.tiles[i] == sameZeroSeed.tiles[i]);
-    if (first.tiles[i] != differentSeed.tiles[i])
-      differsFromOtherSeed = 1;
-    assert(first.tiles[i] >= BLOCK_TYPE_GRASS);
-    assert(first.tiles[i] < BLOCK_TYPE_COUNT);
-    typeCounts[first.tiles[i]]++;
-
-    const int x = i / 8;
-    const int z = i % 8;
-    if (x + 1 < 8 &&
-        first.tiles[i] == first.tiles[i + 8])
-      matchingNeighbors++;
-    if (z + 1 < 8 &&
-        first.tiles[i] == first.tiles[i + 1])
-      matchingNeighbors++;
-  }
-  assert(differsFromOtherSeed);
-  assert(matchingNeighbors < 56);
-  for (int type = 0; type < BLOCK_TYPE_COUNT; type++)
-    assert(typeCounts[type] == first.blockCount / BLOCK_TYPE_COUNT);
-}
-
-static void test_platform_balances_non_divisible_type_counts(void) {
-  World world = {0};
-  assert(create_platform(&world, 5, (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 99));
-  assert(world.blockCount == 25);
-
-  int typeCounts[BLOCK_TYPE_COUNT] = {0};
-  for (int i = 0; i < world.blockCount; i++)
-    typeCounts[world.tiles[i]]++;
-
-  int minimum = typeCounts[0];
-  int maximum = typeCounts[0];
-  for (int type = 1; type < BLOCK_TYPE_COUNT; type++) {
-    if (typeCounts[type] < minimum)
-      minimum = typeCounts[type];
-    if (typeCounts[type] > maximum)
-      maximum = typeCounts[type];
-  }
-  assert(minimum == 6);
-  assert(maximum == 7);
-}
-
-static void test_configured_platform_geometry_and_seed(void) {
-  World world = {0};
-  World repeated = {0};
-  Vec3 center = {0.0f, 0.0f, 0.0f};
-  const float blockSize = 1.0f;
-  const int side = PLATFORM_BLOCKS_PER_SIDE;
-  const int totalBlocks = side * side;
-
-  assert(side == 192);
-  assert(create_platform(&world, side, center, blockSize, UINT32_C(0x4B1D2A37)));
-  assert(create_platform(&repeated, side, center, blockSize,
-                         UINT32_C(0x4B1D2A37)));
-  assert(world.blockCount == totalBlocks);
-  PlatformSurfaceMesh mesh = {0};
-  assert(platform_surface_mesh_build(&world, side, &mesh));
-  assert(mesh.vertexCount == (size_t)(totalBlocks + 4 * side) * 6);
-  platform_surface_mesh_destroy(&mesh);
-
-  int typeCounts[BLOCK_TYPE_COUNT] = {0};
-  for (int x = 0; x < side; x++) {
-    for (int z = 0; z < side; z++) {
-      int index = x * side + z;
-      const Vec3 position = world_cell_to_position(&world, x, z);
-      float expectedX = center.x + ((float)x - side / 2.0f + 0.5f) * blockSize;
-      float expectedZ = center.z + ((float)z - side / 2.0f + 0.5f) * blockSize;
-      assert(world_index(x, z, side) == index);
-      assert_near(position.x, expectedX);
-      assert_near(position.y, center.y - blockSize / 2.0f);
-      assert_near(position.z, expectedZ);
-      assert(world_is_solid(&world, x, z));
-      assert(world_block_at(&world, x, z) == repeated.tiles[index]);
-      typeCounts[world.tiles[index]]++;
-    }
-  }
-
-  for (int type = 0; type < BLOCK_TYPE_COUNT; type++)
-    assert(typeCounts[type] == totalBlocks / BLOCK_TYPE_COUNT);
-}
-
-static void test_platform_surface_mesh(void) {
-  World single = {0};
-  PlatformSurfaceMesh singleMesh = {0};
-  assert(create_platform(&single, 1, (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 1));
-  assert(platform_surface_mesh_build(&single, 1, &singleMesh));
-  assert(singleMesh.vertexCount == 30);
-  for (int type = 0; type < BLOCK_TYPE_COUNT; type++) {
-    if ((BlockType)type == single.tiles[0])
-      assert(singleMesh.typeVertexCount[type] == 30);
-    else
-      assert(singleMesh.typeVertexCount[type] == 0);
-  }
-  platform_surface_mesh_destroy(&singleMesh);
-  assert(singleMesh.vertices == NULL);
-  assert(singleMesh.vertexCount == 0);
-
-  World world = {0};
-  PlatformSurfaceMesh mesh = {0};
-  assert(create_platform(&world, 2, (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 2));
-  assert(platform_surface_mesh_build(&world, 2, &mesh));
-  assert(mesh.vertexCount == (2 * 2 + 4 * 2) * 6);
-
-  size_t topTriangles = 0;
-  size_t negativeXTriangles = 0;
-  size_t positiveXTriangles = 0;
-  size_t negativeZTriangles = 0;
-  size_t positiveZTriangles = 0;
-  for (size_t index = 0; index < mesh.vertexCount; index += 3) {
-    const SurfaceVertex *first = &mesh.vertices[index];
-    const SurfaceVertex *second = &mesh.vertices[index + 1];
-    const SurfaceVertex *third = &mesh.vertices[index + 2];
-    float edge1x = second->x - first->x;
-    float edge1y = second->y - first->y;
-    float edge1z = second->z - first->z;
-    float edge2x = third->x - first->x;
-    float edge2y = third->y - first->y;
-    float edge2z = third->z - first->z;
-    float normalX = edge1y * edge2z - edge1z * edge2y;
-    float normalY = edge1z * edge2x - edge1x * edge2z;
-    float normalZ = edge1x * edge2y - edge1y * edge2x;
-
-    if (normalY > 0.0f)
-      topTriangles++;
-    else if (normalX < 0.0f)
-      negativeXTriangles++;
-    else if (normalX > 0.0f)
-      positiveXTriangles++;
-    else if (normalZ < 0.0f)
-      negativeZTriangles++;
-    else if (normalZ > 0.0f)
-      positiveZTriangles++;
-    assert(first->x >= -1.0f && first->x <= 1.0f);
-    assert(first->y >= -1.0f && first->y <= 0.0f);
-    assert(first->z >= -1.0f && first->z <= 1.0f);
-    assert(second->x >= -1.0f && second->x <= 1.0f);
-    assert(second->y >= -1.0f && second->y <= 0.0f);
-    assert(second->z >= -1.0f && second->z <= 1.0f);
-    assert(third->x >= -1.0f && third->x <= 1.0f);
-    assert(third->y >= -1.0f && third->y <= 0.0f);
-    assert(third->z >= -1.0f && third->z <= 1.0f);
-  }
-  assert(topTriangles == 2 * 2 * 2);
-  assert(negativeXTriangles == 4);
-  assert(positiveXTriangles == 4);
-  assert(negativeZTriangles == 4);
-  assert(positiveZTriangles == 4);
-
-  size_t previousEnd = 0;
-  size_t expectedTypeVertices[BLOCK_TYPE_COUNT] = {0};
-  for (int x = 0; x < 2; x++) {
-    for (int z = 0; z < 2; z++) {
-      const BlockType type = world_block_at(&world, x, z);
-      size_t faces = 1 + (x == 0) + (x == 1) + (z == 0) + (z == 1);
-      expectedTypeVertices[type] += faces * 6;
-    }
-  }
-  for (int type = 0; type < BLOCK_TYPE_COUNT; type++) {
-    assert(mesh.firstVertex[type] == previousEnd);
-    assert(mesh.typeVertexCount[type] % 6 == 0);
-    assert(mesh.typeVertexCount[type] == expectedTypeVertices[type]);
-    previousEnd += mesh.typeVertexCount[type];
-  }
-  assert(previousEnd == mesh.vertexCount);
-
-  PlatformSurfaceMesh invalidMesh = {0};
-  assert(!platform_surface_mesh_build(&world, 1, &invalidMesh));
-  assert(invalidMesh.vertices == NULL);
-  platform_surface_mesh_destroy(&mesh);
-}
-
-static void test_platform_rejects_invalid_requests_without_mutation(void) {
-  World world = {0};
-  assert(create_platform(&world, 2, (Vec3){1.0f, 2.0f, 3.0f}, 4.0f, 9));
-  const World original = world;
-
-  assert(!create_platform(&world, 0, (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 1));
-  assert(!create_platform(&world, -1, (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 1));
-  assert(!create_platform(&world, PLATFORM_BLOCKS_PER_SIDE + 1,
-                          (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 1));
-  assert(!create_platform(NULL, 1, (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 1));
-  assert(!create_platform(&world, INT_MAX, (Vec3){0}, 1.0f, 1));
-  assert(!create_platform(&world, 1, (Vec3){0}, 0.0f, 1));
-  assert(!create_platform(&world, 1, (Vec3){0}, -1.0f, 1));
-  assert(!create_platform(&world, 1, (Vec3){0}, NAN, 1));
-  assert(!create_platform(&world, 1, (Vec3){INFINITY, 0, 0}, 1.0f, 1));
-  assert(memcmp(&world, &original, sizeof(world)) == 0);
-}
-
-static void test_world_rejects_invalid_block_type(void) {
-  World world = single_block_world();
-  assert(!world_set_block(&world, 0, 0, (BlockType)-1));
-  assert(!world_set_block(&world, 0, 0, BLOCK_TYPE_COUNT));
-  assert(!world_set_block(&world, -1, 0, BLOCK_TYPE_STONE));
-  assert(!world_set_block(NULL, 0, 0, BLOCK_TYPE_STONE));
-  assert(world.blockCount == 1);
-  assert(world_index(INT_MAX, 0, INT_MAX) == -1);
-  assert(world_index(0, -1, 1) == -1);
-  assert(world_index(1, 0, 1) == -1);
-  assert(world_block_at(&world, -1, 0) == BLOCK_TYPE_EMPTY);
-  assert(!world_is_solid(NULL, 0, 0));
-}
-
-static void test_grid_holes_and_empty_mesh(void) {
-  World world = {0};
-  PlatformSurfaceMesh mesh = {0};
-  assert(create_platform(&world, 3, (Vec3){10, 4, -6}, 2.0f, 3));
-  assert(world_set_block(&world, 1, 1, BLOCK_TYPE_EMPTY));
-  assert(world.blockCount == 8);
-  assert(!world_is_solid(&world, 1, 1));
-  assert(world_set_block(&world, 1, 1, BLOCK_TYPE_EMPTY));
-  assert(world.blockCount == 8);
-  assert(platform_surface_mesh_build(&world, 3, &mesh));
-  assert(mesh.vertexCount == (8 + 12 + 4) * 6);
-  int holeFaces = 0;
-  for (size_t i = 0; i < mesh.vertexCount; i += 6) {
-    const SurfaceVertex *v = &mesh.vertices[i];
-    int onHole = 1;
-    for (int j = 0; j < 6; j++) {
-      assert(v[j].x >= 7 && v[j].x <= 13);
-      assert(v[j].y >= 2 && v[j].y <= 4);
-      assert(v[j].z >= -9 && v[j].z <= -3);
-      if (v[j].x < 9 || v[j].x > 11 || v[j].z < -7 || v[j].z > -5)
-        onHole = 0;
-    }
-    if (onHole) {
-      const Vec3 a = {v[1].x-v[0].x, v[1].y-v[0].y, v[1].z-v[0].z};
-      const Vec3 b = {v[2].x-v[0].x, v[2].y-v[0].y, v[2].z-v[0].z};
-      const Vec3 normal = vec3_cross(a, b);
-      const Vec3 toHole = {10-v[0].x, 0, -6-v[0].z};
-      assert(vec3_dot(normal, toHole) > 0);
-      holeFaces++;
-    }
-  }
-  assert(holeFaces == 4);
-  platform_surface_mesh_destroy(&mesh);
-
-  Player player = make_player((Vec3){10, 4, -6}, 1);
-  update_player(&player, (PlayerInput){0}, 0.1f, &world);
-  assert(!player.grounded && player.position.y < 4);
-  assert(world_set_block(&world, 1, 1, BLOCK_TYPE_STONE));
-  assert(world.blockCount == 9);
-  player = make_player((Vec3){10, 4.1f, -6}, 0);
-  player.velocityY = -1;
-  update_player(&player, (PlayerInput){0}, 0.1f, &world);
-  assert(player.grounded);
-  assert_near(player.position.y, 4);
-
-  for (int x = 0; x < 3; x++)
-    for (int z = 0; z < 3; z++)
-      assert(world_set_block(&world, x, z, BLOCK_TYPE_EMPTY));
-  assert(world.blockCount == 0);
-  assert(platform_surface_mesh_build(&world, 3, &mesh));
-  assert(mesh.vertexCount == 0 && mesh.vertices == NULL);
-  platform_surface_mesh_destroy(&mesh);
-  assert(world_set_block(&world, 0, 0, BLOCK_TYPE_GRASS));
-  assert(world_set_block(&world, 2, 2, BLOCK_TYPE_STONE));
-  assert(platform_surface_mesh_build(&world, 3, &mesh));
-  assert(mesh.vertexCount == 60);
-  assert(mesh.typeVertexCount[BLOCK_TYPE_GRASS] == 30);
-  assert(mesh.typeVertexCount[BLOCK_TYPE_STONE] == 30);
-  platform_surface_mesh_destroy(&mesh);
-  world.tiles[0] = BLOCK_TYPE_COUNT;
-  assert(!platform_surface_mesh_build(&world, 3, &mesh));
-  world.tiles[0] = BLOCK_TYPE_GRASS;
-  world.blockCount++;
-  assert(!platform_surface_mesh_build(&world, 3, &mesh));
-}
-
 static void test_diagonal_movement_is_normalized(void) {
   World world = {0};
   Player forward = make_player((Vec3){0.0f, 10.0f, 0.0f}, 0);
   Player diagonal = forward;
   update_player(&forward, (PlayerInput){.forward = 1.0f}, 0.25f, &world);
-  update_player(&diagonal,
-                (PlayerInput){.forward = 1.0f, .strafe = 1.0f}, 0.25f,
-                &world);
+  update_player(&diagonal, (PlayerInput){.forward = 1.0f, .strafe = 1.0f}, 0.25f, &world);
 
   float forwardDistance = fabsf(forward.position.z);
-  float diagonalDistance = hypotf(diagonal.position.x,
-                                  diagonal.position.z);
+  float diagonalDistance = hypotf(diagonal.position.x, diagonal.position.z);
   assert_near(forwardDistance, 1.0f);
   assert_near(diagonalDistance, forwardDistance);
+  world_destroy(&world);
 }
 
 static void test_landing_on_block(void) {
@@ -407,6 +109,7 @@ static void test_landing_on_block(void) {
   assert(player.grounded);
   assert_near(player.position.y, 0.0f);
   assert_near(player.velocityY, 0.0f);
+  world_destroy(&world);
 }
 
 static void test_falling_off_platform_edge(void) {
@@ -419,6 +122,7 @@ static void test_falling_off_platform_edge(void) {
   assert(player.position.z < -0.5f);
   assert(player.position.y < 0.0f);
   assert(player.velocityY < 0.0f);
+  world_destroy(&world);
 }
 
 static void test_jump_requires_grounding(void) {
@@ -438,6 +142,7 @@ static void test_jump_requires_grounding(void) {
   assert(airborne.velocityY < 0.0f);
   assert_near(airborne.velocityY, withoutJump.velocityY);
   assert_near(airborne.position.y, withoutJump.position.y);
+  world_destroy(&world);
 }
 
 static void test_jump_height_and_timing(void) {
@@ -468,6 +173,7 @@ static void test_jump_height_and_timing(void) {
     assert_near(player.position.y, 0.0f);
     assert_near(player.velocityY, 0.0f);
   }
+  world_destroy(&world);
 }
 
 static void test_random_bounded_output_range(void) {
@@ -491,107 +197,11 @@ static void test_random_bounded_output_range(void) {
   }
 }
 
-static void test_seeded_terrain(void) {
-  World world = {0}, repeated = {0}, other = {0};
-  const Vec3 center = {12.0f, -3.0f, 8.0f};
-  const int side = PLATFORM_BLOCKS_PER_SIDE;
-  const uint32_t seed = UINT32_C(0x4B1D2A37);
-  assert(create_terrain(&world, side, center, 2.0f, seed));
-  assert(create_terrain(&repeated, side, center, 2.0f, seed));
-  assert(create_terrain(&other, side, center, 2.0f, seed + 1));
-  assert(world.blockCount == side * side);
-  assert(memcmp(world.tiles, repeated.tiles, sizeof(world.tiles)) == 0);
-  assert(memcmp(world.elevations, repeated.elevations, sizeof(world.elevations)) == 0);
-  assert(memcmp(world.elevations, other.elevations, sizeof(world.elevations)) != 0);
-  int minimum = 255, maximum = 0;
-  int materials[BLOCK_TYPE_COUNT] = {0};
-  size_t expectedQuads = 0;
-  for (int x = 0; x < side; x++) {
-    for (int z = 0; z < side; z++) {
-      const int index = world_index(x, z, side);
-      const int height = world.elevations[index];
-      assert(height <= 15);
-      if (height < minimum) minimum = height;
-      if (height > maximum) maximum = height;
-      materials[world.tiles[index]]++;
-      const Vec3 position = world_cell_to_position(&world, x, z);
-      assert_near(world_surface_height(&world, position.x, position.z),
-                  center.y + 2.0f * height);
-      assert_near(position.y + 1.0f, center.y + 2.0f * height);
-      const int dx[] = {-1, 1, 0, 0};
-      const int dz[] = {0, 0, -1, 1};
-      expectedQuads++;
-      for (int direction = 0; direction < 4; direction++) {
-        const int neighbor = world_index(x + dx[direction], z + dz[direction], side);
-        if (neighbor < 0 || height > world.elevations[neighbor])
-          expectedQuads++;
-        if (neighbor >= 0)
-          assert(abs(height - world.elevations[neighbor]) <= 1);
-      }
-    }
-  }
-  assert(maximum - minimum >= 8);
-  assert(materials[BLOCK_TYPE_GRASS] > 0);
-  assert(materials[BLOCK_TYPE_SAND] > 0);
-  assert(materials[BLOCK_TYPE_STONE] > 0);
-  PlatformSurfaceMesh mesh = {0};
-  assert(platform_surface_mesh_build(&world, side, &mesh));
-  assert(mesh.vertexCount == expectedQuads * 6);
-  for (size_t i = 0; i < mesh.vertexCount; i++) {
-    assert(mesh.vertices[i].y >= center.y - 2.0f);
-    assert(mesh.vertices[i].y <= center.y + maximum * 2.0f);
-  }
-  platform_surface_mesh_destroy(&mesh);
-  const World original = world;
-  assert(!create_terrain(&world, 0, center, 2.0f, seed));
-  assert(!create_terrain(&world, side + 1, center, 2.0f, seed));
-  assert(!create_terrain(&world, side, center, NAN, seed));
-  assert(memcmp(&world, &original, sizeof(world)) == 0);
-  assert(create_platform(&world, side, center, 2.0f, seed));
-  for (int i = 0; i < world.blockCount; i++)
-    assert(world.elevations[i] == 0);
-  assert(create_terrain(&world, 1, center, 2.0f, 0));
-  assert(create_terrain(&repeated, 1, center, 2.0f, 0));
-  assert(world.elevations[0] == repeated.elevations[0]);
-}
-
-static void test_terrain_cliff_mesh(void) {
-  World world = {0};
-  assert(create_platform(&world, 2, (Vec3){0}, 1, 1));
-  for (int i = 0; i < 4; i++)
-    world.tiles[i] = BLOCK_TYPE_GRASS;
-  /* A raised corner reveals two internal cliffs, plus its outer walls. */
-  world.elevations[0] = 3;
-  PlatformSurfaceMesh mesh = {0};
-  assert(platform_surface_mesh_build(&world, 2, &mesh));
-  assert(mesh.vertexCount == (4 + 8 + 2) * 6);
-  int cliffs = 0;
-  for (size_t i = 0; i < mesh.vertexCount; i += 6) {
-    const SurfaceVertex *v = &mesh.vertices[i];
-    const Vec3 a = {v[1].x-v[0].x, v[1].y-v[0].y, v[1].z-v[0].z};
-    const Vec3 b = {v[2].x-v[0].x, v[2].y-v[0].y, v[2].z-v[0].z};
-    const Vec3 normal = vec3_cross(a, b);
-    if (normal.x > 0 && v[0].x == 0) {
-      assert_near(v[0].y, 0);
-      assert_near(v[1].y, 3);
-      cliffs++;
-    }
-    if (normal.z > 0 && v[0].z == 0) {
-      assert_near(v[0].y, 0);
-      assert_near(v[1].y, 3);
-      cliffs++;
-    }
-    assert(normal.y >= 0);
-  }
-  assert(cliffs == 2);
-  platform_surface_mesh_destroy(&mesh);
-}
-
 static void test_terrain_collision(void) {
   World world = {0};
   assert(create_platform(&world, 3, (Vec3){0}, 1, 1));
   /* Raised column directly to the right of the center cell. */
-  world.elevations[world_index(2, 1, 3)] = 1;
+  set_column(&world, 2, 1, 1, BLOCK_TYPE_STONE);
   assert_near(world_surface_height(&world, 1, 0), 1);
   assert(isnan(world_surface_height(&world, 2, 0)));
   assert(isnan(world_surface_height(&world, NAN, 0)));
@@ -629,6 +239,7 @@ static void test_terrain_collision(void) {
     update_player(&player, (PlayerInput){0}, 0.01f, &world);
   assert(player.grounded);
   assert_near(player.position.y, 0);
+  world_destroy(&world);
 }
 
 static void test_camera_stays_clear_of_walls(void) {
@@ -637,16 +248,18 @@ static void test_camera_stays_clear_of_walls(void) {
   for (int direction = 0; direction < 4; direction++) {
     World world = {0};
     assert(create_platform(&world, 3, (Vec3){0}, 1, 1));
-    world.elevations[world_index(1 + dx[direction], 1 + dz[direction], 3)] = 3;
+    set_column(&world, 1 + dx[direction], 1 + dz[direction], 3, BLOCK_TYPE_STONE);
     Player player = make_player((Vec3){0, 0, 0}, 1);
     player.eyeHeight = 1;
     const PlayerInput input = {.strafe = dx[direction], .forward = -dz[direction]};
     for (int frame = 0; frame < 100; frame++)
       update_player(&player, input, 0.12f, &world);
-    const float approach = player.position.x * dx[direction] + player.position.z * dz[direction];
+    const float approach =
+        player.position.x * dx[direction] + player.position.z * dz[direction];
     assert(approach > 0.1f && approach <= 0.25f);
     assert(player.grounded);
     assert_near(player.position.y, 0);
+    world_destroy(&world);
   }
 }
 
@@ -654,7 +267,7 @@ static void test_player_footprint_at_corners_and_ledges(void) {
   World world = {0};
   assert(create_platform(&world, 3, (Vec3){0}, 1, 1));
   /* The center point misses this column; the player's corner overlaps it. */
-  world.elevations[world_index(2, 2, 3)] = 3;
+  set_column(&world, 2, 2, 3, BLOCK_TYPE_STONE);
   Player player = make_player((Vec3){0, 0, 0.6f}, 1);
   update_player(&player, (PlayerInput){.strafe = 1}, 0.12f, &world);
   assert(player.position.x <= 0.25f);
@@ -664,6 +277,7 @@ static void test_player_footprint_at_corners_and_ledges(void) {
   assert_near(player.position.x, previousX);
   assert(player.position.z > 0.6f);
 
+  world_destroy(&world);
   world = single_block_world();
   player = make_player((Vec3){0.6f, 0, 0}, 1);
   update_player(&player, (PlayerInput){0}, 0.01f, &world);
@@ -675,30 +289,353 @@ static void test_player_footprint_at_corners_and_ledges(void) {
   assert_near(player.position.y, 0);
   update_player(&player, (PlayerInput){.strafe = 1}, 0.1f, &world);
   assert(!player.grounded);
+  world_destroy(&world);
+}
+
+static void clear_dirty(World *world) {
+  for (size_t c = 0; c < world->chunkCount; c++)
+    for (int s = 0; s < WORLD_SECTION_COUNT; s++)
+      if (world->chunks[c].sections[s])
+        world->chunks[c].sections[s]->dirty = 0;
+}
+
+static int dirty_count(const World *world) {
+  int count = 0;
+  for (size_t c = 0; c < world->chunkCount; c++)
+    for (int s = 0; s < WORLD_SECTION_COUNT; s++)
+      if (world->chunks[c].sections[s])
+        count += world->chunks[c].sections[s]->dirty != 0;
+  return count;
+}
+
+static void test_coordinates_and_storage(void) {
+  const int coordinates[] = {INT_MIN, -17, -16, -1, 0, 15, 16, INT_MAX};
+  for (size_t i = 0; i < sizeof(coordinates) / sizeof(*coordinates); i++) {
+    int v = coordinates[i], local = voxel_local_coord(v),
+        section = voxel_section_coord(v);
+    assert(local >= 0 && local < 16);
+    assert((int64_t)section * 16 + local == v);
+  }
+  World world = {0};
+  assert(world_init(&world, 48, (Vec3){12, -3, 8}, 2));
+  assert(world.voxelCount == 0 && world.sectionCount == 0);
+  assert(world_get_block(&world, 0, 0, 0) == BLOCK_TYPE_EMPTY);
+  assert(world_set_block(&world, 0, 0, 0, BLOCK_TYPE_EMPTY));
+  assert(world.sectionCount == 0);
+  for (int x = -17; x <= 16; x++)
+    for (int y = -17; y <= 16; y++)
+      for (int z = -17; z <= 16; z++)
+        assert(world_set_block(&world, x, y, z,
+                               (BlockType)((voxel_local_coord(x) + voxel_local_coord(y) +
+                                            voxel_local_coord(z)) %
+                                           4)));
+  assert(world.voxelCount == 34 * 34 * 34 && world.sectionCount == 64);
+  for (int x = -17; x <= 16; x++)
+    for (int y = -17; y <= 16; y++)
+      for (int z = -17; z <= 16; z++)
+        assert(world_get_block(&world, x, y, z) ==
+               (BlockType)((voxel_local_coord(x) + voxel_local_coord(y) +
+                            voxel_local_coord(z)) %
+                           4));
+  size_t count = world.voxelCount;
+  assert(!world_set_block(&world, INT_MAX, 0, 0, BLOCK_TYPE_GRASS));
+  assert(!world_set_block(&world, 0, 32, 0, BLOCK_TYPE_GRASS));
+  assert(!world_set_block(&world, 0, -33, 0, BLOCK_TYPE_GRASS));
+  assert(!world_set_block(&world, 0, 0, 0, (BlockType)-1));
+  assert(!world_set_block(&world, 0, 0, 0, BLOCK_TYPE_COUNT));
+  assert(world.voxelCount == count);
+  Chunk *original = world.chunks;
+  assert(!world_init(&world, 0, (Vec3){0}, 1));
+  assert(!create_terrain(&world, 193, (Vec3){0}, 1, 1));
+  assert(!create_platform(&world, 1, (Vec3){NAN, 0, 0}, 1, 1));
+  assert(!world_init(&world, 1, (Vec3){0}, 0));
+  assert(!world_init(&world, 1, (Vec3){0}, NAN));
+  assert(!world_init(&world, 1, (Vec3){0}, 0.0001f));
+  assert(!world_init(&world, 1, (Vec3){1e10f,0,0}, 0.001f));
+  assert(world.chunks == original && world.voxelCount == count);
+  assert(world_get_block(&world, INT_MIN, INT_MAX, INT_MIN) == BLOCK_TYPE_EMPTY);
+  world_destroy(&world);
+  world_destroy(&world);
+  world_destroy(NULL);
+  assert(!world.chunks && !world.voxelCount);
+}
+
+static size_t mesh_world(const World *world, size_t *draws, size_t *nonempty) {
+  size_t vertices = 0;
+  *draws = 0;
+  *nonempty = 0;
+  for (size_t c = 0; c < world->chunkCount; c++)
+    for (int s = 0; s < WORLD_SECTION_COUNT; s++) {
+      SectionMesh mesh = {0};
+      assert(section_mesh_build(world, world->chunks[c].x, WORLD_MIN_SECTION_Y + s,
+                                world->chunks[c].z, &mesh));
+      vertices += mesh.vertexCount;
+      *nonempty += mesh.vertexCount != 0;
+      size_t end = 0;
+      for (int t = 0; t < BLOCK_TYPE_COUNT; t++) {
+        assert(mesh.firstVertex[t] == end);
+        assert(mesh.typeVertexCount[t] % 6 == 0);
+        end += mesh.typeVertexCount[t];
+        *draws += mesh.typeVertexCount[t] != 0;
+      }
+      assert(end == mesh.vertexCount);
+      section_mesh_destroy(&mesh);
+    }
+  return vertices;
+}
+
+static uint64_t hash_bytes(const uint8_t *values, size_t count) {
+  uint64_t hash = UINT64_C(14695981039346656037);
+  for (size_t i = 0; i < count; i++)
+    hash = (hash ^ values[i]) * UINT64_C(1099511628211);
+  return hash;
+}
+
+static void test_generator_regressions(void) {
+  World world = {0};
+  const Vec3 center = {12, -3, 8};
+  uint8_t materials[192 * 192], heights[192 * 192];
+  for (int terrain = 0; terrain < 2; terrain++) {
+    if (terrain)
+      assert(create_terrain(&world, 192, center, 2, UINT32_C(0x4B1D2A37)));
+    else
+      assert(create_platform(&world, 192, center, 2, UINT32_C(0x4B1D2A37)));
+    assert(world.chunkCount == 144);
+    size_t voxels = 0, expectedQuads = 0;
+    for (int x = 0; x < 192; x++)
+      for (int z = 0; z < 192; z++) {
+        int index = x * 192 + z;
+        float top = world_surface_height(&world, center.x + (x - 96 + 0.5f) * 2,
+                                         center.z + (z - 96 + 0.5f) * 2);
+        int height = (int)roundf((top - center.y) / 2);
+        assert(height >= 0 && height <= 15);
+        heights[index] = (uint8_t)height;
+        materials[index] = (uint8_t)world_get_block(&world, x - 96, height - 1, z - 96);
+        for (int y = -1; y < height; y++)
+          assert(world_get_block(&world, x - 96, y, z - 96) == materials[index]);
+        assert(world_get_block(&world, x - 96, height, z - 96) == BLOCK_TYPE_EMPTY);
+        voxels += (size_t)height + 1;
+      }
+    assert(hash_bytes(materials, sizeof(materials)) ==
+           (terrain ? UINT64_C(10456764649290648415) : UINT64_C(9772508476359371607)));
+    assert(hash_bytes(heights, sizeof(heights)) ==
+           (terrain ? UINT64_C(1177817274686891020) : UINT64_C(13722806926226842405)));
+    assert(world.voxelCount == voxels);
+    const int dx[] = {-1, 1, 0, 0}, dz[] = {0, 0, -1, 1};
+    for (int x = 0; x < 192; x++)
+      for (int z = 0; z < 192; z++) {
+        int height = heights[x * 192 + z];
+        expectedQuads += 2; /* Top and bottom. */
+        for (int d = 0; d < 4; d++) {
+          int nx = x + dx[d], nz = z + dz[d];
+          int neighbor =
+              nx < 0 || nx >= 192 || nz < 0 || nz >= 192 ? -1 : heights[nx * 192 + nz];
+          if (height > neighbor)
+            expectedQuads += (size_t)(height - neighbor);
+        }
+      }
+    size_t draws, sections;
+    clock_t start = clock();
+    size_t vertices = mesh_world(&world, &draws, &sections);
+    double ms = 1000.0 * (clock() - start) / CLOCKS_PER_SEC;
+    assert(vertices == expectedQuads * 6);
+    if (!terrain) {
+      assert(sections == 144);
+      assert(vertices == (2 * 192 * 192 + 4 * 192) * 6);
+    }
+    printf("%s: %zu populated meshes, %zu vertices, %zu bytes, %zu draws, CPU %.3f ms\n",
+           terrain ? "terrain" : "flat", sections, vertices,
+           vertices * sizeof(SurfaceVertex), draws, ms);
+  }
+  /* Global shuffle balance, zero seed, and odd/small transformed worlds. */
+  assert(create_platform(&world, 5, center, 2, 0));
+  World repeated = {0};
+  assert(create_platform(&repeated, 5, center, 2, 0));
+  int counts[4] = {0};
+  for (int x = 0; x < 5; x++)
+    for (int z = 0; z < 5; z++) {
+      BlockType type = world_get_block(&world, world.minX + x, -1, world.minZ + z);
+      counts[type]++;
+      assert(type ==
+             world_get_block(&repeated, repeated.minX + x, -1, repeated.minZ + z));
+      assert_near(
+          world_surface_height(&world, center.x + (x - 2) * 2, center.z + (z - 2) * 2),
+          center.y);
+    }
+  assert(counts[0] == 7 && counts[1] == 6 && counts[2] == 6 && counts[3] == 6);
+  assert(create_platform(&world, 1, center, 2, 0));
+  assert_near(world.origin.x, 11);
+  assert_near(world_surface_height(&world, 12, 8), -3);
+  assert(isnan(world_surface_height(&world, NAN, 8)));
+  assert(isnan(world_surface_height(&world, 14, 8)));
+  world_destroy(&world);
+  world_destroy(&repeated);
+}
+
+static void test_section_faces_and_replacement(void) {
+  World world = {0};
+  assert(world_init(&world, 48, (Vec3){10, 4, -6}, 2));
+  const int delta[6][3] = {{-1, 0, 0}, {1, 0, 0},  {0, -1, 0},
+                           {0, 1, 0},  {0, 0, -1}, {0, 0, 1}};
+  for (int d = 0; d < 6; d++) {
+    /* Each pair straddles a section boundary, including negative coordinates. */
+    int a[3] = {-1, -1, -1}, b[3] = {-1, -1, -1};
+    int axis = d / 2;
+    a[axis] = d % 2 ? -1 : 0;
+    for (int j = 0; j < 3; j++)
+      b[j] = a[j] + delta[d][j];
+    assert(world_set_block(&world, a[0], a[1], a[2], BLOCK_TYPE_STONE));
+    SectionMesh one = {0};
+    assert(section_mesh_build(&world, voxel_section_coord(a[0]),
+                              voxel_section_coord(a[1]), voxel_section_coord(a[2]),
+                              &one));
+    assert(one.vertexCount == 36);
+    /* Face normals point away from this voxel's center. */
+    Vec3 center = {world.origin.x + (a[0] + 0.5f) * 2, world.origin.y + (a[1] + 0.5f) * 2,
+                   world.origin.z + (a[2] + 0.5f) * 2};
+    for (size_t i = 0; i < one.vertexCount; i += 6) {
+      SurfaceVertex *v = &one.vertices[i];
+      Vec3 first = {v[0].x, v[0].y, v[0].z};
+      Vec3 edge1 = {v[1].x - v[0].x, v[1].y - v[0].y, v[1].z - v[0].z};
+      Vec3 edge2 = {v[2].x - v[0].x, v[2].y - v[0].y, v[2].z - v[0].z};
+      assert(vec3_dot(vec3_cross(edge1, edge2), vec3_sub(first, center)) > 0);
+    }
+    SurfaceVertex *original = one.vertices;
+    assert(!section_mesh_build(&world, INT_MAX, 0, 0, &one));
+    assert(one.vertices == original && one.vertexCount == 36);
+    assert(world_set_block(&world, b[0], b[1], b[2], BLOCK_TYPE_WATER));
+    size_t draws, nonempty;
+    assert(mesh_world(&world, &draws, &nonempty) == 60);
+    assert(world_set_block(&world, a[0], a[1], a[2], BLOCK_TYPE_EMPTY));
+    assert(world_set_block(&world, b[0], b[1], b[2], BLOCK_TYPE_EMPTY));
+    assert(section_mesh_build(&world, voxel_section_coord(a[0]),
+                              voxel_section_coord(a[1]), voxel_section_coord(a[2]),
+                              &one));
+    assert(one.vertices == NULL && one.vertexCount == 0);
+    section_mesh_destroy(&one);
+  }
+  /* A sealed 3x3x3 shell has 54 outer faces and six cavity faces. */
+  for (int x = 1; x <= 3; x++)
+    for (int y = 1; y <= 3; y++)
+      for (int z = 1; z <= 3; z++)
+        if (x != 2 || y != 2 || z != 2)
+          assert(world_set_block(&world, x, y, z, BLOCK_TYPE_GRASS));
+  size_t draws, nonempty;
+  assert(mesh_world(&world, &draws, &nonempty) == 60 * 6);
+  world_destroy(&world);
+}
+
+static void test_dirty_neighbors(void) {
+  World world = {0};
+  assert(world_init(&world, 48, (Vec3){0}, 1));
+  /* Allocate all 27 sections surrounding the origin section. */
+  for (int x = -1; x <= 1; x++)
+    for (int y = -1; y <= 1; y++)
+      for (int z = -1; z <= 1; z++)
+        assert(world_set_block(&world, x * 16 + 1, y * 16 + 1, z * 16 + 1,
+                               BLOCK_TYPE_STONE));
+  const int positions[][3] = {{2, 2, 2}, {0, 2, 2},    {0, 0, 2},
+                              {0, 0, 0}, {15, 15, 15}, {-1, -1, -1}};
+  const int expected[] = {1, 2, 3, 4, 4, 4};
+  for (int i = 0; i < 6; i++) {
+    clear_dirty(&world);
+    int x = positions[i][0], y = positions[i][1], z = positions[i][2];
+    assert(world_set_block(&world, x, y, z, BLOCK_TYPE_GRASS));
+    assert(dirty_count(&world) == expected[i]);
+    clear_dirty(&world);
+    assert(world_set_block(&world, x, y, z, BLOCK_TYPE_GRASS));
+    assert(dirty_count(&world) == 0);
+    assert(world_set_block(&world, x, y, z, BLOCK_TYPE_EMPTY));
+    assert(dirty_count(&world) == expected[i]);
+  }
+  const int faces[][3] = {{0, 2, 2},  {15, 2, 2}, {2, 0, 2},
+                          {2, 15, 2}, {2, 2, 0},  {2, 2, 15}};
+  for (int i = 0; i < 6; i++) {
+    clear_dirty(&world);
+    assert(
+        world_set_block(&world, faces[i][0], faces[i][1], faces[i][2], BLOCK_TYPE_WATER));
+    assert(dirty_count(&world) == 2);
+  }
+  world_destroy(&world);
+}
+
+static void test_cave_and_ceiling_collision(void) {
+  World world = {0};
+  assert(world_init(&world, 32, (Vec3){0}, 1));
+  for (int x = -3; x <= 3; x++)
+    for (int z = -3; z <= 3; z++) {
+      assert(world_set_block(&world, x, -1, z, BLOCK_TYPE_STONE));
+      assert(world_set_block(&world, x, 3, z, BLOCK_TYPE_STONE));
+    }
+  Player player = make_player((Vec3){0.5f, 0, 0.5f}, 1);
+  /* Floor landing inside the cave must ignore its roof. */
+  player.position.y = 0.8f;
+  player.grounded = 0;
+  player.velocityY = -1;
+  for (int i = 0; i < 100; i++)
+    update_player(&player, (PlayerInput){0}, 0.01f, &world);
+  assert(player.grounded);
+  assert_near(player.position.y, 0);
+  assert_near(world_surface_height(&world, 0.5f, 0.5f), 4);
+  /* Lower roof: jumping strikes it and clears upward velocity. */
+  for (int x = -3; x <= 3; x++)
+    for (int z = -3; z <= 3; z++)
+      assert(world_set_block(&world, x, 2, z, BLOCK_TYPE_STONE));
+  int hitCeiling = 0;
+  for (int i = 0; i < 100; i++) {
+    update_player(&player, (PlayerInput){.jump = i == 0}, 0.01f, &world);
+    assert(player.position.y <= 0.5001f);
+    if (player.position.y > 0.49f && player.velocityY == 0)
+      hitCeiling = 1;
+  }
+  assert(hitCeiling && player.grounded);
+  /* Walk under an overhang and across x/z=0 chunk boundaries. */
+  update_player(&player, (PlayerInput){.strafe = -1}, 0.4f, &world);
+  assert(player.position.x < 0 && player.grounded);
+  update_player(&player, (PlayerInput){.forward = 1}, 0.4f, &world);
+  assert(player.position.z < 0 && player.grounded);
+  /* A large falling movement cannot tunnel through the floor. */
+  player = make_player((Vec3){0.5f, 1, 0.5f}, 0);
+  /* Remove the low roof before this fall. */
+  for (int x = -3; x <= 3; x++)
+    for (int z = -3; z <= 3; z++)
+      assert(world_set_block(&world, x, 2, z, BLOCK_TYPE_EMPTY));
+  player.velocityY = -100;
+  update_player(&player, (PlayerInput){0}, 0.25f, &world);
+  assert(player.grounded);
+  assert_near(player.position.y, 0);
+  assert(world_set_block(&world, 0, -1, 0, BLOCK_TYPE_EMPTY));
+  update_player(&player, (PlayerInput){0}, 0.1f, &world);
+  assert(!player.grounded && player.position.y < 0);
+  /* Landing crosses the Y=0 section boundary; lower floors also work. */
+  assert(world_set_block(&world, 0, -17, 0, BLOCK_TYPE_STONE));
+  player = make_player((Vec3){0.5f, -14, 0.5f}, 0);
+  player.velocityY = -10;
+  for (int i = 0; i < 100; i++)
+    update_player(&player, (PlayerInput){0}, 0.01f, &world);
+  assert(player.grounded);
+  assert_near(player.position.y, -16);
+  world_destroy(&world);
 }
 
 int main(void) {
-  test_camera_stays_clear_of_walls();
-  test_player_footprint_at_corners_and_ledges();
-  test_seeded_terrain();
-  test_terrain_cliff_mesh();
-  test_terrain_collision();
   test_vector_normalization();
   test_matrix_multiply_identity();
   test_block_type_palette();
-  test_platform_generates_seeded_block_types();
-  test_platform_balances_non_divisible_type_counts();
-  test_configured_platform_geometry_and_seed();
-  test_platform_surface_mesh();
-  test_platform_rejects_invalid_requests_without_mutation();
-  test_world_rejects_invalid_block_type();
-  test_grid_holes_and_empty_mesh();
   test_diagonal_movement_is_normalized();
   test_landing_on_block();
   test_falling_off_platform_edge();
   test_jump_requires_grounding();
   test_jump_height_and_timing();
   test_random_bounded_output_range();
+  test_terrain_collision();
+  test_camera_stays_clear_of_walls();
+  test_player_footprint_at_corners_and_ledges();
+  test_coordinates_and_storage();
+  test_generator_regressions();
+  test_section_faces_and_replacement();
+  test_dirty_neighbors();
+  test_cave_and_ceiling_collision();
   puts("All game logic tests passed.");
   return 0;
 }

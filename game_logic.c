@@ -150,82 +150,6 @@ void mat4_multiply(const mat4 a, const mat4 b, mat4 dest) {
     dest[i] = res[i];
 }
 
-static int world_grid_valid(const World *world) {
-  return world != NULL && world->blocksPerSide > 0 &&
-         world->blocksPerSide <= WORLD_MAX_BLOCKS / world->blocksPerSide &&
-         isfinite(world->blockSize) && world->blockSize > 0.0f &&
-         isfinite(world->center.x) && isfinite(world->center.y) &&
-         isfinite(world->center.z);
-}
-
-int world_index(const int x, const int z, const int side) {
-  if (side <= 0 || side > WORLD_MAX_BLOCKS / side ||
-      x < 0 || z < 0 || x >= side || z >= side)
-    return -1;
-  return x * side + z;
-}
-
-Vec3 world_cell_to_position(const World *world, const int x, const int z) {
-  return (Vec3){
-      world->center.x + ((float)x - world->blocksPerSide / 2.0f + 0.5f) * world->blockSize,
-      world->center.y + (world->elevations[world_index(x, z, world->blocksPerSide)] - 0.5f) * world->blockSize,
-      world->center.z + ((float)z - world->blocksPerSide / 2.0f + 0.5f) * world->blockSize};
-}
-
-BlockType world_block_at(const World *world, const int x, const int z) {
-  if (!world_grid_valid(world))
-    return BLOCK_TYPE_EMPTY;
-  const int index = world_index(x, z, world->blocksPerSide);
-  if (index < 0 || world->tiles[index] >= BLOCK_TYPE_COUNT)
-    return BLOCK_TYPE_EMPTY;
-  return (BlockType)world->tiles[index];
-}
-
-int world_is_solid(const World *world, const int x, const int z) {
-  return world_block_at(world, x, z) != BLOCK_TYPE_EMPTY;
-}
-
-int world_set_block(World *world, const int x, const int z, const BlockType type) {
-  if (!world_grid_valid(world) ||
-      (type != BLOCK_TYPE_EMPTY && (type < BLOCK_TYPE_GRASS || type >= BLOCK_TYPE_COUNT)))
-    return 0;
-  const int index = world_index(x, z, world->blocksPerSide);
-  if (index < 0)
-    return 0;
-  const int wasSolid = world_is_solid(world, x, z);
-  world->tiles[index] = (uint8_t)type;
-  world->blockCount += (type != BLOCK_TYPE_EMPTY) - wasSolid;
-  return 1;
-}
-
-int create_platform(World *world, const int blocksPerSide, const Vec3 center,
-                    const float blockSize, const uint32_t seed) {
-  if (world == NULL || blocksPerSide <= 0 ||
-      blocksPerSide > WORLD_MAX_BLOCKS / blocksPerSide ||
-      !isfinite(blockSize) || blockSize <= 0.0f ||
-      !isfinite(center.x) || !isfinite(center.y) || !isfinite(center.z))
-    return 0;
-
-  const int totalBlocks = blocksPerSide * blocksPerSide;
-  world->blocksPerSide = blocksPerSide;
-  world->blockCount = totalBlocks;
-  world->center = center;
-  world->blockSize = blockSize;
-  for (int i = 0; i < totalBlocks; i++) {
-    world->tiles[i] = (uint8_t)(i % BLOCK_TYPE_COUNT);
-    world->elevations[i] = 0;
-  }
-
-  uint32_t randomState = seed == 0 ? UINT32_C(0x6D2B79F5) : seed;
-  for (int i = totalBlocks - 1; i > 0; i--) {
-    const int swapIndex = (int)random_bounded(&randomState, (uint32_t)(i + 1));
-    const uint8_t type = world->tiles[i];
-    world->tiles[i] = world->tiles[swapIndex];
-    world->tiles[swapIndex] = type;
-  }
-  return 1;
-}
-
 /* Integer hashing makes the seed independent of global RNG state. */
 static float terrain_lattice(const int x, const int z, const uint32_t seed) {
   uint32_t hash = seed ^ ((uint32_t)x * UINT32_C(0x9E3779B9)) ^
@@ -253,247 +177,156 @@ static float terrain_noise(const int x, const int z, const int scale,
   return (a + (b - a) * tx) * (1.0f - tz) + (c + (d - c) * tx) * tz;
 }
 
-int create_terrain(World *world, const int blocksPerSide, const Vec3 center,
-                   const float blockSize, const uint32_t seed) {
-  if (!create_platform(world, blocksPerSide, center, blockSize, seed))
+/* Generators fill full voxel columns, preserving the old global grid sampling. */
+static int generate_world(World *world, int side, Vec3 center, float size,
+                          uint32_t seed, int terrain) {
+  World result = {0};
+  if (world == NULL || !world_init(&result, side, center, size))
     return 0;
-  for (int x = 0; x < blocksPerSide; x++) {
-    for (int z = 0; z < blocksPerSide; z++) {
-      const int index = world_index(x, z, blocksPerSide);
-      const float height = 10.0f * terrain_noise(x, z, 32, seed) +
-                           4.0f * terrain_noise(x, z, 16, seed ^ UINT32_C(0xA341316C)) +
-                           1.5f * terrain_noise(x, z, 8, seed ^ UINT32_C(0xC8013EA4));
-      const uint8_t elevation = (uint8_t)height;
-      world->elevations[index] = elevation;
-      world->tiles[index] = elevation <= 4 ? BLOCK_TYPE_SAND :
-                            elevation >= 10 ? BLOCK_TYPE_STONE : BLOCK_TYPE_GRASS;
-    }
+  const int count = side * side;
+  uint8_t *tiles = malloc((size_t)count);
+  if (tiles == NULL) {
+    world_destroy(&result);
+    return 0;
   }
-  return 1;
-}
-
-/* Empty neighbors reveal the entire column down to the shared base. */
-static float column_top(const World *world, const int x, const int z) {
-  if (!world_is_solid(world, x, z))
-    return world->center.y - world->blockSize;
-  return world->center.y +
-         world->elevations[world_index(x, z, world->blocksPerSide)] * world->blockSize;
-}
-
-float world_surface_height(const World *world, const float x, const float z) {
-  if (!world_grid_valid(world) || !isfinite(x) || !isfinite(z))
-    return NAN;
-  const float gridX = (x - world->center.x) / world->blockSize + world->blocksPerSide / 2.0f;
-  const float gridZ = (z - world->center.z) / world->blockSize + world->blocksPerSide / 2.0f;
-  const int side = world->blocksPerSide;
-  if (gridX < 0 || gridZ < 0 || gridX > side || gridZ > side)
-    return NAN;
-  const int cellX = gridX == side ? side - 1 : (int)floorf(gridX);
-  const int cellZ = gridZ == side ? side - 1 : (int)floorf(gridZ);
-  return world_is_solid(world, cellX, cellZ) ? column_top(world, cellX, cellZ) : NAN;
-}
-
-static void append_surface_quad(SurfaceVertex *vertices, size_t *cursor,
-                                const Vec3 first, const Vec3 second, const Vec3 third,
-                                const Vec3 fourth) {
-  vertices[(*cursor)++] = (SurfaceVertex){.x = first.x, .y = first.y, .z = first.z};
-  vertices[(*cursor)++] = (SurfaceVertex){.x = second.x, .y = second.y, .z = second.z};
-  vertices[(*cursor)++] = (SurfaceVertex){.x = third.x, .y = third.y, .z = third.z};
-  vertices[(*cursor)++] = (SurfaceVertex){.x = first.x, .y = first.y, .z = first.z};
-  vertices[(*cursor)++] = (SurfaceVertex){.x = third.x, .y = third.y, .z = third.z};
-  vertices[(*cursor)++] = (SurfaceVertex){.x = fourth.x, .y = fourth.y, .z = fourth.z};
-}
-
-int platform_surface_mesh_build(const World *world, const int platformBlocksPerSide,
-                                PlatformSurfaceMesh *mesh) {
-  if (!world_grid_valid(world) || mesh == NULL ||
-      platformBlocksPerSide != world->blocksPerSide)
-    return 0;
-
-  const int side = world->blocksPerSide;
-  const int cellCount = side * side;
-  int occupied = 0;
-  size_t quadCounts[BLOCK_TYPE_COUNT] = {0};
-  for (int index = 0; index < cellCount; index++) {
-    const uint8_t type = world->tiles[index];
-    if (type == BLOCK_TYPE_EMPTY)
-      continue;
-    if (type >= BLOCK_TYPE_COUNT)
-      return 0;
-    occupied++;
-    const int x = index / side;
-    const int z = index % side;
-    const float top = column_top(world, x, z);
-    quadCounts[type] += 1 + (column_top(world, x - 1, z) < top) +
-                        (column_top(world, x + 1, z) < top) +
-                        (column_top(world, x, z - 1) < top) +
-                        (column_top(world, x, z + 1) < top);
+  for (int i = 0; i < count; i++)
+    tiles[i] = (uint8_t)(i % BLOCK_TYPE_COUNT);
+  uint32_t state = seed == 0 ? UINT32_C(0x6D2B79F5) : seed;
+  for (int i = count - 1; i > 0; i--) {
+    int j = (int)random_bounded(&state, (uint32_t)(i + 1));
+    uint8_t t = tiles[i];
+    tiles[i] = tiles[j];
+    tiles[j] = t;
   }
-  if (occupied != world->blockCount)
-    return 0;
-
-  PlatformSurfaceMesh result = {0};
-  size_t totalQuads = 0;
-  for (int type = 0; type < BLOCK_TYPE_COUNT; type++) {
-    if (quadCounts[type] > SIZE_MAX / 6 ||
-        totalQuads > SIZE_MAX - quadCounts[type])
-      return 0;
-    result.firstVertex[type] = totalQuads * 6;
-    result.typeVertexCount[type] = quadCounts[type] * 6;
-    totalQuads += quadCounts[type];
-  }
-  if (totalQuads > SIZE_MAX / (6 * sizeof(SurfaceVertex)))
-    return 0;
-  result.vertexCount = totalQuads * 6;
-  result.vertices = result.vertexCount == 0 ? NULL :
-      malloc(result.vertexCount * sizeof(*result.vertices));
-  if (result.vertexCount != 0 && result.vertices == NULL)
-    return 0;
-
-  size_t cursors[BLOCK_TYPE_COUNT];
-  for (int type = 0; type < BLOCK_TYPE_COUNT; type++)
-    cursors[type] = result.firstVertex[type];
-
-  for (int index = 0; index < cellCount; index++) {
-    const BlockType type = (BlockType)world->tiles[index];
-    if (type == BLOCK_TYPE_EMPTY)
-      continue;
-    const int x = index / side;
-    const int z = index % side;
-    const Vec3 position = world_cell_to_position(world, x, z);
-    const float half = world->blockSize / 2.0f;
-    const float left = position.x - half;
-    const float right = position.x + half;
-    const float top = column_top(world, x, z);
-    const float leftBottom = column_top(world, x - 1, z);
-    const float rightBottom = column_top(world, x + 1, z);
-    const float backBottom = column_top(world, x, z - 1);
-    const float frontBottom = column_top(world, x, z + 1);
-    const float back = position.z - half;
-    const float front = position.z + half;
-    size_t *cursor = &cursors[type];
-
-    append_surface_quad(
-        result.vertices, cursor, (Vec3){.x = left, .y = top, .z = back},
-        (Vec3){.x = left, .y = top, .z = front}, (Vec3){.x = right, .y = top, .z = front},
-        (Vec3){.x = right, .y = top, .z = back});
-    if (leftBottom < top)
-      append_surface_quad(
-          result.vertices, cursor, (Vec3){.x = left, .y = leftBottom, .z = front},
-          (Vec3){.x = left, .y = top, .z = front}, (Vec3){.x = left, .y = top, .z = back},
-          (Vec3){.x = left, .y = leftBottom, .z = back});
-    if (rightBottom < top)
-      append_surface_quad(
-          result.vertices, cursor, (Vec3){.x = right, .y = rightBottom, .z = back},
-          (Vec3){.x = right, .y = top, .z = back}, (Vec3){.x = right, .y = top, .z = front},
-          (Vec3){.x = right, .y = rightBottom, .z = front});
-    if (backBottom < top)
-      append_surface_quad(
-          result.vertices, cursor, (Vec3){.x = left, .y = backBottom, .z = back},
-          (Vec3){.x = left, .y = top, .z = back}, (Vec3){.x = right, .y = top, .z = back},
-          (Vec3){.x = right, .y = backBottom, .z = back});
-    if (frontBottom < top)
-      append_surface_quad(
-          result.vertices, cursor, (Vec3){.x = right, .y = frontBottom, .z = front},
-          (Vec3){.x = right, .y = top, .z = front}, (Vec3){.x = left, .y = top, .z = front},
-          (Vec3){.x = left, .y = frontBottom, .z = front});
-  }
-
-  *mesh = result;
-  return 1;
-}
-
-void platform_surface_mesh_destroy(PlatformSurfaceMesh *mesh) {
-  if (mesh == NULL)
-    return;
-  free(mesh->vertices);
-  *mesh = (PlatformSurfaceMesh){0};
-}
-
-/* Keep the camera away from walls and support the player's whole footprint. */
-static const float PLAYER_RADIUS = 0.25f;
-
-static float player_support_height(const World *world, const float x, const float z) {
-  if (!world_grid_valid(world))
-    return NAN;
-  const float halfSide = world->blocksPerSide / 2.0f;
-  const float minX = (x - PLAYER_RADIUS - world->center.x) / world->blockSize + halfSide;
-  const float maxX = (x + PLAYER_RADIUS - world->center.x) / world->blockSize + halfSide;
-  const float minZ = (z - PLAYER_RADIUS - world->center.z) / world->blockSize + halfSide;
-  const float maxZ = (z + PLAYER_RADIUS - world->center.z) / world->blockSize + halfSide;
-  const int side = world->blocksPerSide;
-  if (maxX <= 0 || maxZ <= 0 || minX >= side || minZ >= side)
-    return NAN;
-  const int firstX = (int)floorf(fmaxf(0, minX));
-  const int firstZ = (int)floorf(fmaxf(0, minZ));
-  const int lastX = (int)ceilf(fminf((float)side, maxX)) - 1;
-  const int lastZ = (int)ceilf(fminf((float)side, maxZ)) - 1;
-  float highest = NAN;
-  for (int cellX = firstX; cellX <= lastX; cellX++) {
-    for (int cellZ = firstZ; cellZ <= lastZ; cellZ++) {
-      if (world_is_solid(world, cellX, cellZ)) {
-        const float top = column_top(world, cellX, cellZ);
-        if (isnan(highest) || top > highest)
-          highest = top;
+  for (int x = 0; x < side; x++) {
+    for (int z = 0; z < side; z++) {
+      int height = 0;
+      BlockType type = (BlockType)tiles[x * side + z];
+      if (terrain) {
+        height = (int)(10.0f * terrain_noise(x, z, 32, seed) +
+                       4.0f * terrain_noise(x, z, 16, seed ^ UINT32_C(0xA341316C)) +
+                       1.5f * terrain_noise(x, z, 8, seed ^ UINT32_C(0xC8013EA4)));
+        type = height <= 4    ? BLOCK_TYPE_SAND
+               : height >= 10 ? BLOCK_TYPE_STONE
+                              : BLOCK_TYPE_GRASS;
+      }
+      for (int y = -1; y < height; y++) {
+        if (!world_set_block(&result, result.minX + x, y, result.minZ + z, type)) {
+          free(tiles);
+          world_destroy(&result);
+          return 0;
+        }
       }
     }
   }
-  return highest;
+  free(tiles);
+  world_destroy(world);
+  *world = result;
+  return 1;
 }
 
-/* Sweep in small increments so a long frame cannot tunnel through a column.
-   Resolve axes separately so the player can slide along a cliff face. */
-static void move_player_horizontal(Player *player, const Vec3 movement,
-                                    const World *world) {
-  const float distance = fmaxf(fabsf(movement.x), fabsf(movement.z));
-  const float stepSize = world_grid_valid(world) ?
-      fminf(world->blockSize * 0.25f, PLAYER_RADIUS * 0.5f) : 1.0f;
-  const int steps = (int)fmaxf(1.0f, ceilf(distance / stepSize));
+int create_platform(World *world, int side, Vec3 center, float size, uint32_t seed) {
+  return generate_world(world, side, center, size, seed, 0);
+}
+
+int create_terrain(World *world, int side, Vec3 center, float size, uint32_t seed) {
+  return generate_world(world, side, center, size, seed, 1);
+}
+
+/* The body is independent of camera eye height. */
+static const float PLAYER_RADIUS = 0.25f;
+static const float PLAYER_HEIGHT = 1.5f;
+
+static int player_intersects(const World *world, Vec3 p) {
+  if (world == NULL || world->chunks == NULL)
+    return 0;
+  const float size = world->blockSize;
+  const float epsilon = 0.00001f;
+  float lo[3] = {(p.x - PLAYER_RADIUS - world->origin.x) / size,
+                 (p.y + epsilon - world->origin.y) / size,
+                 (p.z - PLAYER_RADIUS - world->origin.z) / size};
+  float hi[3] = {(p.x + PLAYER_RADIUS - world->origin.x) / size,
+                 (p.y + PLAYER_HEIGHT - epsilon - world->origin.y) / size,
+                 (p.z + PLAYER_RADIUS - world->origin.z) / size};
+  int lower[3] = {world->minX, WORLD_MIN_SECTION_Y * SECTION_SIZE, world->minZ};
+  int upper[3] = {world->minX + world->blocksPerSide,
+                  (WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT) * SECTION_SIZE,
+                  world->minZ + world->blocksPerSide};
+  int first[3], last[3];
+  for (int i = 0; i < 3; i++) {
+    if (!isfinite(lo[i]) || !isfinite(hi[i]) || hi[i] <= lower[i] || lo[i] >= upper[i])
+      return 0;
+    first[i] = (int)floorf(fmaxf(lo[i], (float)lower[i]));
+    last[i] = (int)ceilf(fminf(hi[i], (float)upper[i])) - 1;
+  }
+  for (int x = first[0]; x <= last[0]; x++)
+    for (int y = first[1]; y <= last[1]; y++)
+      for (int z = first[2]; z <= last[2]; z++)
+        if (block_is_solid(world_get_block(world, x, y, z)))
+          return 1;
+  return 0;
+}
+
+static int move_axis(Player *player, const World *world, float distance, int axis) {
+  float size = world && world->chunks ? world->blockSize : 1.0f;
+  int steps = (int)fmaxf(1, ceilf(fabsf(distance) / fminf(size * 0.25f, 0.125f)));
   for (int i = 0; i < steps; i++) {
-    float next = player->position.x + movement.x / steps;
-    float top = player_support_height(world, next, player->position.z);
-    if (isnan(top) || player->position.y >= top - 0.001f)
-      player->position.x = next;
-    next = player->position.z + movement.z / steps;
-    top = player_support_height(world, player->position.x, next);
-    if (isnan(top) || player->position.y >= top - 0.001f)
-      player->position.z = next;
+    Vec3 start = player->position, next = start;
+    float step = distance / steps;
+    if (axis == 0)
+      next.x += step;
+    else if (axis == 1)
+      next.y += step;
+    else
+      next.z += step;
+    if (player_intersects(world, next)) {
+      float low = 0, high = 1;
+      for (int j = 0; j < 22; j++) {
+        float t = (low + high) * 0.5f;
+        Vec3 candidate = vec3_add(start, vec3_scale(vec3_sub(next, start), t));
+        if (player_intersects(world, candidate))
+          high = t;
+        else
+          low = t;
+      }
+      /* Leave a small separation so float rounding cannot place the body
+         just beyond the contact plane on the next frame. */
+      low = fmaxf(0, low - 0.000001f / fmaxf(fabsf(step), 0.000001f));
+      player->position = vec3_add(start, vec3_scale(vec3_sub(next, start), low));
+      return 1;
+    }
+    player->position = next;
   }
+  return 0;
 }
 
-void update_player(Player *updatedPlayer, const PlayerInput input, const float deltaTime,
-                   const World *world) {
-  const float moveSpeed = 4.0f;
-  const Vec3 frontXZ = vec3_normalize((Vec3){updatedPlayer->camera.front.x, 0.0f,
-                                       updatedPlayer->camera.front.z});
-  const Vec3 right = vec3_normalize(vec3_cross(frontXZ, updatedPlayer->camera.up));
-  Vec3 movement = vec3_add(vec3_scale(frontXZ, input.forward),
-                           vec3_scale(right, input.strafe));
-  if (vec3_dot(movement, movement) > 1.0f)
-    movement = vec3_normalize(movement);
-  move_player_horizontal(updatedPlayer, vec3_scale(movement, moveSpeed * deltaTime), world);
-
-  const float top = player_support_height(world, updatedPlayer->position.x,
-                                          updatedPlayer->position.z);
-  if (updatedPlayer->grounded &&
-      (isnan(top) || fabsf(updatedPlayer->position.y - top) >= 0.001f))
-    updatedPlayer->grounded = 0;
-
-  if (input.jump && updatedPlayer->grounded) {
-    updatedPlayer->velocityY = JUMP_SPEED;
-    updatedPlayer->grounded = 0;
-  }
-  if (updatedPlayer->grounded)
+void update_player(Player *player, PlayerInput input, float dt, const World *world) {
+  if (!player || !isfinite(dt) || dt <= 0 || dt > 10)
     return;
-
-  const float previousY = updatedPlayer->position.y;
-  const float gravity = GRAVITY * (updatedPlayer->velocityY <= 0.0f ?
-                                  FALL_GRAVITY_MULTIPLIER : 1.0f);
-  updatedPlayer->velocityY -= gravity * deltaTime;
-  updatedPlayer->position.y += updatedPlayer->velocityY * deltaTime;
-  if (!isnan(top) && previousY >= top && updatedPlayer->position.y <= top) {
-    updatedPlayer->position.y = top;
-    updatedPlayer->velocityY = 0.0f;
-    updatedPlayer->grounded = 1;
+  Vec3 forward =
+      vec3_normalize((Vec3){player->camera.front.x, 0, player->camera.front.z});
+  Vec3 right = vec3_normalize(vec3_cross(forward, player->camera.up));
+  Vec3 movement =
+      vec3_add(vec3_scale(forward, input.forward), vec3_scale(right, input.strafe));
+  if (vec3_dot(movement, movement) > 1)
+    movement = vec3_normalize(movement);
+  move_axis(player, world, movement.x * 4 * dt, 0);
+  move_axis(player, world, movement.z * 4 * dt, 2);
+  Vec3 below = player->position;
+  below.y -= 0.001f;
+  if (player->grounded && !player_intersects(world, below))
+    player->grounded = 0;
+  if (input.jump && player->grounded) {
+    player->velocityY = JUMP_SPEED;
+    player->grounded = 0;
+  }
+  if (player->grounded)
+    return;
+  float gravity = GRAVITY * (player->velocityY <= 0 ? FALL_GRAVITY_MULTIPLIER : 1);
+  player->velocityY -= gravity * dt;
+  int falling = player->velocityY < 0;
+  if (move_axis(player, world, player->velocityY * dt, 1)) {
+    player->velocityY = 0;
+    player->grounded = falling;
   }
 }

@@ -3,9 +3,9 @@ CFLAGS = -Wall -Wextra -O2 -std=c99
 LDFLAGS = -lGLEW -lglfw -lGL -lm -lpthread
 
 TARGET = bwildering
-SRC = main.c game_logic.c
+SRC = main.c game_logic.c voxel_world.c
 TEST_TARGET = test_game_logic
-TEST_SRC = tests/test_game_logic.c game_logic.c
+TEST_SRC = tests/test_game_logic.c game_logic.c voxel_world.c
 
 all: $(TARGET)
 
@@ -15,13 +15,30 @@ $(TARGET): $(SRC) game_logic.h
 $(TEST_TARGET): $(TEST_SRC) game_logic.h
 	$(CC) $(CFLAGS) $(TEST_SRC) -o $(TEST_TARGET) -lm
 
-test: $(TEST_TARGET)
+test_allocation_failures: tests/test_allocation_failures.c game_logic.c voxel_world.c game_logic.h
+	$(CC) $(CFLAGS) tests/test_allocation_failures.c game_logic.c voxel_world.c -o $@ -lm -Wl,--wrap=malloc,--wrap=calloc
+
+test_renderer: tests/test_renderer.c $(SRC) game_logic.h
+	$(CC) $(CFLAGS) tests/test_renderer.c game_logic.c voxel_world.c -o $@ $(LDFLAGS)
+
+test: $(TEST_TARGET) test_allocation_failures
 	./$(TEST_TARGET)
+	./test_allocation_failures
+
+# Requires a local X11 display and an OpenGL 3.3 context; uses an invisible window.
+test-renderer: test_renderer
+	./test_renderer
+
+test-sanitize:
+	$(CC) -Wall -Wextra -O1 -g -std=c99 -fsanitize=address,undefined -fno-omit-frame-pointer $(TEST_SRC) -o test_game_logic_sanitize -lm
+	./test_game_logic_sanitize
+	$(CC) -Wall -Wextra -O1 -g -std=c99 -fsanitize=address,undefined -fno-omit-frame-pointer tests/test_allocation_failures.c game_logic.c voxel_world.c -o test_allocation_failures_sanitize -lm -Wl,--wrap=malloc,--wrap=calloc
+	./test_allocation_failures_sanitize
 
 clean:
-	rm -f $(TARGET) $(TEST_TARGET)
+	rm -f $(TARGET) $(TEST_TARGET) test_allocation_failures test_renderer test_game_logic_sanitize test_allocation_failures_sanitize
 
 run: all
 	./$(TARGET)
 
-.PHONY: all clean run test
+.PHONY: all clean run test test-renderer test-sanitize

@@ -17,10 +17,16 @@ typedef struct {
 } MouseInput;
 
 typedef struct {
-  GLuint platformVao;
-  GLuint platformVbo;
+  int chunkX, sectionY, chunkZ;
+  GLuint vao, vbo;
+  Vec3 boundsMin, boundsMax;
   GLint firstVertex[BLOCK_TYPE_COUNT];
   GLsizei vertexCount[BLOCK_TYPE_COUNT];
+} SectionGpuMesh;
+
+typedef struct {
+  SectionGpuMesh *meshes;
+  size_t meshCount;
   GLuint textVao;
   GLuint textVbo;
   GLuint program;
@@ -204,11 +210,18 @@ static GLuint create_shader_program(void) {
   return program;
 }
 
+static void section_gpu_mesh_destroy(SectionGpuMesh *mesh) {
+  if (mesh->vao)
+    glDeleteVertexArrays(1, &mesh->vao);
+  if (mesh->vbo)
+    glDeleteBuffers(1, &mesh->vbo);
+  *mesh = (SectionGpuMesh){0};
+}
+
 static void renderer_destroy(Renderer *renderer) {
-  if (renderer->platformVao != 0)
-    glDeleteVertexArrays(1, &renderer->platformVao);
-  if (renderer->platformVbo != 0)
-    glDeleteBuffers(1, &renderer->platformVbo);
+  for (size_t i = 0; i < renderer->meshCount; i++)
+    section_gpu_mesh_destroy(&renderer->meshes[i]);
+  free(renderer->meshes);
   if (renderer->textVao != 0)
     glDeleteVertexArrays(1, &renderer->textVao);
   if (renderer->textVbo != 0)
@@ -255,50 +268,95 @@ static int renderer_init(Renderer *renderer) {
   return 1;
 }
 
-static int renderer_upload_platform_mesh(Renderer *renderer,
-                                         const PlatformSurfaceMesh *mesh) {
-  if (mesh == NULL || mesh->vertices == NULL || mesh->vertexCount == 0 ||
-      mesh->vertexCount > (size_t)PTRDIFF_MAX / sizeof(*mesh->vertices))
-    return 0;
-
+/* Upload into a temporary object: failures retain the previous GPU mesh. */
+static int renderer_upload_section_mesh(SectionGpuMesh *target,
+                                        const SectionMesh *mesh) {
+  if (!mesh || (mesh->vertexCount && !mesh->vertices) ||
+      mesh->vertexCount > (size_t)PTRDIFF_MAX / sizeof(*mesh->vertices)) return 0;
+  SectionGpuMesh result = {
+      .chunkX = target->chunkX, .sectionY = target->sectionY, .chunkZ = target->chunkZ};
   for (int type = 0; type < BLOCK_TYPE_COUNT; type++) {
-    if (mesh->firstVertex[type] > INT_MAX ||
-        mesh->typeVertexCount[type] > INT_MAX)
+    if (mesh->firstVertex[type] > INT_MAX || mesh->typeVertexCount[type] > INT_MAX)
       return 0;
+    result.firstVertex[type] = (GLint)mesh->firstVertex[type];
+    result.vertexCount[type] = (GLsizei)mesh->typeVertexCount[type];
   }
+  if (mesh->vertexCount) {
+    result.boundsMin = result.boundsMax =
+        (Vec3){mesh->vertices[0].x, mesh->vertices[0].y, mesh->vertices[0].z};
+    for (size_t i = 1; i < mesh->vertexCount; i++) {
+      const SurfaceVertex v = mesh->vertices[i];
+      result.boundsMin.x = fminf(result.boundsMin.x, v.x);
+      result.boundsMin.y = fminf(result.boundsMin.y, v.y);
+      result.boundsMin.z = fminf(result.boundsMin.z, v.z);
+      result.boundsMax.x = fmaxf(result.boundsMax.x, v.x);
+      result.boundsMax.y = fmaxf(result.boundsMax.y, v.y);
+      result.boundsMax.z = fmaxf(result.boundsMax.z, v.z);
+    }
+    glGenVertexArrays(1, &result.vao);
+    glGenBuffers(1, &result.vbo);
+    if (!result.vao || !result.vbo) {
+      section_gpu_mesh_destroy(&result);
+      return 0;
+    }
+    glBindVertexArray(result.vao);
+    glBindBuffer(GL_ARRAY_BUFFER, result.vbo);
+    glBufferData(GL_ARRAY_BUFFER,
+                 (GLsizeiptr)(mesh->vertexCount * sizeof(*mesh->vertices)),
+                 mesh->vertices, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(SurfaceVertex), (void *)0);
+    glEnableVertexAttribArray(0);
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    if (glGetError() != GL_NO_ERROR) {
+      section_gpu_mesh_destroy(&result);
+      return 0;
+    }
+  }
+  section_gpu_mesh_destroy(target);
+  *target = result;
+  return 1;
+}
 
-  glGenVertexArrays(1, &renderer->platformVao);
-  glGenBuffers(1, &renderer->platformVbo);
-  if (renderer->platformVao == 0 || renderer->platformVbo == 0) {
-    renderer->platformVao = 0;
-    renderer->platformVbo = 0;
-    fprintf(stderr, "Failed to upload the platform surface mesh\n");
+static int renderer_sync_world(Renderer *renderer, World *world) {
+  size_t count = world->chunkCount * WORLD_SECTION_COUNT;
+  if (!renderer->meshes && count) {
+    renderer->meshes = calloc(count, sizeof(*renderer->meshes));
+    if (!renderer->meshes)
+      return 0;
+    renderer->meshCount = count;
+    for (size_t c = 0; c < world->chunkCount; c++)
+      for (int s = 0; s < WORLD_SECTION_COUNT; s++) {
+        SectionGpuMesh *mesh = &renderer->meshes[c * WORLD_SECTION_COUNT + s];
+        mesh->chunkX = world->chunks[c].x;
+        mesh->chunkZ = world->chunks[c].z;
+        mesh->sectionY = WORLD_MIN_SECTION_Y + s;
+      }
+  }
+  if (renderer->meshCount != count)
     return 0;
+  for (size_t i = 0; i < count; i++) {
+    SectionGpuMesh *gpu = &renderer->meshes[i];
+    Subchunk *section = world_section(world, gpu->chunkX, gpu->sectionY, gpu->chunkZ);
+    if (!section) {
+      /* A regenerated world can omit a section that previously had a mesh. */
+      section_gpu_mesh_destroy(gpu);
+      gpu->chunkX = world->chunks[i / WORLD_SECTION_COUNT].x;
+      gpu->chunkZ = world->chunks[i / WORLD_SECTION_COUNT].z;
+      gpu->sectionY = WORLD_MIN_SECTION_Y + (int)(i % WORLD_SECTION_COUNT);
+      continue;
+    }
+    if (!section->dirty)
+      continue;
+    SectionMesh cpu = {0};
+    int success =
+        section_mesh_build(world, gpu->chunkX, gpu->sectionY, gpu->chunkZ, &cpu) &&
+        renderer_upload_section_mesh(gpu, &cpu);
+    section_mesh_destroy(&cpu);
+    if (!success)
+      return 0;
+    section->dirty = 0;
   }
-
-  glBindVertexArray(renderer->platformVao);
-  glBindBuffer(GL_ARRAY_BUFFER, renderer->platformVbo);
-  glBufferData(GL_ARRAY_BUFFER,
-               (GLsizeiptr)(mesh->vertexCount * sizeof(*mesh->vertices)),
-               mesh->vertices, GL_STATIC_DRAW);
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(SurfaceVertex),
-                        (void *)0);
-  glEnableVertexAttribArray(0);
-  if (glGetError() != GL_NO_ERROR) {
-    glDeleteVertexArrays(1, &renderer->platformVao);
-    glDeleteBuffers(1, &renderer->platformVbo);
-    renderer->platformVao = 0;
-    renderer->platformVbo = 0;
-    fprintf(stderr, "Failed to upload the platform surface mesh\n");
-    return 0;
-  }
-
-  for (int type = 0; type < BLOCK_TYPE_COUNT; type++) {
-    renderer->firstVertex[type] = (GLint)mesh->firstVertex[type];
-    renderer->vertexCount[type] = (GLsizei)mesh->typeVertexCount[type];
-  }
-  glBindVertexArray(0);
-  glBindBuffer(GL_ARRAY_BUFFER, 0);
   return 1;
 }
 
@@ -424,6 +482,22 @@ static void render_fps(const Renderer *renderer, const int fps) {
   glEnable(GL_DEPTH_TEST);
 }
 
+/* Test the most positive AABB vertex against each homogeneous clip plane.
+   No normalization is needed, and boxes crossing a plane remain visible. */
+static int section_in_frustum(const SectionGpuMesh *mesh, const mat4 mvp) {
+  for(int axis=0;axis<3;axis++) for(int sign=-1;sign<=1;sign+=2) {
+    float a=mvp[3]+sign*mvp[axis];
+    float b=mvp[7]+sign*mvp[4+axis];
+    float c=mvp[11]+sign*mvp[8+axis];
+    float d=mvp[15]+sign*mvp[12+axis];
+    float x=a>=0 ? mesh->boundsMax.x : mesh->boundsMin.x;
+    float y=b>=0 ? mesh->boundsMax.y : mesh->boundsMin.y;
+    float z=c>=0 ? mesh->boundsMax.z : mesh->boundsMin.z;
+    if(a*x+b*y+c*z+d<0) return 0;
+  }
+  return 1;
+}
+
 static void render_world(const Renderer *renderer, const Player *player) {
   if (renderer->framebufferWidth <= 0 || renderer->framebufferHeight <= 0)
     return;
@@ -431,27 +505,28 @@ static void render_world(const Renderer *renderer, const Player *player) {
   glUseProgram(renderer->program);
 
   mat4 proj, view, mvp;
-  const float aspectRatio = (float)renderer->framebufferWidth /
-                      (float)renderer->framebufferHeight;
-  mat4_perspective(75.0f * (3.14159f / 180.0f), aspectRatio, 0.05f, 100.0f,
-                   proj);
+  const float aspectRatio =
+      (float)renderer->framebufferWidth / (float)renderer->framebufferHeight;
+  mat4_perspective(75.0f * (3.14159f / 180.0f), aspectRatio, 0.05f, 100.0f, proj);
   Vec3 cameraPosition = player->position;
   cameraPosition.y += player->eyeHeight;
   const Vec3 target = vec3_add(cameraPosition, player->camera.front);
   mat4_lookat(cameraPosition, target, player->camera.up, view);
   mat4_multiply(proj, view, mvp);
 
-  glBindVertexArray(renderer->platformVao);
   glUniformMatrix4fv(renderer->mvpLocation, 1, GL_FALSE, (float *)mvp);
   for (int type = 0; type < BLOCK_TYPE_COUNT; type++) {
-    if (renderer->vertexCount[type] == 0)
-      continue;
     Vec3 color;
     if (!block_type_color((BlockType)type, &color))
       continue;
     glUniform3f(renderer->colorLocation, color.x, color.y, color.z);
-    glDrawArrays(GL_TRIANGLES, renderer->firstVertex[type],
-                 renderer->vertexCount[type]);
+    for (size_t i = 0; i < renderer->meshCount; i++) {
+      const SectionGpuMesh *mesh = &renderer->meshes[i];
+      if (!mesh->vertexCount[type] || !section_in_frustum(mesh, mvp))
+        continue;
+      glBindVertexArray(mesh->vao);
+      glDrawArrays(GL_TRIANGLES, mesh->firstVertex[type], mesh->vertexCount[type]);
+    }
   }
 }
 
@@ -469,6 +544,7 @@ static void framebuffer_size_callback(GLFWwindow *window, const int width,
 }
 
 static void application_shutdown(Application *application) {
+  world_destroy(&application->world);
   if (application->rendererInitialized) {
     renderer_destroy(&application->renderer);
     application->rendererInitialized = 0;
@@ -486,7 +562,7 @@ static void application_shutdown(Application *application) {
 static int application_init(Application *application) {
   *application = (Application){
       .player = {.position = {.x = 0.5f, .y = 0.0f, .z = 0.5f},
-           .grounded = 1,
+                 .grounded = 1,
                  .eyeHeight = 1.0f,
                  .camera = {.yaw = -90.0f,
                             .pitch = 0.0f,
@@ -564,24 +640,14 @@ static int application_init(Application *application) {
 
   if (!create_terrain(&application->world, PLATFORM_BLOCKS_PER_SIDE, CENTER,
                        BLOCK_SIZE, WORLD_SEED)) {
-    fprintf(stderr, "Failed to create terrain: world capacity is %d blocks\n",
-            WORLD_MAX_BLOCKS);
+    fprintf(stderr, "Failed to create voxel terrain\n");
     application_shutdown(application);
     return 0;
   }
   application->player.position.y = world_surface_height(
       &application->world, application->player.position.x, application->player.position.z);
-  PlatformSurfaceMesh platformMesh = {0};
-  if (!platform_surface_mesh_build(&application->world,
-                                   PLATFORM_BLOCKS_PER_SIDE, &platformMesh)) {
-    fprintf(stderr, "Failed to build the platform surface mesh\n");
-    application_shutdown(application);
-    return 0;
-  }
-  int meshUploaded =
-      renderer_upload_platform_mesh(&application->renderer, &platformMesh);
-  platform_surface_mesh_destroy(&platformMesh);
-  if (!meshUploaded) {
+  if (!renderer_sync_world(&application->renderer,&application->world)) {
+    fprintf(stderr,"Failed to build or upload section meshes\n");
     application_shutdown(application);
     return 0;
   }
@@ -657,8 +723,17 @@ int main(void) {
   if (!application_init(&application))
     return EXIT_FAILURE;
 
+  int meshRebuildFailed = 0;
   while (!glfwWindowShouldClose(application.window)) {
     application_update(&application);
+    if (!renderer_sync_world(&application.renderer, &application.world)) {
+      if (!meshRebuildFailed)
+        fprintf(stderr, "Failed to rebuild dirty section meshes; retaining previous "
+                        "meshes and retrying\n");
+      meshRebuildFailed = 1;
+    } else {
+      meshRebuildFailed = 0;
+    }
     application_render(&application);
   }
 

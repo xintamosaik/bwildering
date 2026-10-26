@@ -169,8 +169,8 @@ float terrain_noise(const int x, const int z, const int scale,
     return NAN;
   const int gx = voxel_floor_div(x, scale);
   const int gz = voxel_floor_div(z, scale);
-  float tx = (float)voxel_floor_mod(x, scale) / scale;
-  float tz = (float)voxel_floor_mod(z, scale) / scale;
+  float tx = (float)voxel_floor_mod(x, scale) / (float)scale;
+  float tz = (float)voxel_floor_mod(z, scale) / (float)scale;
   tx = tx * tx * (3.0f - 2.0f * tx);
   tz = tz * tz * (3.0f - 2.0f * tz);
   const float a = terrain_lattice(gx, gz, seed);
@@ -250,8 +250,8 @@ int create_terrain_region(World *world, int minX, int minZ, int side,
 
 int create_terrain(World *world, int side, Vec3 center, float size, uint32_t seed) {
   Vec3 origin = center;
-  origin.x -= (side % 2) * size * 0.5f;
-  origin.z -= (side % 2) * size * 0.5f;
+  origin.x -= (float)(side % 2) * size * 0.5f;
+  origin.z -= (float)(side % 2) * size * 0.5f;
   return create_terrain_region(world, -(side / 2), -(side / 2), side, origin, size, seed);
 }
 
@@ -354,7 +354,7 @@ static int player_intersects(const World *world, Vec3 p) {
                   world->minZ + world->blocksPerSide};
   int first[3], last[3];
   for (int i = 0; i < 3; i++) {
-    if (!isfinite(lo[i]) || !isfinite(hi[i]) || hi[i] <= lower[i] || lo[i] >= upper[i])
+    if (!isfinite(lo[i]) || !isfinite(hi[i]) || hi[i] <= (float)lower[i] || lo[i] >= (float)upper[i])
       return 0;
     first[i] = (int)floorf(fmaxf(lo[i], (float)lower[i]));
     last[i] = (int)ceilf(fminf(hi[i], (float)upper[i])) - 1;
@@ -371,8 +371,9 @@ static int move_axis(Player *player, const World *world, float distance, int axi
   float size = world && world->chunks ? world->blockSize : 1.0f;
   int steps = (int)fmaxf(1, ceilf(fabsf(distance) / fminf(size * 0.25f, 0.125f)));
   for (int i = 0; i < steps; i++) {
-    Vec3 start = player->position, next = start;
-    float step = distance / steps;
+    const Vec3 start = player->position;
+    Vec3 next = start;
+    const float step = distance / (float)steps;
     if (axis == 0)
       next.x += step;
     else if (axis == 1)

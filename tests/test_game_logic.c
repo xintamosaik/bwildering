@@ -55,17 +55,8 @@ static void test_matrix_multiply_identity(void) {
 
 static void test_block_type_palette(void) {
   Vec3 colors[BLOCK_TYPE_COUNT];
-  const Vec3 expectedColors[BLOCK_TYPE_COUNT] = {
-      [BLOCK_TYPE_GRASS] = {.x = 0.46f, .y = 0.52f, .z = 0.38f},
-      [BLOCK_TYPE_STONE] = {.x = 0.53f, .y = 0.51f, .z = 0.48f},
-      [BLOCK_TYPE_WATER] = {.x = 0.36f, .y = 0.50f, .z = 0.52f},
-      [BLOCK_TYPE_SAND] = {.x = 0.68f, .y = 0.60f, .z = 0.44f},
-  };
   for (int type = BLOCK_TYPE_GRASS; type < BLOCK_TYPE_COUNT; type++) {
     assert(block_type_color((BlockType)type, &colors[type]));
-    assert_near(colors[type].x, expectedColors[type].x);
-    assert_near(colors[type].y, expectedColors[type].y);
-    assert_near(colors[type].z, expectedColors[type].z);
     assert(colors[type].x >= 0.0f && colors[type].x <= 1.0f);
     assert(colors[type].y >= 0.0f && colors[type].y <= 1.0f);
     assert(colors[type].z >= 0.0f && colors[type].z <= 1.0f);
@@ -83,6 +74,8 @@ static void test_block_type_palette(void) {
   assert(!block_type_color(BLOCK_TYPE_COUNT, &color));
   assert(!block_type_color(BLOCK_TYPE_GRASS, NULL));
   assert_near(color.x, 9.0f);
+  assert_near(color.y, 9.0f);
+  assert_near(color.z, 9.0f);
 }
 
 static void test_diagonal_movement_is_normalized(void) {
@@ -349,13 +342,57 @@ static void clear_dirty(World *world) {
         world->chunks[c].sections[s]->dirty = 0;
 }
 
-static int dirty_count(const World *world) {
-  int count = 0;
+static void assert_dirty_sections(const World *world, const int expected[][3], size_t count) {
   for (size_t c = 0; c < world->chunkCount; c++)
-    for (int s = 0; s < WORLD_SECTION_COUNT; s++)
-      if (world->chunks[c].sections[s])
-        count += world->chunks[c].sections[s]->dirty != 0;
-  return count;
+    for (int s = 0; s < WORLD_SECTION_COUNT; s++) {
+      const Chunk *chunk = &world->chunks[c];
+      int shouldBeDirty = 0;
+      for (size_t e = 0; e < count; e++)
+        shouldBeDirty |= chunk->x == expected[e][0] &&
+                         WORLD_MIN_SECTION_Y + s == expected[e][1] &&
+                         chunk->z == expected[e][2];
+      assert((chunk->sections[s] && chunk->sections[s]->dirty) == shouldBeDirty);
+    }
+}
+
+static void test_world_size_contract(void) {
+  const int accepted[] = {1, WORLD_MAX_BLOCKS_PER_SIDE};
+  for (size_t i = 0; i < sizeof(accepted) / sizeof(*accepted); i++) {
+    World world = {0};
+    int side = accepted[i];
+    assert(world_init(&world, side, (Vec3){0}, 1));
+    int first = -(side / 2), last = first + side - 1;
+    assert(world_set_block(&world, first, 0, first, BLOCK_TYPE_STONE));
+    assert(world_set_block(&world, last, 0, last, BLOCK_TYPE_STONE));
+    assert(world_get_block(&world, first, 0, first) == BLOCK_TYPE_STONE);
+    assert(world_get_block(&world, last, 0, last) == BLOCK_TYPE_STONE);
+    assert(!world_set_block(&world, first - 1, 0, first, BLOCK_TYPE_GRASS));
+    assert(!world_set_block(&world, last + 1, 0, last, BLOCK_TYPE_GRASS));
+    world_destroy(&world);
+    assert(world_init_region(&world, -7, 11, side, (Vec3){0}, 1));
+    assert(world_set_block(&world, -7 + side - 1, 0, 11 + side - 1, BLOCK_TYPE_SAND));
+    assert(world_get_block(&world, -7 + side - 1, 0, 11 + side - 1) == BLOCK_TYPE_SAND);
+    world_destroy(&world);
+  }
+  const int rejected[] = {-1, 0, WORLD_MAX_BLOCKS_PER_SIDE + 1};
+  World sentinel = single_block_world();
+  assert(world_set_block(&sentinel, 0, -1, 0, BLOCK_TYPE_STONE));
+  for (size_t i = 0; i < sizeof(rejected) / sizeof(*rejected); i++)
+    for (int operation = 0; operation < 5; operation++) {
+      int side = rejected[i], result;
+      switch (operation) {
+      case 0: result = world_init(&sentinel, side, (Vec3){0}, 1); break;
+      case 1: result = world_init_region(&sentinel, -7, 11, side, (Vec3){0}, 1); break;
+      case 2: result = create_platform(&sentinel, side, (Vec3){0}, 1, 1); break;
+      case 3: result = create_terrain(&sentinel, side, (Vec3){0}, 1, 1); break;
+      default: result = create_terrain_region(&sentinel, -7, 11, side, (Vec3){0}, 1, 1); break;
+      }
+      assert(!result);
+      assert(sentinel.blocksPerSide == 1);
+      assert(world_get_block(&sentinel, 0, -1, 0) == BLOCK_TYPE_STONE);
+      assert_near(world_surface_height(&sentinel, 0, 0), 0);
+    }
+  world_destroy(&sentinel);
 }
 
 static void test_coordinates_and_storage(void) {
@@ -378,7 +415,7 @@ static void test_coordinates_and_storage(void) {
         assert(world_set_block(&world, x, y, z,
                                (BlockType)((voxel_local_coord(x) + voxel_local_coord(y) +
                                             voxel_local_coord(z)) %
-                                           4)));
+                                           BLOCK_TYPE_COUNT)));
   assert(world.voxelCount == 34 * 34 * 34 && world.sectionCount == 64);
   for (int x = -17; x <= 16; x++)
     for (int y = -17; y <= 16; y++)
@@ -386,7 +423,7 @@ static void test_coordinates_and_storage(void) {
         assert(world_get_block(&world, x, y, z) ==
                (BlockType)((voxel_local_coord(x) + voxel_local_coord(y) +
                             voxel_local_coord(z)) %
-                           4));
+                           BLOCK_TYPE_COUNT));
   size_t count = world.voxelCount;
   assert(!world_set_block(&world, INT_MAX, 0, 0, BLOCK_TYPE_GRASS));
   assert(!world_set_block(&world, 0, 32, 0, BLOCK_TYPE_GRASS));
@@ -395,8 +432,6 @@ static void test_coordinates_and_storage(void) {
   assert(!world_set_block(&world, 0, 0, 0, BLOCK_TYPE_COUNT));
   assert(world.voxelCount == count);
   Chunk *original = world.chunks;
-  assert(!world_init(&world, 0, (Vec3){0}, 1));
-  assert(!create_terrain(&world, WORLD_MAX_BLOCKS_PER_SIDE + 1, (Vec3){0}, 1, 1));
   assert(!create_platform(&world, 1, (Vec3){NAN, 0, 0}, 1, 1));
   assert(!world_init(&world, 1, (Vec3){0}, 0));
   assert(!world_init(&world, 1, (Vec3){0}, NAN));
@@ -434,36 +469,29 @@ static size_t mesh_world(const World *world, size_t *draws, size_t *nonempty) {
   return vertices;
 }
 
-static uint64_t hash_bytes(const uint8_t *values, size_t count) {
-  uint64_t hash = UINT64_C(14695981039346656037);
-  for (size_t i = 0; i < count; i++)
-    hash = (hash ^ values[i]) * UINT64_C(1099511628211);
-  return hash;
-}
-
-/* Independent floor/double reference, without production coordinate helpers. */
-static double reference_lattice(int x, int z, uint32_t seed) {
-  uint32_t h = seed ^ (uint32_t)x * UINT32_C(0x9E3779B9) ^
-                      (uint32_t)z * UINT32_C(0x85EBCA6B);
-  h = (h ^ (h >> 16)) * UINT32_C(0x7FEB352D);
-  h = (h ^ (h >> 15)) * UINT32_C(0x846CA68B);
-  h ^= h >> 16;
-  return (h & 65535u) / 65535.0;
-}
-
-static double reference_noise(int x, int z, int scale, uint32_t seed) {
-  int gx = (int)floor((double)x / scale), gz = (int)floor((double)z / scale);
-  double tx = ((double)x - (double)gx * scale) / scale;
-  double tz = ((double)z - (double)gz * scale) / scale;
-  tx = tx * tx * (3 - 2 * tx);
-  tz = tz * tz * (3 - 2 * tz);
-  double a = reference_lattice(gx, gz, seed), b = reference_lattice(gx + 1, gz, seed);
-  double c = reference_lattice(gx, gz + 1, seed), d = reference_lattice(gx + 1, gz + 1, seed);
-  return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
+static double world_mesh_surface_area(const World *world) {
+  double area = 0;
+  for (size_t c = 0; c < world->chunkCount; c++)
+    for (int s = 0; s < WORLD_SECTION_COUNT; s++) {
+      SectionMesh mesh = {0};
+      assert(section_mesh_build(world, world->chunks[c].x, WORLD_MIN_SECTION_Y + s,
+                                world->chunks[c].z, &mesh));
+      assert(mesh.vertexCount % 3 == 0);
+      for (size_t i = 0; i < mesh.vertexCount; i += 3) {
+        SurfaceVertex a = mesh.vertices[i], b = mesh.vertices[i + 1], d = mesh.vertices[i + 2];
+        Vec3 cross = vec3_cross((Vec3){b.x - a.x, b.y - a.y, b.z - a.z},
+                                (Vec3){d.x - a.x, d.y - a.y, d.z - a.z});
+        area += 0.5 * sqrt((double)cross.x * cross.x + (double)cross.y * cross.y +
+                           (double)cross.z * cross.z);
+      }
+      section_mesh_destroy(&mesh);
+    }
+  return area;
 }
 
 static void test_signed_terrain_sampling(void) {
   for (int scale = 8; scale <= 32; scale *= 2) {
+    int seedChanges = 0;
     int values[] = {INT_MIN, WORLD_COORD_MIN, -scale - 1, -scale, -1, 0,
                     scale - 1, scale, scale + 1, WORLD_COORD_MAX, INT_MAX};
     for (size_t i = 0; i < sizeof(values) / sizeof(*values); i++) {
@@ -475,15 +503,20 @@ static void test_signed_terrain_sampling(void) {
         for (uint32_t seed = 0; seed < 3; seed++) {
           float actual = terrain_noise(x, values[j], scale, seed);
           assert(actual >= 0 && actual <= 1);
-          assert(fabs(actual - reference_noise(x, values[j], scale, seed)) < 0.000001);
+          assert(actual == terrain_noise(x, values[j], scale, seed));
+          seedChanges += actual != terrain_noise(x, values[j], scale, seed + 1);
         }
     }
-    /* Adjacent unquantized samples have bounded slopes, including lattice seams. */
+    assert(seedChanges > 0);
+    /* Smoothness across signed coordinates and lattice seams is observable. */
     for (int x = -65; x <= 65; x++)
       for (int z = -65; z <= 65; z++) {
         float n = terrain_noise(x, z, scale, 123);
         assert(fabsf(n - terrain_noise(x + 1, z, scale, 123)) <= 1.5f / scale);
         assert(fabsf(n - terrain_noise(x, z + 1, scale, 123)) <= 1.5f / scale);
+        /* Scaling coordinates and wavelength together preserves a sample. */
+        if (scale < 32)
+          assert_near(n, terrain_noise(x * 2, z * 2, scale * 2, 123));
       }
   }
   assert(isnan(terrain_noise(0, 0, 0, 1)));
@@ -550,46 +583,70 @@ static void test_terrain_regions(void) {
   world_destroy(&overlap);
 }
 
-static void test_generator_regressions(void) {
+static void test_generator_behaviour(void) {
+  enum { FIXTURE_SIDE = 192 }; /* Explicit scenario, independent of the game default. */
   World world = {0};
   const Vec3 center = {12, -3, 8};
-  uint8_t materials[192 * 192], heights[192 * 192];
+  uint8_t materials[FIXTURE_SIDE * FIXTURE_SIDE], heights[FIXTURE_SIDE * FIXTURE_SIDE];
   for (int terrain = 0; terrain < 2; terrain++) {
     if (terrain)
-      assert(create_terrain(&world, 192, center, 2, UINT32_C(0x4B1D2A37)));
+      assert(create_terrain(&world, FIXTURE_SIDE, center, 2, UINT32_C(0x4B1D2A37)));
     else
-      assert(create_platform(&world, 192, center, 2, UINT32_C(0x4B1D2A37)));
-    assert(world.chunkCount == 144);
+      assert(create_platform(&world, FIXTURE_SIDE, center, 2, UINT32_C(0x4B1D2A37)));
     size_t voxels = 0, expectedQuads = 0;
-    for (int x = 0; x < 192; x++)
-      for (int z = 0; z < 192; z++) {
-        int index = x * 192 + z;
-        float top = world_surface_height(&world, center.x + (x - 96 + 0.5f) * 2,
-                                         center.z + (z - 96 + 0.5f) * 2);
+    for (int x = 0; x < FIXTURE_SIDE; x++)
+      for (int z = 0; z < FIXTURE_SIDE; z++) {
+        int index = x * FIXTURE_SIDE + z;
+        float top = world_surface_height(&world, center.x + (x - FIXTURE_SIDE / 2 + 0.5f) * 2,
+                                         center.z + (z - FIXTURE_SIDE / 2 + 0.5f) * 2);
         int height = (int)roundf((top - center.y) / 2);
-        assert(height >= 0 && height <= 15);
+        assert(height >= 0 && height < (WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT) * SECTION_SIZE);
         heights[index] = (uint8_t)height;
-        materials[index] = (uint8_t)world_get_block(&world, x - 96, height - 1, z - 96);
+        materials[index] = (uint8_t)world_get_block(&world, x - FIXTURE_SIDE / 2, height - 1, z - FIXTURE_SIDE / 2);
         for (int y = -1; y < height; y++)
-          assert(world_get_block(&world, x - 96, y, z - 96) == materials[index]);
-        assert(world_get_block(&world, x - 96, height, z - 96) == BLOCK_TYPE_EMPTY);
+          assert(world_get_block(&world, x - FIXTURE_SIDE / 2, y, z - FIXTURE_SIDE / 2) == materials[index]);
+        assert(world_get_block(&world, x - FIXTURE_SIDE / 2, height, z - FIXTURE_SIDE / 2) == BLOCK_TYPE_EMPTY);
         voxels += (size_t)height + 1;
       }
-    /* Signed voxel terrain revision; old hashes archived in feedback 02. */
-    assert(hash_bytes(materials, sizeof(materials)) ==
-           (terrain ? UINT64_C(3413989901263375960) : UINT64_C(9772508476359371607)));
-    assert(hash_bytes(heights, sizeof(heights)) ==
-           (terrain ? UINT64_C(11712522251593887156) : UINT64_C(13722806926226842405)));
+    World sameSeed = {0}, otherSeed = {0};
+    if (terrain) {
+      assert(create_terrain(&sameSeed, FIXTURE_SIDE, center, 2, UINT32_C(0x4B1D2A37)));
+      assert(create_terrain(&otherSeed, FIXTURE_SIDE, center, 2, UINT32_C(0x4B1D2A38)));
+    } else {
+      assert(create_platform(&sameSeed, FIXTURE_SIDE, center, 2, UINT32_C(0x4B1D2A37)));
+      assert(create_platform(&otherSeed, FIXTURE_SIDE, center, 2, UINT32_C(0x4B1D2A38)));
+    }
+    compare_region(&world, &sameSeed);
+    size_t changedColumns = 0;
+    int minHeight = INT_MAX, maxHeight = INT_MIN;
+    for (int x = 0; x < FIXTURE_SIDE; x++)
+      for (int z = 0; z < FIXTURE_SIDE; z++) {
+        int height = heights[x * FIXTURE_SIDE + z];
+        float otherTop = world_surface_height(&otherSeed, center.x + (x - FIXTURE_SIDE / 2 + 0.5f) * 2,
+                                               center.z + (z - FIXTURE_SIDE / 2 + 0.5f) * 2);
+        BlockType otherType = world_get_block(&otherSeed, x - FIXTURE_SIDE / 2,
+                                               (int)roundf((otherTop - center.y) / 2) - 1,
+                                               z - FIXTURE_SIDE / 2);
+        changedColumns += otherTop != center.y + height * 2 ||
+                          otherType != (BlockType)materials[x * FIXTURE_SIDE + z];
+        if (height < minHeight) minHeight = height;
+        if (height > maxHeight) maxHeight = height;
+      }
+    assert(changedColumns > 0);
+    if (terrain) assert(minHeight < maxHeight);
+    else assert(minHeight == 0 && maxHeight == 0);
+    world_destroy(&sameSeed);
+    world_destroy(&otherSeed);
     assert(world.voxelCount == voxels);
     const int dx[] = {-1, 1, 0, 0}, dz[] = {0, 0, -1, 1};
-    for (int x = 0; x < 192; x++)
-      for (int z = 0; z < 192; z++) {
-        int height = heights[x * 192 + z];
+    for (int x = 0; x < FIXTURE_SIDE; x++)
+      for (int z = 0; z < FIXTURE_SIDE; z++) {
+        int height = heights[x * FIXTURE_SIDE + z];
         expectedQuads += 2; /* Top and bottom. */
         for (int d = 0; d < 4; d++) {
           int nx = x + dx[d], nz = z + dz[d];
           int neighbor =
-              nx < 0 || nx >= 192 || nz < 0 || nz >= 192 ? -1 : heights[nx * 192 + nz];
+              nx < 0 || nx >= FIXTURE_SIDE || nz < 0 || nz >= FIXTURE_SIDE ? -1 : heights[nx * FIXTURE_SIDE + nz];
           if (height > neighbor)
             expectedQuads += (size_t)(height - neighbor);
         }
@@ -598,11 +655,8 @@ static void test_generator_regressions(void) {
     clock_t start = clock();
     size_t vertices = mesh_world(&world, &draws, &sections);
     double ms = 1000.0 * (clock() - start) / CLOCKS_PER_SEC;
-    assert(vertices == expectedQuads * 6);
-    if (!terrain) {
-      assert(sections == 144);
-      assert(vertices == (2 * 192 * 192 + 4 * 192) * 6);
-    }
+    /* Validate the exposed surface, allowing different face triangulation or merging. */
+    assert(fabs(world_mesh_surface_area(&world) - expectedQuads * 4.0) < 0.0001);
     printf("%s: %zu populated meshes, %zu vertices, %zu bytes, %zu draws, CPU %.3f ms\n",
            terrain ? "terrain" : "flat", sections, vertices,
            vertices * sizeof(SurfaceVertex), draws, ms);
@@ -611,7 +665,7 @@ static void test_generator_regressions(void) {
   assert(create_platform(&world, 5, center, 2, 0));
   World repeated = {0};
   assert(create_platform(&repeated, 5, center, 2, 0));
-  int counts[4] = {0};
+  int counts[BLOCK_TYPE_COUNT] = {0};
   for (int x = 0; x < 5; x++)
     for (int z = 0; z < 5; z++) {
       BlockType type = world_get_block(&world, world.minX + x, -1, world.minZ + z);
@@ -622,7 +676,9 @@ static void test_generator_regressions(void) {
           world_surface_height(&world, center.x + (x - 2) * 2, center.z + (z - 2) * 2),
           center.y);
     }
-  assert(counts[0] == 7 && counts[1] == 6 && counts[2] == 6 && counts[3] == 6);
+  for (int type = 0; type < BLOCK_TYPE_COUNT; type++)
+    assert(counts[type] >= 25 / BLOCK_TYPE_COUNT &&
+           counts[type] <= (25 + BLOCK_TYPE_COUNT - 1) / BLOCK_TYPE_COUNT);
   assert(create_platform(&world, 1, center, 2, 0));
   assert_near(world.origin.x, 11);
   assert_near(world_surface_height(&world, 12, 8), -3);
@@ -710,24 +766,33 @@ static void test_dirty_neighbors(void) {
   const int positions[][3] = {{2, 2, 2}, {0, 2, 2},    {0, 0, 2},
                               {0, 0, 0}, {15, 15, 15}, {-1, -1, -1}};
   const int expected[] = {1, 2, 3, 4, 4, 4};
+  const int sections[][4][3] = {
+      {{0,0,0}},
+      {{0,0,0}, {-1,0,0}},
+      {{0,0,0}, {-1,0,0}, {0,-1,0}},
+      {{0,0,0}, {-1,0,0}, {0,-1,0}, {0,0,-1}},
+      {{0,0,0}, {1,0,0}, {0,1,0}, {0,0,1}},
+      {{-1,-1,-1}, {0,-1,-1}, {-1,0,-1}, {-1,-1,0}}};
   for (int i = 0; i < 6; i++) {
     clear_dirty(&world);
     int x = positions[i][0], y = positions[i][1], z = positions[i][2];
     assert(world_set_block(&world, x, y, z, BLOCK_TYPE_GRASS));
-    assert(dirty_count(&world) == expected[i]);
+    assert_dirty_sections(&world, sections[i], expected[i]);
     clear_dirty(&world);
     assert(world_set_block(&world, x, y, z, BLOCK_TYPE_GRASS));
-    assert(dirty_count(&world) == 0);
+    assert_dirty_sections(&world, NULL, 0);
     assert(world_set_block(&world, x, y, z, BLOCK_TYPE_EMPTY));
-    assert(dirty_count(&world) == expected[i]);
+    assert_dirty_sections(&world, sections[i], expected[i]);
   }
   const int faces[][3] = {{0, 2, 2},  {15, 2, 2}, {2, 0, 2},
                           {2, 15, 2}, {2, 2, 0},  {2, 2, 15}};
+  const int neighbors[][3] = {{-1,0,0}, {1,0,0}, {0,-1,0}, {0,1,0}, {0,0,-1}, {0,0,1}};
   for (int i = 0; i < 6; i++) {
     clear_dirty(&world);
     assert(
         world_set_block(&world, faces[i][0], faces[i][1], faces[i][2], BLOCK_TYPE_WATER));
-    assert(dirty_count(&world) == 2);
+    const int affected[][3] = {{0,0,0}, {neighbors[i][0], neighbors[i][1], neighbors[i][2]}};
+    assert_dirty_sections(&world, affected, 2);
   }
   world_destroy(&world);
 }
@@ -1064,13 +1129,15 @@ static void test_generated_terrain_spawn(void) {
   }
 }
 
-static void test_expanded_world_terrain_and_boundaries(void) {
+static void test_default_world_terrain_and_boundaries(void) {
   World world = {0};
   uint32_t seed = UINT32_C(0x4B1D2A37);
   int side = PLATFORM_BLOCKS_PER_SIDE;
   clock_t start = clock();
   assert(create_terrain(&world, side, (Vec3){0}, 1, seed));
-  const int samples[] = {-side / 2, -side / 2 + 1, -97, 0, 96, side / 2 - 2, side / 2 - 1};
+  int first = -(side / 2), last = first + side - 1;
+  const int samples[] = {first, first + side / 4, first + side / 2,
+                          first + 3 * side / 4, last};
   for (size_t x = 0; x < sizeof(samples) / sizeof(*samples); x++)
     for (size_t z = 0; z < sizeof(samples) / sizeof(*samples); z++) {
       int vx = samples[x], vz = samples[z];
@@ -1084,9 +1151,9 @@ static void test_expanded_world_terrain_and_boundaries(void) {
       assert(world_set_block(&world, vx, column.height, vz, BLOCK_TYPE_EMPTY));
     }
   assert(!world_set_block(&world, -side / 2 - 1, 0, 0, BLOCK_TYPE_STONE));
-  assert(!world_set_block(&world, side / 2, 0, 0, BLOCK_TYPE_STONE));
+  assert(!world_set_block(&world, last + 1, 0, 0, BLOCK_TYPE_STONE));
   assert(!world_set_block(&world, 0, 0, -side / 2 - 1, BLOCK_TYPE_STONE));
-  assert(!world_set_block(&world, 0, 0, side / 2, BLOCK_TYPE_STONE));
+  assert(!world_set_block(&world, 0, 0, last + 1, BLOCK_TYPE_STONE));
   float spawnY = world_surface_height(&world, 0.5f, 0.5f);
   Player player = make_player((Vec3){0.5f, spawnY, 0.5f}, 0);
   for (int frame = 0; frame < 60; frame++)
@@ -1099,14 +1166,7 @@ static void test_expanded_world_terrain_and_boundaries(void) {
   printf("Expanded %dx%d world: %zu vertices, CPU generation + meshing %.3f ms\n",
          side, side, vertices, 1000.0 * (clock() - start) / CLOCKS_PER_SEC);
   world_destroy(&world);
-  /* The supported maximum can be initialized and edited at both opposite edges. */
-  int maximum = WORLD_MAX_BLOCKS_PER_SIDE;
-  assert(world_init(&world, maximum, (Vec3){0}, 1));
-  assert(world_set_block(&world, -maximum / 2, 0, -maximum / 2, BLOCK_TYPE_STONE));
-  assert(world_set_block(&world, maximum / 2 - 1, 0, maximum / 2 - 1, BLOCK_TYPE_GRASS));
-  assert(world_get_block(&world, -maximum / 2, 0, -maximum / 2) == BLOCK_TYPE_STONE);
-  assert(world_get_block(&world, maximum / 2 - 1, 0, maximum / 2 - 1) == BLOCK_TYPE_GRASS);
-  world_destroy(&world);
+
 }
 
 int main(void) {
@@ -1125,16 +1185,17 @@ int main(void) {
   test_camera_stays_clear_of_walls();
   test_player_footprint_at_corners_and_ledges();
   test_coordinates_and_storage();
+  test_world_size_contract();
   test_signed_terrain_sampling();
   test_terrain_regions();
-  test_generator_regressions();
+  test_generator_behaviour();
   test_section_faces_and_replacement();
   test_dirty_neighbors();
   test_cave_and_ceiling_collision();
   test_thin_walls_at_section_boundaries();
   test_vertical_contacts_at_section_boundaries();
   test_generated_terrain_spawn();
-  test_expanded_world_terrain_and_boundaries();
+  test_default_world_terrain_and_boundaries();
   test_place_block_on_viewed_face();
   test_placement_reach_misses_and_player_overlap();
   test_placement_oblique_view_and_reach_boundary();

@@ -53,6 +53,44 @@ static void glfw_test_error(int code, const char *message) {
   fprintf(stderr, "GLFW %d: %s\n", code, message);
 }
 
+typedef struct {
+  float *depth;
+  size_t count, covered;
+} DepthFrame;
+
+/* Depth distinguishes drawn geometry from any clear colour or palette. */
+static DepthFrame capture_world(const Renderer *renderer, const Player *player) {
+  int width = renderer->framebufferWidth, height = renderer->framebufferHeight;
+  assert(width > 0 && height > 0);
+  DepthFrame frame = {.count = (size_t)width * height};
+  frame.depth = malloc(frame.count * sizeof(*frame.depth));
+  assert(frame.depth);
+  glViewport(0, 0, width, height);
+  glEnable(GL_DEPTH_TEST);
+  glClearDepth(1);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  render_world(renderer, player);
+  glReadPixels(0, 0, width, height, GL_DEPTH_COMPONENT, GL_FLOAT, frame.depth);
+  for (size_t i = 0; i < frame.count; i++) {
+    assert(isfinite(frame.depth[i]) && frame.depth[i] >= 0 && frame.depth[i] <= 1);
+    frame.covered += frame.depth[i] < 1;
+  }
+  assert(glGetError() == GL_NO_ERROR);
+  return frame;
+}
+
+static void assert_terrain_visible(const DepthFrame *frame) {
+  assert(frame->covered > frame->count / 100);
+}
+
+static void assert_view_changed(const DepthFrame *before, const DepthFrame *after) {
+  assert(before->count == after->count);
+  size_t changed = 0;
+  for (size_t i = 0; i < before->count; i++)
+    changed += fabsf(before->depth[i] - after->depth[i]) > 0.00001f;
+  assert(changed > before->count / 1000);
+}
+
 static void test_frustum(void) {
   mat4 identity;
   mat4_identity(identity);
@@ -85,6 +123,8 @@ static void test_rendered_movement(void) {
   assert(renderer_sync_world(renderer, &world));
   Player player = {.position = {-1, 0, 2}, .grounded = 1, .eyeHeight = 1,
                    .camera = {.front = {0, 0, -1}, .up = {0, 1, 0}}};
+  DepthFrame initialView = capture_world(renderer, &player);
+  assert_terrain_visible(&initialView);
   for (int frame = 0; frame < 60; frame++) {
     update_player(&player, (PlayerInput){.strafe = 1, .forward = 1},
                    1.0f / 60, &world);
@@ -94,19 +134,77 @@ static void test_rendered_movement(void) {
   }
   assert(fabsf(player.position.x + 0.25f) < 0.0001f);
   assert(player.position.z < -0.8f && player.grounded);
+  DepthFrame groundedView = capture_world(renderer, &player);
+  assert_view_changed(&initialView, &groundedView);
+  free(initialView.depth);
   float peak = 0;
+  int capturedAirborneView = 0;
   for (int frame = 0; frame < 60; frame++) {
     update_player(&player, (PlayerInput){.jump = frame == 0}, 1.0f / 60, &world);
     peak = fmaxf(peak, player.position.y);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     render_world(renderer, &player);
     assert(glGetError() == GL_NO_ERROR);
+    if (!capturedAirborneView && player.position.y > 0.5f) {
+      DepthFrame airborneView = capture_world(renderer, &player);
+      assert_terrain_visible(&airborneView);
+      assert_view_changed(&groundedView, &airborneView);
+      free(airborneView.depth);
+      capturedAirborneView = 1;
+    }
   }
   glFinish();
   assert(peak > 1.15f && peak < 1.35f);
+  assert(capturedAirborneView);
   assert(player.grounded && fabsf(player.position.y) < 0.0001f);
+  DepthFrame landedView = capture_world(renderer, &player);
+  assert_terrain_visible(&landedView);
+  size_t changedAfterLanding = 0;
+  for (size_t i = 0; i < groundedView.count; i++)
+    changedAfterLanding += fabsf(groundedView.depth[i] - landedView.depth[i]) > 0.0001f;
+  assert(changedAfterLanding <= groundedView.count / 1000);
+  free(groundedView.depth);
+  free(landedView.depth);
   puts("Rendered wall sliding and jump/landing checks passed.");
   renderer_destroy(renderer);
+  world_destroy(&world);
+}
+
+static void test_view_distance_and_edits_change_rendered_geometry(void) {
+  Renderer renderer = {0};
+  World world = {0};
+  assert(renderer_init(&renderer));
+  renderer.framebufferWidth = 640;
+  renderer.framebufferHeight = 480;
+  assert(world_init(&world, 128, (Vec3){0}, 1));
+  for (int x = -8; x <= 8; x++)
+    for (int y = 0; y <= 16; y++)
+      assert(world_set_block(&world, x, y, -50, BLOCK_TYPE_STONE));
+  assert(renderer_sync_world(&renderer, &world));
+  Player player = {.position = {0, 7.5f, 0}, .eyeHeight = 1,
+      .camera = {.front = {0, 0, -1}, .up = {0, 1, 0}}};
+  renderer.viewDistance = 25;
+  DepthFrame tooFar = capture_world(&renderer, &player);
+  assert(tooFar.covered == 0);
+  renderer.viewDistance = 100;
+  DepthFrame visible = capture_world(&renderer, &player);
+  assert_terrain_visible(&visible);
+  assert_view_changed(&tooFar, &visible);
+  free(tooFar.depth);
+  free(visible.depth);
+  renderer.viewDistance = 25;
+  player.position.z = -30;
+  DepthFrame approached = capture_world(&renderer, &player);
+  assert_terrain_visible(&approached);
+  free(approached.depth);
+  for (int x = -8; x <= 8; x++)
+    for (int y = 0; y <= 16; y++)
+      assert(world_set_block(&world, x, y, -50, BLOCK_TYPE_EMPTY));
+  assert(renderer_sync_world(&renderer, &world));
+  DepthFrame removed = capture_world(&renderer, &player);
+  assert(removed.covered == 0);
+  free(removed.depth);
+  renderer_destroy(&renderer);
   world_destroy(&world);
 }
 
@@ -254,11 +352,10 @@ int main(void) {
   printf("GL renderer: %s; startup %.3f ms; frame %.3f ms\n", glGetString(GL_RENDERER),
          startup, 1000 * (glfwGetTime() - start) / 120);
   unsigned char pixels[640 * 480 * 3];
+  DepthFrame terrainFrame = capture_world(&renderer, &player);
+  assert_terrain_visible(&terrainFrame);
+  free(terrainFrame.depth);
   glReadPixels(0, 0, 640, 480, GL_RGB, GL_UNSIGNED_BYTE, pixels);
-  size_t colored = 0;
-  for (size_t i = 0; i < sizeof(pixels); i++)
-    colored += pixels[i] != 0;
-  assert(colored > 640 * 480); /* Scene contains substantial rendered terrain. */
   FILE *file = fopen("/tmp/bwildering-renderer.ppm", "wb");
   assert(file);
   fprintf(file, "P6\n640 480\n255\n");
@@ -269,6 +366,7 @@ int main(void) {
   renderer_destroy(&renderer);
   world_destroy(&world);
   test_rendered_movement();
+  test_view_distance_and_edits_change_rendered_geometry();
   assert(glGetError() == GL_NO_ERROR);
   glfwDestroyWindow(window);
   glfwTerminate();
@@ -277,7 +375,6 @@ int main(void) {
   glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
   Application application;
   assert(application_init(&application));
-  assert(application.world.voxelCount > 0 && application.renderer.meshCount > 0);
   assert(application.world.blocksPerSide == PLATFORM_BLOCKS_PER_SIDE);
   float spawnY = world_surface_height(&application.world, application.player.position.x,
                                       application.player.position.z);
@@ -285,6 +382,9 @@ int main(void) {
   for (int i = 0; i < 60; i++)
     update_player(&application.player, (PlayerInput){0}, 1.0f / 60, &application.world);
   assert(application.player.grounded && application.player.position.y == spawnY);
+  DepthFrame spawnView = capture_world(&application.renderer, &application.player);
+  assert_terrain_visible(&spawnView);
+  free(spawnView.depth);
   update_player(&application.player, (PlayerInput){.jump = 1}, 1.0f / 60, &application.world);
   assert(!application.player.grounded && application.player.position.y > spawnY);
   printf("Application spawn surface: %.1f; grounded and jump checks passed.\n", spawnY);

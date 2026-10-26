@@ -98,31 +98,46 @@ static void application_set_paused(Application *application, int paused) {
                    paused ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_DISABLED);
 }
 
-/* Framebuffer coordinates, shared by drawing and mouse hit testing. */
-static int pause_menu_button(double x, double y, int width, int height, int settingsOpen) {
+typedef struct {
+  int action;
+  const char *label;
+  float centerX, top, width;
+  int enabled;
+} MenuButton;
+
+/* Logical offsets from the menu centre; drawing, hit testing and automation
+   all use these controls rather than maintaining separate layouts. */
+static int menu_buttons(const Application *application, MenuButton buttons[3]) {
+  if (application->settingsOpen) {
+    buttons[0] = (MenuButton){MENU_DISTANCE_DOWN, "-", -116, -24, 48,
+        application->renderer.viewDistance > MIN_VIEW_DISTANCE};
+    buttons[1] = (MenuButton){MENU_DISTANCE_UP, "+", 116, -24, 48,
+        application->renderer.viewDistance < MAX_VIEW_DISTANCE};
+    buttons[2] = (MenuButton){MENU_BACK, "BACK", 0, 40, 280, 1};
+  } else {
+    buttons[0] = (MenuButton){MENU_RESUME, "RESUME", 0, -88, 280, 1};
+    buttons[1] = (MenuButton){MENU_SETTINGS, "SETTINGS", 0, -24, 280, 1};
+    buttons[2] = (MenuButton){MENU_QUIT, "QUIT", 0, 40, 280, 1};
+  }
+  return 3;
+}
+
+static int pause_menu_button(const Application *application, double x, double y,
+                              int width, int height) {
   float scale = fminf(width / 640.0f, height / 480.0f);
-  if (scale <= 0 || fabs(x - width * 0.5) > 140 * scale)
-    return 0;
+  if (scale <= 0)
+    return MENU_NONE;
   double offset = (y - height * 0.5) / scale;
   double horizontal = (x - width * 0.5) / scale;
-  if (settingsOpen) {
-    if (offset >= 40 && offset <= 88)
-      return MENU_BACK;
-    if (offset >= -24 && offset <= 24) {
-      if (horizontal <= -92)
-        return MENU_DISTANCE_DOWN;
-      if (horizontal >= 92)
-        return MENU_DISTANCE_UP;
-    }
-    return MENU_NONE;
+  MenuButton buttons[3];
+  int count = menu_buttons(application, buttons);
+  for (int i = 0; i < count; i++) {
+    const MenuButton *button = &buttons[i];
+    if (button->enabled && fabs(horizontal - button->centerX) <= button->width / 2 &&
+        offset >= button->top && offset <= button->top + 48)
+      return button->action;
   }
-  if (offset >= -88 && offset <= -40)
-    return MENU_RESUME;
-  if (offset >= -24 && offset <= 24)
-    return MENU_SETTINGS;
-  if (offset >= 40 && offset <= 88)
-    return MENU_QUIT;
-  return 0;
+  return MENU_NONE;
 }
 
 static void mouse_button_callback(GLFWwindow *window, int button, int action, int mods) {
@@ -140,10 +155,9 @@ static void mouse_button_callback(GLFWwindow *window, int button, int action, in
     glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
     if (width <= 0 || height <= 0)
       return;
-    int selected = pause_menu_button(x * framebufferWidth / width,
+    int selected = pause_menu_button(application, x * framebufferWidth / width,
                                      y * framebufferHeight / height,
-                                     framebufferWidth, framebufferHeight,
-                                     application->settingsOpen);
+                                     framebufferWidth, framebufferHeight);
     if (selected == MENU_RESUME)
       application_set_paused(application, 0);
     else if (selected == MENU_QUIT)
@@ -687,8 +701,8 @@ static void render_pause_menu(const Application *application) {
   glfwGetCursorPos(application->window, &cursorX, &cursorY);
   glfwGetWindowSize(application->window, &windowWidth, &windowHeight);
   int hovered = windowWidth > 0 && windowHeight > 0 ?
-      pause_menu_button(cursorX * width / windowWidth, cursorY * height / windowHeight,
-                         width, height, application->settingsOpen) : 0;
+      pause_menu_button(application, cursorX * width / windowWidth, cursorY * height / windowHeight,
+                         width, height) : 0;
   GLboolean depthEnabled = glIsEnabled(GL_DEPTH_TEST);
   GLboolean cullEnabled = glIsEnabled(GL_CULL_FACE);
   glDisable(GL_DEPTH_TEST);
@@ -711,21 +725,14 @@ static void render_pause_menu(const Application *application) {
                    scale, (Vec3){0.95f, 0.98f, 0.92f});
     draw_menu_text(renderer, value, centerX, centerY - 9 * scale,
                    scale * 0.85f, (Vec3){0.95f, 0.98f, 0.92f});
-    draw_menu_button(renderer, "-", centerX - 116 * scale, centerY - 24 * scale,
-                       48, scale, hovered == MENU_DISTANCE_DOWN,
-                       renderer->viewDistance > MIN_VIEW_DISTANCE);
-    draw_menu_button(renderer, "+", centerX + 116 * scale, centerY - 24 * scale,
-                       48, scale, hovered == MENU_DISTANCE_UP,
-                       renderer->viewDistance < MAX_VIEW_DISTANCE);
-    draw_menu_button(renderer, "BACK", centerX, centerY + 40 * scale,
-                       280, scale, hovered == MENU_BACK, 1);
-  } else {
-    draw_menu_button(renderer, "RESUME", centerX, centerY - 88 * scale,
-                       280, scale, hovered == MENU_RESUME, 1);
-    draw_menu_button(renderer, "SETTINGS", centerX, centerY - 24 * scale,
-                       280, scale, hovered == MENU_SETTINGS, 1);
-    draw_menu_button(renderer, "QUIT", centerX, centerY + 40 * scale,
-                       280, scale, hovered == MENU_QUIT, 1);
+  }
+  MenuButton buttons[3];
+  int count = menu_buttons(application, buttons);
+  for (int i = 0; i < count; i++) {
+    const MenuButton *button = &buttons[i];
+    draw_menu_button(renderer, button->label, centerX + button->centerX * scale,
+                       centerY + button->top * scale, button->width, scale,
+                       hovered == button->action, button->enabled);
   }
   draw_menu_text(renderer, application->settingsOpen ? "ESC TO PAUSE" : "ESC TO RESUME",
                  centerX, centerY + 110 * scale,

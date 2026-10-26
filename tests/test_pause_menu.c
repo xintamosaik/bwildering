@@ -56,6 +56,78 @@ static void frame(Application *application, double elapsed) {
   application_update(application);
 }
 
+static void click(Application *application, double x, double y) {
+  cursorX = x;
+  cursorY = y;
+  pendingClick = GLFW_MOUSE_BUTTON_LEFT + 1;
+  frame(application, 0.02);
+}
+
+static void test_view_distance_settings(void) {
+  Application application = {0};
+  windowUser = &application;
+  memset(keys, 0, sizeof(keys));
+  closeRequested = 0;
+  now = 0;
+  application.renderer.viewDistance = 100;
+  application.player = (Player){.position = {0, 5, 0}, .eyeHeight = 1,
+      .camera = {.front = {0, 0, -1}, .up = {0, 1, 0}, .yaw = -90}};
+  assert(create_platform(&application.world, 16, (Vec3){0}, 1, 1));
+  keys[GLFW_KEY_ESCAPE] = GLFW_PRESS;
+  frame(&application, 0.02);
+  keys[GLFW_KEY_ESCAPE] = GLFW_RELEASE;
+  frame(&application, 0.02);
+  Player frozen = application.player;
+  size_t voxels = application.world.voxelCount;
+  click(&application, 320, 240); /* Settings */
+  assert(application.paused && application.settingsOpen);
+
+  SectionGpuMesh distant = {.boundsMin = {110, -8, -8}, .boundsMax = {126, 8, 8}};
+  SectionGpuMesh nearby = {.boundsMin = {-8, -8, -8}, .boundsMax = {8, 8, 8}};
+  assert(!section_within_view_distance(&distant, (Vec3){0}, application.renderer.viewDistance));
+  click(&application, 436, 240); /* Increase */
+  assert(application.renderer.viewDistance == 125);
+  assert(section_within_view_distance(&distant, (Vec3){0}, application.renderer.viewDistance));
+  assert(section_within_view_distance(&nearby, (Vec3){0}, application.renderer.viewDistance));
+  click(&application, 204, 240); /* Decrease */
+  assert(application.renderer.viewDistance == 100);
+  assert(!section_within_view_distance(&distant, (Vec3){0}, application.renderer.viewDistance));
+  for (int i = 0; i < 20; i++)
+    click(&application, 436, 240);
+  assert(application.renderer.viewDistance == 300);
+  for (int i = 0; i < 20; i++)
+    click(&application, 204, 240);
+  assert(application.renderer.viewDistance == 25);
+  assert(section_within_view_distance(&nearby, (Vec3){0}, application.renderer.viewDistance));
+  /* Visibility follows the camera as it moves, rather than the world origin. */
+  assert(section_within_view_distance(&distant, (Vec3){100, 0, 0}, 25));
+  assert(!section_within_view_distance(&distant, (Vec3){100, 50, 0}, 25));
+  assert(application.paused && !closeRequested);
+  assert(application.world.voxelCount == voxels);
+  assert(memcmp(&application.player, &frozen, sizeof(frozen)) == 0);
+
+  click(&application, 320, 304); /* Back, not Quit */
+  assert(application.paused && !application.settingsOpen && !closeRequested);
+  click(&application, 320, 240);
+  assert(application.settingsOpen && application.renderer.viewDistance == 25);
+  keys[GLFW_KEY_ESCAPE] = GLFW_PRESS;
+  frame(&application, 0.02);
+  assert(application.paused && !application.settingsOpen);
+  keys[GLFW_KEY_ESCAPE] = GLFW_RELEASE;
+  frame(&application, 0.02);
+  keys[GLFW_KEY_ESCAPE] = GLFW_PRESS;
+  frame(&application, 0.02);
+  assert(!application.paused && cursorMode == GLFW_CURSOR_DISABLED);
+  assert(application.renderer.viewDistance == 25);
+  keys[GLFW_KEY_ESCAPE] = GLFW_RELEASE;
+  frame(&application, 0.02);
+  keys[GLFW_KEY_ESCAPE] = GLFW_PRESS;
+  frame(&application, 0.02);
+  click(&application, 320, 240);
+  assert(application.settingsOpen && application.renderer.viewDistance == 25);
+  world_destroy(&application.world);
+}
+
 int main(void) {
   Application application = {0};
   windowUser = &application;
@@ -91,7 +163,7 @@ int main(void) {
   assert(application.paused && application.world.voxelCount == voxels);
 
   /* Resume with the mouse. The resume click and elapsed pause cannot affect gameplay. */
-  cursorX = 320; cursorY = 240;
+  cursorX = 320; cursorY = 176;
   pendingClick = GLFW_MOUSE_BUTTON_LEFT + 1;
   frame(&application, 20);
   assert(!application.paused && cursorMode == GLFW_CURSOR_DISABLED);
@@ -124,6 +196,7 @@ int main(void) {
   frame(&application, 0.02);
   assert(closeRequested);
   world_destroy(&application.world);
+  test_view_distance_settings();
   puts("All pause menu interaction tests passed.");
   return 0;
 }

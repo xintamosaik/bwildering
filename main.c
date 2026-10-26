@@ -37,6 +37,7 @@ typedef struct {
   GLint colorLocation;
   int framebufferWidth;
   int framebufferHeight;
+  float viewDistance;
 } Renderer;
 
 typedef struct {
@@ -55,6 +56,7 @@ typedef struct {
   int placeQueued;
   int removeQueued;
   int paused;
+  int settingsOpen;
   int escapeWasDown;
   int glfwInitialized;
   int rendererInitialized;
@@ -68,12 +70,22 @@ static const uint32_t WORLD_SEED = UINT32_C(0x4B1D2A37);
 static const double FIXED_DELTA_TIME = 1.0 / 60.0;
 static const double MAX_FRAME_DELTA_TIME = 0.25;
 static const int FPS_TEXT_MAX_CHARS = 16;
+static const float DEFAULT_VIEW_DISTANCE = 100.0f;
+static const float MIN_VIEW_DISTANCE = 25.0f;
+static const float MAX_VIEW_DISTANCE = 300.0f;
+static const float VIEW_DISTANCE_STEP = 25.0f;
+
+enum MenuAction {
+  MENU_NONE, MENU_RESUME, MENU_QUIT, MENU_SETTINGS, MENU_BACK,
+  MENU_DISTANCE_DOWN, MENU_DISTANCE_UP
+};
 
 #pragma endregion
 
 #pragma region Input
 static void application_set_paused(Application *application, int paused) {
   application->paused = paused;
+  application->settingsOpen = 0;
   application->simulationAccumulator = 0;
   application->jumpQueued = 0;
   application->placeQueued = 0;
@@ -87,15 +99,29 @@ static void application_set_paused(Application *application, int paused) {
 }
 
 /* Framebuffer coordinates, shared by drawing and mouse hit testing. */
-static int pause_menu_button(double x, double y, int width, int height) {
+static int pause_menu_button(double x, double y, int width, int height, int settingsOpen) {
   float scale = fminf(width / 640.0f, height / 480.0f);
   if (scale <= 0 || fabs(x - width * 0.5) > 140 * scale)
     return 0;
   double offset = (y - height * 0.5) / scale;
+  double horizontal = (x - width * 0.5) / scale;
+  if (settingsOpen) {
+    if (offset >= 40 && offset <= 88)
+      return MENU_BACK;
+    if (offset >= -24 && offset <= 24) {
+      if (horizontal <= -92)
+        return MENU_DISTANCE_DOWN;
+      if (horizontal >= 92)
+        return MENU_DISTANCE_UP;
+    }
+    return MENU_NONE;
+  }
+  if (offset >= -88 && offset <= -40)
+    return MENU_RESUME;
   if (offset >= -24 && offset <= 24)
-    return 1;
+    return MENU_SETTINGS;
   if (offset >= 40 && offset <= 88)
-    return 2;
+    return MENU_QUIT;
   return 0;
 }
 
@@ -116,11 +142,22 @@ static void mouse_button_callback(GLFWwindow *window, int button, int action, in
       return;
     int selected = pause_menu_button(x * framebufferWidth / width,
                                      y * framebufferHeight / height,
-                                     framebufferWidth, framebufferHeight);
-    if (selected == 1)
+                                     framebufferWidth, framebufferHeight,
+                                     application->settingsOpen);
+    if (selected == MENU_RESUME)
       application_set_paused(application, 0);
-    else if (selected == 2)
+    else if (selected == MENU_QUIT)
       glfwSetWindowShouldClose(window, GLFW_TRUE);
+    else if (selected == MENU_SETTINGS)
+      application->settingsOpen = 1;
+    else if (selected == MENU_BACK)
+      application->settingsOpen = 0;
+    else if (selected == MENU_DISTANCE_DOWN || selected == MENU_DISTANCE_UP) {
+      float distance = application->renderer.viewDistance;
+      distance += selected == MENU_DISTANCE_UP ? VIEW_DISTANCE_STEP : -VIEW_DISTANCE_STEP;
+      application->renderer.viewDistance = fmaxf(MIN_VIEW_DISTANCE,
+                                                 fminf(MAX_VIEW_DISTANCE, distance));
+    }
     return;
   }
   if (glfwGetInputMode(window, GLFW_CURSOR) != GLFW_CURSOR_DISABLED)
@@ -303,7 +340,7 @@ static void renderer_destroy(Renderer *renderer) {
 }
 
 static int renderer_init(Renderer *renderer) {
-  *renderer = (Renderer){0};
+  *renderer = (Renderer){.viewDistance = DEFAULT_VIEW_DISTANCE};
   renderer->program = create_shader_program();
   if (renderer->program == 0)
     return 0;
@@ -479,6 +516,14 @@ static const unsigned char *font_glyph(const char character) {
   static const unsigned char glyphT[7] = {31,4,4,4,4,4,4};
   static const unsigned char glyphC[7] = {15,16,16,16,16,16,15};
   static const unsigned char glyphO[7] = {14,17,17,17,17,17,14};
+  static const unsigned char glyphN[7] = {17,25,25,21,19,19,17};
+  static const unsigned char glyphG[7] = {14,17,16,23,17,17,14};
+  static const unsigned char glyphV[7] = {17,17,17,17,17,10,4};
+  static const unsigned char glyphW[7] = {17,17,17,21,21,27,17};
+  static const unsigned char glyphB[7] = {30,17,17,30,17,17,30};
+  static const unsigned char glyphK[7] = {17,18,20,24,20,18,17};
+  static const unsigned char glyphPlus[7] = {0,4,4,31,4,4,0};
+  static const unsigned char glyphMinus[7] = {0,0,0,31,0,0,0};
 
   switch (character) {
   case '0': return glyph0;
@@ -506,6 +551,14 @@ static const unsigned char *font_glyph(const char character) {
   case 'T': return glyphT;
   case 'C': return glyphC;
   case 'O': return glyphO;
+  case 'N': return glyphN;
+  case 'G': return glyphG;
+  case 'V': return glyphV;
+  case 'W': return glyphW;
+  case 'B': return glyphB;
+  case 'K': return glyphK;
+  case '+': return glyphPlus;
+  case '-': return glyphMinus;
   default: return NULL;
   }
 }
@@ -611,6 +664,17 @@ static void draw_menu_text(const Renderer *renderer, const char *text,
   draw_menu_vertices(renderer, vertices, count, color);
 }
 
+static void draw_menu_button(const Renderer *renderer, const char *label,
+                              float centerX, float top, float width, float scale,
+                              int hovered, int enabled) {
+  Vec3 color = !enabled ? (Vec3){0.15f, 0.18f, 0.15f} :
+      hovered ? (Vec3){0.46f, 0.58f, 0.38f} : (Vec3){0.25f, 0.32f, 0.24f};
+  draw_menu_rectangle(renderer, centerX - width * scale / 2, top,
+                       width * scale, 48 * scale, color);
+  draw_menu_text(renderer, label, centerX, top + 14 * scale, scale,
+                   enabled ? (Vec3){0.95f, 0.98f, 0.92f} : (Vec3){0.4f, 0.45f, 0.4f});
+}
+
 static void render_pause_menu(const Application *application) {
   const Renderer *renderer = &application->renderer;
   int width = renderer->framebufferWidth, height = renderer->framebufferHeight;
@@ -624,7 +688,7 @@ static void render_pause_menu(const Application *application) {
   glfwGetWindowSize(application->window, &windowWidth, &windowHeight);
   int hovered = windowWidth > 0 && windowHeight > 0 ?
       pause_menu_button(cursorX * width / windowWidth, cursorY * height / windowHeight,
-                         width, height) : 0;
+                         width, height, application->settingsOpen) : 0;
   GLboolean depthEnabled = glIsEnabled(GL_DEPTH_TEST);
   GLboolean cullEnabled = glIsEnabled(GL_CULL_FACE);
   glDisable(GL_DEPTH_TEST);
@@ -635,20 +699,36 @@ static void render_pause_menu(const Application *application) {
   glUniformMatrix4fv(renderer->mvpLocation, 1, GL_FALSE, identity);
   glBindVertexArray(renderer->textVao);
   glBindBuffer(GL_ARRAY_BUFFER, renderer->textVbo);
-  draw_menu_rectangle(renderer, centerX - 180 * scale, centerY - 130 * scale,
-                       360 * scale, 270 * scale, (Vec3){0.09f, 0.12f, 0.10f});
-  draw_menu_text(renderer, "PAUSED", centerX, centerY - 95 * scale,
-                 scale * 1.5f, (Vec3){0.95f, 0.98f, 0.92f});
-  const char *labels[] = {"RESUME", "QUIT"};
-  for (int button = 0; button < 2; button++) {
-    float top = centerY + (-24 + button * 64) * scale;
-    Vec3 color = hovered == button + 1 ? (Vec3){0.46f, 0.58f, 0.38f}
-                                       : (Vec3){0.25f, 0.32f, 0.24f};
-    draw_menu_rectangle(renderer, centerX - 140 * scale, top, 280 * scale, 48 * scale, color);
-    draw_menu_text(renderer, labels[button], centerX, top + 14 * scale, scale,
-                   (Vec3){0.95f, 0.98f, 0.92f});
+  draw_menu_rectangle(renderer, centerX - 180 * scale, centerY - 160 * scale,
+                       360 * scale, 300 * scale, (Vec3){0.09f, 0.12f, 0.10f});
+  draw_menu_text(renderer, application->settingsOpen ? "SETTINGS" : "PAUSED",
+                 centerX, centerY - 130 * scale, scale * 1.2f,
+                 (Vec3){0.95f, 0.98f, 0.92f});
+  if (application->settingsOpen) {
+    char value[16];
+    snprintf(value, sizeof(value), "%.0f UNITS", renderer->viewDistance);
+    draw_menu_text(renderer, "VIEW DISTANCE", centerX, centerY - 65 * scale,
+                   scale, (Vec3){0.95f, 0.98f, 0.92f});
+    draw_menu_text(renderer, value, centerX, centerY - 9 * scale,
+                   scale * 0.85f, (Vec3){0.95f, 0.98f, 0.92f});
+    draw_menu_button(renderer, "-", centerX - 116 * scale, centerY - 24 * scale,
+                       48, scale, hovered == MENU_DISTANCE_DOWN,
+                       renderer->viewDistance > MIN_VIEW_DISTANCE);
+    draw_menu_button(renderer, "+", centerX + 116 * scale, centerY - 24 * scale,
+                       48, scale, hovered == MENU_DISTANCE_UP,
+                       renderer->viewDistance < MAX_VIEW_DISTANCE);
+    draw_menu_button(renderer, "BACK", centerX, centerY + 40 * scale,
+                       280, scale, hovered == MENU_BACK, 1);
+  } else {
+    draw_menu_button(renderer, "RESUME", centerX, centerY - 88 * scale,
+                       280, scale, hovered == MENU_RESUME, 1);
+    draw_menu_button(renderer, "SETTINGS", centerX, centerY - 24 * scale,
+                       280, scale, hovered == MENU_SETTINGS, 1);
+    draw_menu_button(renderer, "QUIT", centerX, centerY + 40 * scale,
+                       280, scale, hovered == MENU_QUIT, 1);
   }
-  draw_menu_text(renderer, "ESC TO RESUME", centerX, centerY + 110 * scale,
+  draw_menu_text(renderer, application->settingsOpen ? "ESC TO PAUSE" : "ESC TO RESUME",
+                 centerX, centerY + 110 * scale,
                  scale * 0.7f, (Vec3){0.65f, 0.73f, 0.62f});
   if (depthEnabled)
     glEnable(GL_DEPTH_TEST);
@@ -672,6 +752,14 @@ static int section_in_frustum(const SectionGpuMesh *mesh, const mat4 mvp) {
   return 1;
 }
 
+static int section_within_view_distance(const SectionGpuMesh *mesh, Vec3 eye,
+                                         float distance) {
+  float dx = fmaxf(mesh->boundsMin.x - eye.x, fmaxf(0, eye.x - mesh->boundsMax.x));
+  float dy = fmaxf(mesh->boundsMin.y - eye.y, fmaxf(0, eye.y - mesh->boundsMax.y));
+  float dz = fmaxf(mesh->boundsMin.z - eye.z, fmaxf(0, eye.z - mesh->boundsMax.z));
+  return dx * dx + dy * dy + dz * dz <= distance * distance;
+}
+
 static void render_world(const Renderer *renderer, const Player *player) {
   if (renderer->framebufferWidth <= 0 || renderer->framebufferHeight <= 0)
     return;
@@ -681,7 +769,8 @@ static void render_world(const Renderer *renderer, const Player *player) {
   mat4 proj, view, mvp;
   const float aspectRatio =
       (float)renderer->framebufferWidth / (float)renderer->framebufferHeight;
-  mat4_perspective(75.0f * (3.14159f / 180.0f), aspectRatio, 0.05f, 100.0f, proj);
+  float viewDistance = renderer->viewDistance > 0 ? renderer->viewDistance : DEFAULT_VIEW_DISTANCE;
+  mat4_perspective(75.0f * (3.14159f / 180.0f), aspectRatio, 0.05f, viewDistance, proj);
   Vec3 cameraPosition = player_eye_position(player);
   const Vec3 target = vec3_add(cameraPosition, player->camera.front);
   mat4_lookat(cameraPosition, target, player->camera.up, view);
@@ -695,7 +784,9 @@ static void render_world(const Renderer *renderer, const Player *player) {
     glUniform3f(renderer->colorLocation, color.x, color.y, color.z);
     for (size_t i = 0; i < renderer->meshCount; i++) {
       const SectionGpuMesh *mesh = &renderer->meshes[i];
-      if (!mesh->vertexCount[type] || !section_in_frustum(mesh, mvp))
+      if (!mesh->vertexCount[type] ||
+          !section_within_view_distance(mesh, cameraPosition, viewDistance) ||
+          !section_in_frustum(mesh, mvp))
         continue;
       glBindVertexArray(mesh->vao);
       glDrawArrays(GL_TRIANGLES, mesh->firstVertex[type], mesh->vertexCount[type]);
@@ -854,7 +945,10 @@ static void application_update(Application *application) {
 
   const int escapeIsDown = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
   if (escapeIsDown && !application->escapeWasDown) {
-    application_set_paused(application, !application->paused);
+    if (application->paused && application->settingsOpen)
+      application->settingsOpen = 0;
+    else
+      application_set_paused(application, !application->paused);
     application->escapeWasDown = escapeIsDown;
     return;
   }

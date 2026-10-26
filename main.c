@@ -348,8 +348,6 @@ static const unsigned char *font_glyph(char character) {
 static int build_text_vertices(const char *text, float shadowOffset,
                                int framebufferWidth, int framebufferHeight,
                                float *vertices) {
-  const float pixelSize = 2.0f;
-  const float cellSize = 3.0f;
   int vertexCount = 0;
 
   for (int characterIndex = 0; text[characterIndex] != '\0';
@@ -363,6 +361,8 @@ static int build_text_vertices(const char *text, float shadowOffset,
       for (int column = 0; column < 5; column++) {
         if ((glyph[row] & (1u << (4 - column))) == 0)
           continue;
+        const float pixelSize = 2.0f;
+        const float cellSize = 3.0f;
         float left = originX + (float)column * cellSize;
         float top = originY + (float)row * cellSize;
         float right = left + pixelSize;

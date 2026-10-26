@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #pragma region Types & Constants
 typedef struct {
@@ -53,6 +54,7 @@ typedef struct {
   int jumpQueued;
   int placeQueued;
   int removeQueued;
+  int paused;
   int escapeWasDown;
   int glfwInitialized;
   int rendererInitialized;
@@ -70,12 +72,59 @@ static const int FPS_TEXT_MAX_CHARS = 16;
 #pragma endregion
 
 #pragma region Input
+static void application_set_paused(Application *application, int paused) {
+  application->paused = paused;
+  application->simulationAccumulator = 0;
+  application->jumpQueued = 0;
+  application->placeQueued = 0;
+  application->removeQueued = 0;
+  application->jumpWasDown = glfwGetKey(application->window, GLFW_KEY_SPACE) == GLFW_PRESS;
+  application->mouseInput.firstMouse = 1;
+  application->mouseInput.deltaX = 0;
+  application->mouseInput.deltaY = 0;
+  glfwSetInputMode(application->window, GLFW_CURSOR,
+                   paused ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_DISABLED);
+}
+
+/* Framebuffer coordinates, shared by drawing and mouse hit testing. */
+static int pause_menu_button(double x, double y, int width, int height) {
+  float scale = fminf(width / 640.0f, height / 480.0f);
+  if (scale <= 0 || fabs(x - width * 0.5) > 140 * scale)
+    return 0;
+  double offset = (y - height * 0.5) / scale;
+  if (offset >= -24 && offset <= 24)
+    return 1;
+  if (offset >= 40 && offset <= 88)
+    return 2;
+  return 0;
+}
+
 static void mouse_button_callback(GLFWwindow *window, int button, int action, int mods) {
   (void)mods;
-  if (action != GLFW_PRESS ||
-      glfwGetInputMode(window, GLFW_CURSOR) != GLFW_CURSOR_DISABLED)
+  if (action != GLFW_PRESS)
     return;
   Application *application = glfwGetWindowUserPointer(window);
+  if (application && application->paused) {
+    if (button != GLFW_MOUSE_BUTTON_LEFT)
+      return;
+    double x, y;
+    int width, height, framebufferWidth, framebufferHeight;
+    glfwGetCursorPos(window, &x, &y);
+    glfwGetWindowSize(window, &width, &height);
+    glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
+    if (width <= 0 || height <= 0)
+      return;
+    int selected = pause_menu_button(x * framebufferWidth / width,
+                                     y * framebufferHeight / height,
+                                     framebufferWidth, framebufferHeight);
+    if (selected == 1)
+      application_set_paused(application, 0);
+    else if (selected == 2)
+      glfwSetWindowShouldClose(window, GLFW_TRUE);
+    return;
+  }
+  if (glfwGetInputMode(window, GLFW_CURSOR) != GLFW_CURSOR_DISABLED)
+    return;
   if (application) {
     if (button == GLFW_MOUSE_BUTTON_LEFT)
       application->placeQueued = 1;
@@ -419,6 +468,17 @@ static const unsigned char *font_glyph(const char character) {
                                           0x01, 0x01, 0x1e};
   static const unsigned char glyphColon[7] = {0x00, 0x04, 0x04, 0x00,
                                               0x04, 0x04, 0x00};
+  static const unsigned char glyphA[7] = {14,17,17,31,17,17,17};
+  static const unsigned char glyphU[7] = {17,17,17,17,17,17,14};
+  static const unsigned char glyphE[7] = {31,16,16,30,16,16,31};
+  static const unsigned char glyphD[7] = {30,17,17,17,17,17,30};
+  static const unsigned char glyphR[7] = {30,17,17,30,20,18,17};
+  static const unsigned char glyphM[7] = {17,27,21,21,17,17,17};
+  static const unsigned char glyphQ[7] = {14,17,17,17,21,18,13};
+  static const unsigned char glyphI[7] = {14,4,4,4,4,4,14};
+  static const unsigned char glyphT[7] = {31,4,4,4,4,4,4};
+  static const unsigned char glyphC[7] = {15,16,16,16,16,16,15};
+  static const unsigned char glyphO[7] = {14,17,17,17,17,17,14};
 
   switch (character) {
   case '0': return glyph0;
@@ -435,13 +495,24 @@ static const unsigned char *font_glyph(const char character) {
   case 'P': return glyphP;
   case 'S': return glyphS;
   case ':': return glyphColon;
+  case 'A': return glyphA;
+  case 'U': return glyphU;
+  case 'E': return glyphE;
+  case 'D': return glyphD;
+  case 'R': return glyphR;
+  case 'M': return glyphM;
+  case 'Q': return glyphQ;
+  case 'I': return glyphI;
+  case 'T': return glyphT;
+  case 'C': return glyphC;
+  case 'O': return glyphO;
   default: return NULL;
   }
 }
 
 static int build_text_vertices(const char *text, const float shadowOffset,
                                const int framebufferWidth, const int framebufferHeight,
-                               float *vertices) {
+                               float *vertices, float x, float y, float scale) {
   int vertexCount = 0;
 
   for (int characterIndex = 0; text[characterIndex] != '\0';
@@ -449,14 +520,14 @@ static int build_text_vertices(const char *text, const float shadowOffset,
     const unsigned char *glyph = font_glyph(text[characterIndex]);
     if (glyph == NULL)
       continue;
-    const float originX = 16.0f + (float)characterIndex * 18.0f + shadowOffset;
-    const float originY = 16.0f + shadowOffset;
+    const float originX = x + ((float)characterIndex * 18.0f + shadowOffset) * scale;
+    const float originY = y + shadowOffset * scale;
     for (int row = 0; row < 7; row++) {
       for (int column = 0; column < 5; column++) {
         if ((glyph[row] & (1u << (4 - column))) == 0)
           continue;
-        const float pixelSize = 2.0f;
-        const float cellSize = 3.0f;
+        const float pixelSize = 2.0f * scale;
+        const float cellSize = 3.0f * scale;
         const float left = originX + (float)column * cellSize;
         const float top = originY + (float)row * cellSize;
         const float right = left + pixelSize;
@@ -495,7 +566,7 @@ static void render_fps(const Renderer *renderer, const int fps) {
 
   int vertexCount = build_text_vertices(
       text, 1.0f, renderer->framebufferWidth, renderer->framebufferHeight,
-      vertices);
+      vertices, 16, 16, 1);
   glBufferSubData(GL_ARRAY_BUFFER, 0,
                   (GLsizeiptr)(vertexCount * 3 * sizeof(float)), vertices);
   glUniform3f(renderer->colorLocation, 0.02f, 0.03f, 0.02f);
@@ -503,13 +574,86 @@ static void render_fps(const Renderer *renderer, const int fps) {
 
   vertexCount = build_text_vertices(
       text, 0.0f, renderer->framebufferWidth, renderer->framebufferHeight,
-      vertices);
+      vertices, 16, 16, 1);
   glBufferSubData(GL_ARRAY_BUFFER, 0,
                   (GLsizeiptr)(vertexCount * 3 * sizeof(float)), vertices);
   glUniform3f(renderer->colorLocation, 0.95f, 0.98f, 0.92f);
   glDrawArrays(GL_TRIANGLES, 0, vertexCount);
 
   glEnable(GL_DEPTH_TEST);
+}
+
+static void draw_menu_vertices(const Renderer *renderer, const float *vertices,
+                                int count, Vec3 color) {
+  glBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr)(count * 3 * sizeof(float)), vertices);
+  glUniform3f(renderer->colorLocation, color.x, color.y, color.z);
+  glDrawArrays(GL_TRIANGLES, 0, count);
+}
+
+static void draw_menu_rectangle(const Renderer *renderer, float x, float y,
+                                 float width, float height, Vec3 color) {
+  float left = 2 * x / renderer->framebufferWidth - 1;
+  float right = 2 * (x + width) / renderer->framebufferWidth - 1;
+  float top = 1 - 2 * y / renderer->framebufferHeight;
+  float bottom = 1 - 2 * (y + height) / renderer->framebufferHeight;
+  float vertices[] = {left, top, 0, right, top, 0, right, bottom, 0,
+                       left, top, 0, right, bottom, 0, left, bottom, 0};
+  draw_menu_vertices(renderer, vertices, 6, color);
+}
+
+static void draw_menu_text(const Renderer *renderer, const char *text,
+                            float centerX, float y, float scale, Vec3 color) {
+  float vertices[FPS_TEXT_MAX_CHARS * 5 * 7 * 6 * 3];
+  float width = ((float)strlen(text) * 18 - 4) * scale;
+  int count = build_text_vertices(text, 0, renderer->framebufferWidth,
+                                  renderer->framebufferHeight, vertices,
+                                  centerX - width / 2, y, scale);
+  draw_menu_vertices(renderer, vertices, count, color);
+}
+
+static void render_pause_menu(const Application *application) {
+  const Renderer *renderer = &application->renderer;
+  int width = renderer->framebufferWidth, height = renderer->framebufferHeight;
+  if (width <= 0 || height <= 0)
+    return;
+  float scale = fminf(width / 640.0f, height / 480.0f);
+  float centerX = width * 0.5f, centerY = height * 0.5f;
+  double cursorX, cursorY;
+  int windowWidth, windowHeight;
+  glfwGetCursorPos(application->window, &cursorX, &cursorY);
+  glfwGetWindowSize(application->window, &windowWidth, &windowHeight);
+  int hovered = windowWidth > 0 && windowHeight > 0 ?
+      pause_menu_button(cursorX * width / windowWidth, cursorY * height / windowHeight,
+                         width, height) : 0;
+  GLboolean depthEnabled = glIsEnabled(GL_DEPTH_TEST);
+  GLboolean cullEnabled = glIsEnabled(GL_CULL_FACE);
+  glDisable(GL_DEPTH_TEST);
+  glDisable(GL_CULL_FACE);
+  mat4 identity;
+  mat4_identity(identity);
+  glUseProgram(renderer->program);
+  glUniformMatrix4fv(renderer->mvpLocation, 1, GL_FALSE, identity);
+  glBindVertexArray(renderer->textVao);
+  glBindBuffer(GL_ARRAY_BUFFER, renderer->textVbo);
+  draw_menu_rectangle(renderer, centerX - 180 * scale, centerY - 130 * scale,
+                       360 * scale, 270 * scale, (Vec3){0.09f, 0.12f, 0.10f});
+  draw_menu_text(renderer, "PAUSED", centerX, centerY - 95 * scale,
+                 scale * 1.5f, (Vec3){0.95f, 0.98f, 0.92f});
+  const char *labels[] = {"RESUME", "QUIT"};
+  for (int button = 0; button < 2; button++) {
+    float top = centerY + (-24 + button * 64) * scale;
+    Vec3 color = hovered == button + 1 ? (Vec3){0.46f, 0.58f, 0.38f}
+                                       : (Vec3){0.25f, 0.32f, 0.24f};
+    draw_menu_rectangle(renderer, centerX - 140 * scale, top, 280 * scale, 48 * scale, color);
+    draw_menu_text(renderer, labels[button], centerX, top + 14 * scale, scale,
+                   (Vec3){0.95f, 0.98f, 0.92f});
+  }
+  draw_menu_text(renderer, "ESC TO RESUME", centerX, centerY + 110 * scale,
+                 scale * 0.7f, (Vec3){0.65f, 0.73f, 0.62f});
+  if (depthEnabled)
+    glEnable(GL_DEPTH_TEST);
+  if (cullEnabled)
+    glEnable(GL_CULL_FACE);
 }
 
 /* Test the most positive AABB vertex against each homogeneous clip plane.
@@ -689,6 +833,7 @@ static int application_init(Application *application) {
 
 static void application_update(Application *application) {
   GLFWwindow *window = application->window;
+  int wasPaused = application->paused;
   glfwPollEvents();
 
   const double currentFrame = glfwGetTime();
@@ -709,16 +854,18 @@ static void application_update(Application *application) {
 
   const int escapeIsDown = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
   if (escapeIsDown && !application->escapeWasDown) {
-    const int cursorCaptured =
-        glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED;
-    glfwSetInputMode(window, GLFW_CURSOR,
-                     cursorCaptured ? GLFW_CURSOR_NORMAL
-                                    : GLFW_CURSOR_DISABLED);
-    application->mouseInput.firstMouse = 1;
-    application->mouseInput.deltaX = 0.0;
-    application->mouseInput.deltaY = 0.0;
+    application_set_paused(application, !application->paused);
+    application->escapeWasDown = escapeIsDown;
+    return;
   }
   application->escapeWasDown = escapeIsDown;
+  if (application->paused || wasPaused) {
+    application->simulationAccumulator = 0;
+    application->jumpQueued = 0;
+    application->placeQueued = 0;
+    application->removeQueued = 0;
+    return;
+  }
 
   update_camera(&application->player.camera, &application->mouseInput);
   PlayerInput input = read_player_input(window);
@@ -752,6 +899,8 @@ static void application_render(const Application *application) {
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
   render_world(&application->renderer, &application->player);
   render_fps(&application->renderer, application->fps);
+  if (application->paused)
+    render_pause_menu(application);
   glfwSwapBuffers(application->window);
 }
 

@@ -615,8 +615,8 @@ static int application_init(Application *application) {
   glewExperimental = GL_TRUE;
   const GLenum glewStatus = glewInit();
   if (glewStatus != GLEW_OK) {
-    fprintf(stderr, "Failed to initialize GLEW: %p\n",
-            glewGetErrorString(glewStatus));
+    fprintf(stderr, "Failed to initialize GLEW: %s\n",
+            (const char *)glewGetErrorString(glewStatus));
     application_shutdown(application);
     return 0;
   }

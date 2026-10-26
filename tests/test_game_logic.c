@@ -99,6 +99,56 @@ static void test_diagonal_movement_is_normalized(void) {
   world_destroy(&world);
 }
 
+static void test_running_and_crouching_speed(void) {
+  World world = {0};
+  const PlayerInput directions[] = {
+      {.forward = 1}, {.forward = -1}, {.strafe = 1}, {.forward = 1, .strafe = 1}};
+  for (size_t d = 0; d < sizeof(directions) / sizeof(*directions); d++) {
+    float distances[4];
+    for (int mode = 0; mode < 4; mode++) {
+      Player player = make_player((Vec3){0, 10, 0}, 0);
+      PlayerInput input = directions[d];
+      input.run = mode == 1 || mode == 3;
+      input.crouch = mode == 2 || mode == 3;
+      update_player(&player, input, 0.25f, &world);
+      distances[mode] = hypotf(player.position.x, player.position.z);
+      /* Releasing the modifier restores ordinary movement immediately. */
+      Vec3 previous = player.position;
+      update_player(&player, directions[d], 0.25f, &world);
+      assert_near(hypotf(player.position.x - previous.x, player.position.z - previous.z), 1);
+    }
+    assert_near(distances[0], 1);
+    assert_near(distances[1], distances[0] * 1.5f);
+    assert_near(distances[2], distances[0] * 0.75f);
+    assert_near(distances[3], distances[2]); /* Crouch takes priority over running. */
+  }
+}
+
+static void test_crouching_lowers_view_until_released(void) {
+  World world = single_block_world();
+  Player player = make_player((Vec3){0}, 1);
+  player.eyeHeight = 1;
+  Vec3 standingEye = player_eye_position(&player);
+  for (int cycle = 0; cycle < 2; cycle++) {
+    for (int frame = 0; frame < 120; frame++) {
+      update_player(&player, (PlayerInput){.crouch = 1}, 1.0f / 60, &world);
+      Vec3 eye = player_eye_position(&player);
+      assert_near(eye.x, standingEye.x);
+      assert_near(eye.y, standingEye.y - 0.3f);
+      assert_near(eye.z, standingEye.z);
+      assert_near(player.position.y, 0);
+      assert(player.grounded);
+    }
+    update_player(&player, (PlayerInput){0}, 1.0f / 60, &world);
+    assert_near(player_eye_position(&player).y, standingEye.y);
+  }
+  /* The lowered view follows the player when jumping, too. */
+  update_player(&player, (PlayerInput){.crouch = 1, .jump = 1}, 1.0f / 60, &world);
+  assert(player.position.y > 0);
+  assert_near(player_eye_position(&player).y - player.position.y, 0.7f);
+  world_destroy(&world);
+}
+
 static void test_landing_on_block(void) {
   World world = single_block_world();
   Player player = make_player((Vec3){0.0f, 0.1f, 0.0f}, 0);
@@ -832,6 +882,100 @@ static void test_vertical_contacts_at_section_boundaries(void) {
     }
 }
 
+static void test_place_block_on_viewed_face(void) {
+  const int directions[6][3] = {{-1, 0, 0}, {1, 0, 0}, {0, -1, 0},
+                                {0, 1, 0}, {0, 0, -1}, {0, 0, 1}};
+  const int boundaries[] = {-16, 0, 16};
+  const float sizes[] = {0.5f, 1, 2};
+  for (int b = 0; b < 3; b++)
+    for (int s = 0; s < 3; s++)
+      for (int d = 0; d < 6; d++) {
+        World world = {0};
+        int x = boundaries[b], z = boundaries[b];
+        float size = sizes[s];
+        Vec3 origin = {12, -3, 8};
+        assert(world_init_region(&world, x - 8, z - 8, 16, origin, size));
+        assert(world_set_block(&world, x, 0, z, BLOCK_TYPE_GRASS));
+        Vec3 direction = {directions[d][0], directions[d][1], directions[d][2]};
+        Vec3 center = {origin.x + (x + 0.5f) * size, origin.y + 0.5f * size,
+                       origin.z + (z + 0.5f) * size};
+        Vec3 eye = vec3_sub(center, vec3_scale(direction, 5 * size));
+        Player player = make_player(vec3_sub(eye, (Vec3){0, 1, 0}), 0);
+        player.eyeHeight = 1;
+        player.camera.front = direction;
+        assert(player_place_block(&world, &player, BLOCK_TYPE_STONE, 12));
+        assert(world_get_block(&world, x - directions[d][0], -directions[d][1],
+                               z - directions[d][2]) == BLOCK_TYPE_STONE);
+        assert(world_get_block(&world, x, 0, z) == BLOCK_TYPE_GRASS);
+        /* The new block participates in meshing and hides the shared face. */
+        size_t draws, sections;
+        assert(mesh_world(&world, &draws, &sections) == 60);
+        world_destroy(&world);
+      }
+}
+
+static void test_placement_reach_misses_and_player_overlap(void) {
+  World world = {0};
+  assert(world_init(&world, 32, (Vec3){0}, 1));
+  Player player = make_player((Vec3){0.5f, 0, 0.5f}, 0);
+  player.eyeHeight = 1;
+  player.camera.front = (Vec3){1, 0, 0};
+  assert(!player_place_block(&world, &player, BLOCK_TYPE_STONE, 6));
+  assert(world_set_block(&world, 7, 1, 0, BLOCK_TYPE_GRASS));
+  assert(!player_place_block(&world, &player, BLOCK_TYPE_STONE, 6));
+  assert(world_get_block(&world, 6, 1, 0) == BLOCK_TYPE_EMPTY);
+  assert(world_set_block(&world, 4, 1, 0, BLOCK_TYPE_GRASS));
+  assert(!player_place_block(&world, &player, BLOCK_TYPE_EMPTY, 6));
+  assert(!player_place_block(&world, &player, BLOCK_TYPE_STONE, NAN));
+  assert(player_place_block(&world, &player, BLOCK_TYPE_STONE, 6));
+  assert(world_get_block(&world, 3, 1, 0) == BLOCK_TYPE_STONE);
+  assert(world_get_block(&world, 6, 1, 0) == BLOCK_TYPE_EMPTY);
+  assert(player_place_block(&world, &player, BLOCK_TYPE_STONE, 6));
+  assert(world_get_block(&world, 2, 1, 0) == BLOCK_TYPE_STONE);
+  assert(player_place_block(&world, &player, BLOCK_TYPE_STONE, 6));
+  assert(world_get_block(&world, 1, 1, 0) == BLOCK_TYPE_STONE);
+  assert(!player_place_block(&world, &player, BLOCK_TYPE_STONE, 6));
+  assert(world_get_block(&world, 0, 1, 0) == BLOCK_TYPE_EMPTY);
+  /* Crouching aims from the lowered eye, rather than the standing eye. */
+  update_player(&player, (PlayerInput){.crouch = 1}, 0.001f, &world);
+  assert(world_set_block(&world, 4, 0, 0, BLOCK_TYPE_GRASS));
+  assert(player_place_block(&world, &player, BLOCK_TYPE_STONE, 6));
+  assert(world_get_block(&world, 3, 0, 0) == BLOCK_TYPE_STONE);
+  world_destroy(&world);
+  /* A hit at the world edge cannot place beyond the supported bounds. */
+  assert(world_init_region(&world, 0, 0, 1, (Vec3){0}, 1));
+  assert(world_set_block(&world, 0, 0, 0, BLOCK_TYPE_GRASS));
+  player = make_player((Vec3){-2, -0.5f, 0.5f}, 0);
+  player.eyeHeight = 1;
+  player.camera.front = (Vec3){1, 0, 0};
+  assert(!player_place_block(&world, &player, BLOCK_TYPE_STONE, 6));
+  assert(world_get_block(&world, -1, 0, 0) == BLOCK_TYPE_EMPTY);
+  world_destroy(&world);
+}
+
+static void test_placement_oblique_view_and_reach_boundary(void) {
+  World world = {0};
+  assert(world_init(&world, 16, (Vec3){0}, 1));
+  assert(world_set_block(&world, 3, 1, 1, BLOCK_TYPE_GRASS));
+  Player player = make_player((Vec3){0.5f, 0.5f, 0.5f}, 0);
+  player.eyeHeight = 1;
+  player.camera.front = (Vec3){3, 0, 1};
+  assert(player_place_block(&world, &player, BLOCK_TYPE_STONE, 6));
+  assert(world_get_block(&world, 2, 1, 1) == BLOCK_TYPE_STONE);
+  world_destroy(&world);
+  assert(world_init(&world, 16, (Vec3){0}, 1));
+  assert(world_set_block(&world, 3, 1, 0, BLOCK_TYPE_GRASS));
+  player.camera.front = (Vec3){1, 0, 0};
+  assert(!player_place_block(&world, &player, BLOCK_TYPE_STONE, 2.49f));
+  assert(player_place_block(&world, &player, BLOCK_TYPE_STONE, 2.5f));
+  assert(world_get_block(&world, 2, 1, 0) == BLOCK_TYPE_STONE);
+  /* A view starting inside a block cannot build through it. */
+  assert(world_set_block(&world, 0, 1, 0, BLOCK_TYPE_GRASS));
+  assert(!player_place_block(&world, &player, BLOCK_TYPE_STONE, 6));
+  assert(world_get_block(&world, 1, 1, 0) == BLOCK_TYPE_EMPTY);
+  world_destroy(&world);
+}
+
 static void test_generated_terrain_spawn(void) {
   const float sizes[] = {0.5f, 1, 2};
   for (int s = 0; s < 3; s++) {
@@ -860,6 +1004,8 @@ int main(void) {
   test_matrix_multiply_identity();
   test_block_type_palette();
   test_diagonal_movement_is_normalized();
+  test_running_and_crouching_speed();
+  test_crouching_lowers_view_until_released();
   test_landing_on_block();
   test_falling_off_platform_edge();
   test_jump_requires_grounding();
@@ -878,6 +1024,9 @@ int main(void) {
   test_thin_walls_at_section_boundaries();
   test_vertical_contacts_at_section_boundaries();
   test_generated_terrain_spawn();
+  test_place_block_on_viewed_face();
+  test_placement_reach_misses_and_player_overlap();
+  test_placement_oblique_view_and_reach_boundary();
   puts("All game logic tests passed.");
   return 0;
 }

@@ -1,6 +1,7 @@
 #include "game_logic.h"
 
 #include <math.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdlib.h>
 
@@ -258,6 +259,65 @@ int create_terrain(World *world, int side, Vec3 center, float size, uint32_t see
 static const float PLAYER_RADIUS = 0.25f;
 static const float PLAYER_HEIGHT = 1.5f;
 
+int player_place_block(World *world, const Player *player, BlockType type, float reach) {
+  if (!world || !world->chunks || !player || !block_is_solid(type) ||
+      !isfinite(reach) || reach <= 0)
+    return 0;
+  Vec3 eye = player_eye_position(player);
+  Vec3 front = player->camera.front;
+  double length = sqrt((double)front.x * front.x + (double)front.y * front.y +
+                       (double)front.z * front.z);
+  if (!isfinite(length) || length == 0)
+    return 0;
+  double origin[3] = {(double)eye.x - world->origin.x,
+                      (double)eye.y - world->origin.y,
+                      (double)eye.z - world->origin.z};
+  double direction[3] = {front.x / length, front.y / length, front.z / length};
+  double next[3], interval[3];
+  int cell[3], previous[3], step[3];
+  for (int axis = 0; axis < 3; axis++) {
+    origin[axis] /= world->blockSize;
+    double coordinate = floor(origin[axis]);
+    if (!isfinite(coordinate) || coordinate <= INT_MIN || coordinate >= INT_MAX)
+      return 0;
+    previous[axis] = cell[axis] = (int)coordinate;
+    step[axis] = direction[axis] < 0 ? -1 : 1;
+    interval[axis] = direction[axis] == 0 ? INFINITY :
+        world->blockSize / fabs(direction[axis]);
+    next[axis] = direction[axis] == 0 ? INFINITY :
+        (direction[axis] < 0 ? origin[axis] - cell[axis]
+                             : cell[axis] + 1.0 - origin[axis]) * interval[axis];
+  }
+  if (block_is_solid(world_get_block(world, cell[0], cell[1], cell[2])))
+    return 0;
+  /* Traverse voxel faces exactly, so small blocks and section seams cannot be skipped. */
+  for (;;) {
+    int axis = next[0] <= next[1] ? 0 : 1;
+    if (next[2] < next[axis])
+      axis = 2;
+    if (next[axis] > reach ||
+        (step[axis] < 0 ? cell[axis] == INT_MIN : cell[axis] == INT_MAX))
+      return 0;
+    for (int i = 0; i < 3; i++)
+      previous[i] = cell[i];
+    cell[axis] += step[axis];
+    next[axis] += interval[axis];
+    if (!block_is_solid(world_get_block(world, cell[0], cell[1], cell[2])))
+      continue;
+    double low[3] = {world->origin.x + (double)previous[0] * world->blockSize,
+                     world->origin.y + (double)previous[1] * world->blockSize,
+                     world->origin.z + (double)previous[2] * world->blockSize};
+    if (low[0] < player->position.x + PLAYER_RADIUS &&
+        low[0] + world->blockSize > player->position.x - PLAYER_RADIUS &&
+        low[1] < player->position.y + PLAYER_HEIGHT &&
+        low[1] + world->blockSize > player->position.y &&
+        low[2] < player->position.z + PLAYER_RADIUS &&
+        low[2] + world->blockSize > player->position.z - PLAYER_RADIUS)
+      return 0;
+    return world_set_block(world, previous[0], previous[1], previous[2], type);
+  }
+}
+
 static int player_intersects(const World *world, Vec3 p) {
   if (world == NULL || world->chunks == NULL)
     return 0;
@@ -321,9 +381,17 @@ static int move_axis(Player *player, const World *world, float distance, int axi
   return 0;
 }
 
+Vec3 player_eye_position(const Player *player) {
+  Vec3 eye = player->position;
+  eye.y += player->eyeHeight - (player->crouching ? 0.3f : 0.0f);
+  return eye;
+}
+
 void update_player(Player *player, PlayerInput input, float dt, const World *world) {
   if (!player || !isfinite(dt) || dt <= 0 || dt > 10)
     return;
+  player->crouching = input.crouch != 0;
+  float speed = 4.0f * (input.crouch ? 0.75f : input.run ? 1.5f : 1.0f);
   Vec3 forward =
       vec3_normalize((Vec3){player->camera.front.x, 0, player->camera.front.z});
   Vec3 right = vec3_normalize(vec3_cross(forward, player->camera.up));
@@ -331,8 +399,8 @@ void update_player(Player *player, PlayerInput input, float dt, const World *wor
       vec3_add(vec3_scale(forward, input.forward), vec3_scale(right, input.strafe));
   if (vec3_dot(movement, movement) > 1)
     movement = vec3_normalize(movement);
-  move_axis(player, world, movement.x * 4 * dt, 0);
-  move_axis(player, world, movement.z * 4 * dt, 2);
+  move_axis(player, world, movement.x * speed * dt, 0);
+  move_axis(player, world, movement.z * speed * dt, 2);
   Vec3 below = player->position;
   below.y -= 0.001f;
   if (player->grounded && !player_intersects(world, below))

@@ -23,12 +23,15 @@ typedef struct {
   int grounded;
   float eyeHeight;
   Camera camera;
+  int crouching;
 } Player;
 
 typedef struct {
   float forward;
   float strafe;
   int jump;
+  int run;
+  int crouch;
 } PlayerInput;
 
 typedef enum {
@@ -165,5 +168,10 @@ int section_mesh_build(const World *world, int chunkX, int sectionY, int chunkZ,
 void section_mesh_destroy(SectionMesh *mesh);
 void update_player(Player *updatedPlayer, PlayerInput input, float deltaTime,
                    const World *world);
+/* Effective camera position, including the held crouch's 0.3-unit offset. */
+Vec3 player_eye_position(const Player *player);
+/* Place against the first block along the view ray, within reach in world units.
+   Rejects misses, occupied eyes, invalid materials, and overlap with the player. */
+int player_place_block(World *world, const Player *player, BlockType type, float reach);
 
 #endif

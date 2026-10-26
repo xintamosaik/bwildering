@@ -51,6 +51,7 @@ typedef struct {
   int fps;
   int jumpWasDown;
   int jumpQueued;
+  int placeQueued;
   int escapeWasDown;
   int glfwInitialized;
   int rendererInitialized;
@@ -68,6 +69,16 @@ static const int FPS_TEXT_MAX_CHARS = 16;
 #pragma endregion
 
 #pragma region Input
+static void mouse_button_callback(GLFWwindow *window, int button, int action, int mods) {
+  (void)mods;
+  if (button != GLFW_MOUSE_BUTTON_LEFT || action != GLFW_PRESS ||
+      glfwGetInputMode(window, GLFW_CURSOR) != GLFW_CURSOR_DISABLED)
+    return;
+  Application *application = glfwGetWindowUserPointer(window);
+  if (application)
+    application->placeQueued = 1;
+}
+
 static void mouse_callback(GLFWwindow *window, const double position_x, const double position_y) {
   if (glfwGetInputMode(window, GLFW_CURSOR) != GLFW_CURSOR_DISABLED)
     return;
@@ -95,6 +106,10 @@ static PlayerInput read_player_input(GLFWwindow *window) {
   input.strafe = (float)((glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) -
                          (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS));
   input.jump = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
+  input.run = glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
+              glfwGetKey(window, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS;
+  input.crouch = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+                 glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
   return input;
 }
 
@@ -518,8 +533,7 @@ static void render_world(const Renderer *renderer, const Player *player) {
   const float aspectRatio =
       (float)renderer->framebufferWidth / (float)renderer->framebufferHeight;
   mat4_perspective(75.0f * (3.14159f / 180.0f), aspectRatio, 0.05f, 100.0f, proj);
-  Vec3 cameraPosition = player->position;
-  cameraPosition.y += player->eyeHeight;
+  Vec3 cameraPosition = player_eye_position(player);
   const Vec3 target = vec3_add(cameraPosition, player->camera.front);
   mat4_lookat(cameraPosition, target, player->camera.up, view);
   mat4_multiply(proj, view, mvp);
@@ -620,6 +634,7 @@ static int application_init(Application *application) {
 
   glfwSetWindowUserPointer(application->window, application);
   glfwSetCursorPosCallback(application->window, mouse_callback);
+  glfwSetMouseButtonCallback(application->window, mouse_button_callback);
   glfwSetInputMode(application->window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
   glewExperimental = GL_TRUE;
@@ -714,6 +729,11 @@ static void application_update(Application *application) {
                   &application->world);
     application->jumpQueued = 0;
     application->simulationAccumulator -= FIXED_DELTA_TIME;
+  }
+  if (application->placeQueued) {
+    if (glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED)
+      player_place_block(&application->world, &application->player, BLOCK_TYPE_STONE, 6.0f);
+    application->placeQueued = 0;
   }
 }
 

@@ -1365,6 +1365,75 @@ static void test_streamed_terrain_matches_eager_and_preserves_edits(void) {
   world_destroy(&streamed);
 }
 
+static void test_surface_height_survives_materialization(void) {
+  const uint32_t seed = 1;
+  /* Exercise signed horizontal chunks and both signs of surface section Y. */
+  for (int negative = 0; negative < 2; negative++) {
+    int x = 0, z = 0, located = 0;
+    for (int sx = -8192; sx < 0 && !located; sx += 64)
+      for (int sz = -8192; sz < 0 && !located; sz += 64) {
+        int height = terrain_sample_column(seed, sx, sz).height;
+        if (negative ? height < -16 : height > 32) {
+          x = sx; z = sz; located = 1;
+        }
+      }
+    assert(located);
+    int height = terrain_sample_column(seed, x, z).height;
+    for (int scenario = 0; scenario < 5; scenario++) {
+      World world = {0};
+      assert(world_init_region(&world, x, z, 1, (Vec3){12, -3, 8}, 0.5f));
+      world.proceduralTerrain = 1;
+      world.terrainSeed = seed;
+      float wx = world.origin.x + (x + 0.5f) * world.blockSize;
+      float wz = world.origin.z + (z + 0.5f) * world.blockSize;
+      assert_near(world_surface_height(&world, wx, wz), -3 + height * 0.5f);
+      assert(world.sectionCount == 0);
+
+      /* Remove a few blocks, cross two section boundaries, or empty the column. */
+      int removed = scenario == 1 ? voxel_local_coord(height - 1) + SECTION_SIZE + 1 :
+                    scenario == 4 ? height - TERRAIN_BASE_Y : 3;
+      for (int y = height - 1; y >= height - removed; y--)
+        assert(world_set_block(&world, x, y, z, BLOCK_TYPE_EMPTY));
+      int expectedTop = height - removed;
+      if (scenario == 2 || scenario == 3) {
+        /* An underground edit and a higher addition leave missing sections
+           between allocated edits; those gaps must retain procedural terrain. */
+        int deepY = TERRAIN_BASE_Y + 1;
+        assert(world_set_block(&world, x, deepY, z, BLOCK_TYPE_EMPTY));
+        int gapY = voxel_section_coord(height - removed - 1) - 1;
+        assert(gapY > voxel_section_coord(deepY));
+        assert(!world_section(&world, voxel_section_coord(x), gapY, voxel_section_coord(z)));
+        assert(block_is_solid(world_get_block(&world, x, gapY * SECTION_SIZE, z)));
+        int highY = (voxel_section_coord(height) + 3) * SECTION_SIZE;
+        assert(world_set_block(&world, x, highY, z, BLOCK_TYPE_SNOW));
+        assert(!world_section(&world, voxel_section_coord(x),
+                              voxel_section_coord(height) + 1, voxel_section_coord(z)));
+        if (scenario == 2)
+          expectedTop = highY + 1;
+        else
+          /* Keep an empty edit marker above the surviving procedural surface. */
+          assert(world_set_block(&world, x, highY, z, BLOCK_TYPE_EMPTY));
+      }
+      assert(!world.chunks[0].terrainReady);
+      size_t sections = world.sectionCount, voxels = world.voxelCount;
+      float before = world_surface_height(&world, wx, wz);
+      if (scenario == 4)
+        assert(isnan(before));
+      else
+        assert_near(before, world.origin.y + expectedTop * world.blockSize);
+      assert(world.sectionCount == sections && world.voxelCount == voxels);
+      assert(!world.chunks[0].terrainReady);
+      assert(world_materialize_chunk(&world, voxel_section_coord(x), voxel_section_coord(z)));
+      float after = world_surface_height(&world, wx, wz);
+      if (scenario == 4)
+        assert(isnan(after));
+      else
+        assert_near(after, before);
+      world_destroy(&world);
+    }
+  }
+}
+
 static void test_layered_generation_and_sparse_edits(void) {
   size_t coverage[BLOCK_TYPE_COUNT] = {0};
   int sampleX[BLOCK_TYPE_COUNT] = {0}, sampleZ[BLOCK_TYPE_COUNT] = {0};
@@ -1632,6 +1701,7 @@ int main(void) {
   test_terrain_relief_and_underground_depth();
   test_layered_generation_and_sparse_edits();
   test_streamed_terrain_matches_eager_and_preserves_edits();
+  test_surface_height_survives_materialization();
   test_residency_departing_strips();
   test_chunk_lifecycle_invariants();
   test_place_block_on_viewed_face();

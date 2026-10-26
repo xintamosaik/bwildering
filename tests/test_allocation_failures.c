@@ -1,5 +1,6 @@
 #include "../game_logic.h"
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -42,10 +43,16 @@ static void assert_world_equal(const World *actual, const World *expected) {
   assert(actual->origin.x == expected->origin.x && actual->origin.y == expected->origin.y &&
          actual->origin.z == expected->origin.z);
   for (int x = expected->minX; x < expected->minX + expected->blocksPerSide; x++)
-    for (int z = expected->minZ; z < expected->minZ + expected->blocksPerSide; z++)
+    for (int z = expected->minZ; z < expected->minZ + expected->blocksPerSide; z++) {
+      float wx = expected->origin.x + (x + 0.5f) * expected->blockSize;
+      float wz = expected->origin.z + (z + 0.5f) * expected->blockSize;
+      float surface = world_surface_height(expected, wx, wz);
+      float actualSurface = world_surface_height(actual, wx, wz);
+      assert(isnan(surface) ? isnan(actualSurface) : actualSurface == surface);
       for (int y = WORLD_MIN_SECTION_Y * SECTION_SIZE;
            y < (WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT) * SECTION_SIZE; y++)
         assert(world_get_block(actual, x, y, z) == world_get_block(expected, x, y, z));
+    }
 }
 
 static void prepare_edited_stream(World *world) {
@@ -54,6 +61,12 @@ static void prepare_edited_stream(World *world) {
   int top = terrain_sample_column(1, 0, 0).height - 1;
   assert(world_set_block(world, 0, top, 0, BLOCK_TYPE_EMPTY));
   assert(world_set_block(world, 0, 400, 0, BLOCK_TYPE_SNOW));
+  /* A separate column exposes removed surface blocks rather than the addition.
+     Its deep edit leaves intervening sections procedural until materialization. */
+  int height = terrain_sample_column(1, 1, 0).height;
+  for (int y = height - 1; y >= height - 3; y--)
+    assert(world_set_block(world, 1, y, 0, BLOCK_TYPE_EMPTY));
+  assert(world_set_block(world, 1, TERRAIN_BASE_Y + 1, 0, BLOCK_TYPE_EMPTY));
   assert(world_materialize_chunk(world, -1, 0));
 }
 

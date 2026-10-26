@@ -223,6 +223,7 @@ static void test_jump_height_and_timing(void) {
 static void test_random_bounded_output_range(void) {
   uint32_t state = 0x12345678u;
   assert(random_bounded(&state, 0u) == 0u);
+  assert(state == 0x12345678u);
 
   for (uint32_t upperBound = 1; upperBound <= 17; upperBound++) {
     uint32_t min = UINT32_MAX;
@@ -238,6 +239,51 @@ static void test_random_bounded_output_range(void) {
     }
     assert(min == 0u);
     assert(max == upperBound - 1u || upperBound == 1u);
+  }
+}
+
+static void test_random_bounded_zero_state(void) {
+  const uint32_t bounds[] = {1u, 3u, 16u, UINT32_MAX};
+  assert(random_bounded(NULL, 0u) == 0u);
+  assert(random_bounded(NULL, 3u) == 0u);
+  uint32_t zero = 0u;
+  assert(random_bounded(&zero, 0u) == 0u);
+  assert(zero == 0u);
+
+  for (size_t i = 0; i < sizeof(bounds) / sizeof(bounds[0]); i++) {
+    uint32_t state = 0u;
+    uint32_t repeat = 0u;
+    uint32_t fallback = UINT32_C(0x6D2B79F5);
+    for (int draw = 0; draw < 32; draw++) {
+      uint32_t value = random_bounded(&state, bounds[i]);
+      assert(value < bounds[i]);
+      assert(state != 0u);
+      assert(value == random_bounded(&repeat, bounds[i]));
+      assert(state == repeat);
+      assert(value == random_bounded(&fallback, bounds[i]));
+      assert(state == fallback);
+    }
+  }
+}
+
+static void test_random_bounded_seeded_sequence(void) {
+  /* Freeze the existing nonzero-seed sequence, including rejection sampling. */
+  const struct {
+    uint32_t bound, value, state;
+  } expected[] = {
+    {1u, 0u, UINT32_C(0x87985AA5)},
+    {3u, 2u, UINT32_C(0x155B24A3)},
+    {16u, 4u, UINT32_C(0x4820F4C4)},
+    {UINT32_MAX, UINT32_C(0x81B3AC98), UINT32_C(0x81B3AC98)},
+    {UINT32_C(0x80000001), UINT32_C(0x09CA4F1C), UINT32_C(0x89CA4F1D)},
+    {3u, 0u, UINT32_C(0xC5186E29)},
+    {16u, 7u, UINT32_C(0xD37862A7)},
+    {UINT32_MAX, UINT32_C(0x3AB14B11), UINT32_C(0x3AB14B11)},
+  };
+  uint32_t state = UINT32_C(0x12345678);
+  for (size_t i = 0; i < sizeof(expected) / sizeof(expected[0]); i++) {
+    assert(random_bounded(&state, expected[i].bound) == expected[i].value);
+    assert(state == expected[i].state);
   }
 }
 
@@ -1281,6 +1327,8 @@ int main(void) {
   test_jump_requires_grounding();
   test_jump_height_and_timing();
   test_random_bounded_output_range();
+  test_random_bounded_zero_state();
+  test_random_bounded_seeded_sequence();
   test_terrain_collision();
   test_camera_stays_clear_of_walls();
   test_player_footprint_at_corners_and_ledges();

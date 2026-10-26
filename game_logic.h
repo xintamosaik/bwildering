@@ -153,6 +153,9 @@ BlockType world_get_block(const World *world, int x, int y, int z);
 int world_set_block(World *world, int x, int y, int z, BlockType type);
 /* Highest occupied surface, for spawn selection (not cave collision). */
 float world_surface_height(const World *world, float x, float z);
+/* Returns a value in [0, upperBound). NULL state or zero bound returns zero
+   without advancing state. For positive bounds, a zero state is replaced with
+   0x6D2B79F5 before advancing the generator. */
 uint32_t random_bounded(uint32_t *state, uint32_t upperBound);
 int block_type_color(BlockType type, Vec3 *color);
 int create_platform(World *world, int blocksPerSide, Vec3 center,

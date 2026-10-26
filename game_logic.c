@@ -30,6 +30,9 @@ uint32_t random_bounded(uint32_t *state, uint32_t upperBound) {
   if (state == NULL || upperBound == 0u)
     return 0u;
 
+  if (*state == 0u)
+    *state = UINT32_C(0x6D2B79F5);
+
   const uint32_t threshold = (0u - upperBound) % upperBound;
   uint32_t value;
   do {

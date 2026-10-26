@@ -127,13 +127,13 @@ static int menu_buttons(const Application *application, MenuButton buttons[3]) {
 
 static int pause_menu_button(const Application *application, double x, double y,
                               int width, int height) {
-  float scale = fminf(width / 640.0f, height / 480.0f);
+  const float scale = fminf((float)width / 640.0f, (float)height / 480.0f);
   if (scale <= 0)
     return MENU_NONE;
-  double offset = (y - height * 0.5) / scale;
-  double horizontal = (x - width * 0.5) / scale;
+  const double offset = (y - height * 0.5) / scale;
+  const double horizontal = (x - width * 0.5) / scale;
   MenuButton buttons[3];
-  int count = menu_buttons(application, buttons);
+  const int count = menu_buttons(application, buttons);
   for (int i = 0; i < count; i++) {
     const MenuButton *button = &buttons[i];
     if (button->enabled && fabs(horizontal - button->centerX) <= button->width / 2 &&
@@ -143,7 +143,7 @@ static int pause_menu_button(const Application *application, double x, double y,
   return MENU_NONE;
 }
 
-static void mouse_button_callback(GLFWwindow *window, int button, int action, int mods) {
+static void mouse_button_callback(GLFWwindow *window, const int button, const int action, const int mods) {
   (void)mods;
   if (action != GLFW_PRESS)
     return;
@@ -158,7 +158,7 @@ static void mouse_button_callback(GLFWwindow *window, int button, int action, in
     glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
     if (width <= 0 || height <= 0)
       return;
-    int selected = pause_menu_button(application, x * framebufferWidth / width,
+    const int selected = pause_menu_button(application, x * framebufferWidth / width,
                                      y * framebufferHeight / height,
                                      framebufferWidth, framebufferHeight);
     if (selected == MENU_RESUME)
@@ -214,8 +214,8 @@ static PlayerInput read_player_input(GLFWwindow *window) {
   input.strafe = (float)((glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) -
                          (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS));
   input.jump = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
-  input.run = glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
-              glfwGetKey(window, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS;
+  input.run = glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
+              glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
   input.crouch = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
                  glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
   return input;
@@ -252,7 +252,7 @@ static void update_camera(Camera *camera, MouseInput *input) {
 #pragma endregion
 
 #pragma region Rendering
-static GLuint compile_shader(GLenum type, const char *source) {
+static GLuint compile_shader(const GLenum type, const char *source) {
   const GLuint shader = glCreateShader(type);
   if (shader == 0) {
     fprintf(stderr, "Failed to create shader\n");
@@ -453,7 +453,7 @@ static int renderer_upload_section_mesh(SectionGpuMesh *target,
    destroy/reinitialize the renderer and mark allocated sections dirty before
    syncing. Equal mesh counts alone do not establish layout compatibility. */
 static int renderer_prepare_world(Renderer *renderer, const World *world) {
-  size_t count = world->chunkCount * WORLD_SECTION_COUNT;
+  const size_t count = world->chunkCount * WORLD_SECTION_COUNT;
   if (!renderer->meshes && count) {
     renderer->meshes = calloc(count, sizeof(*renderer->meshes));
     if (!renderer->meshes)
@@ -472,7 +472,7 @@ static int renderer_prepare_world(Renderer *renderer, const World *world) {
   return 1;
 }
 
-static int renderer_sync_section(Renderer *renderer, World *world, size_t i) {
+static int renderer_sync_section(const Renderer *renderer, const World *world, const size_t i) {
   SectionGpuMesh *gpu = &renderer->meshes[i];
   Subchunk *section = world_section(world, gpu->chunkX, gpu->sectionY, gpu->chunkZ);
   if (!section) {
@@ -496,7 +496,7 @@ static int renderer_sync_section(Renderer *renderer, World *world, size_t i) {
   return 1;
 }
 
-static int renderer_sync_world(Renderer *renderer, World *world) {
+static int renderer_sync_world(Renderer *renderer, const World *world) {
   if (!renderer_prepare_world(renderer, world))
     return 0;
   for (size_t i = 0; i < renderer->meshCount; i++)
@@ -512,22 +512,22 @@ static int renderer_sync_view(Renderer *renderer, World *world, const Player *pl
     return renderer_sync_world(renderer, world);
   if (!renderer_prepare_world(renderer, world))
     return 0;
-  Vec3 eye = player_eye_position(player);
+  const Vec3 eye = player_eye_position(player);
   if (!isfinite(eye.x) || !isfinite(eye.z))
     return 0;
-  float span = world->blockSize * SECTION_SIZE;
-  float distance = renderer->viewDistance > 0 ? renderer->viewDistance : DEFAULT_VIEW_DISTANCE;
-  int maxChunkX = world->minChunkX + world->chunksPerSide - 1;
-  int maxChunkZ = world->minChunkZ + world->chunksPerSide - 1;
-  float loX = floorf((eye.x - world->origin.x - distance) / span) - 1;
-  float hiX = floorf((eye.x - world->origin.x + distance) / span) + 1;
-  float loZ = floorf((eye.z - world->origin.z - distance) / span) - 1;
-  float hiZ = floorf((eye.z - world->origin.z + distance) / span) + 1;
-  int minX = (int)fminf(maxChunkX + 1, fmaxf(world->minChunkX, loX));
-  int maxX = (int)fmaxf(world->minChunkX - 1, fminf(maxChunkX, hiX));
-  int minZ = (int)fminf(maxChunkZ + 1, fmaxf(world->minChunkZ, loZ));
-  int maxZ = (int)fmaxf(world->minChunkZ - 1, fminf(maxChunkZ, hiZ));
-  size_t needed = minX <= maxX && minZ <= maxZ ?
+  const float span = world->blockSize * SECTION_SIZE;
+  const float distance = renderer->viewDistance > 0 ? renderer->viewDistance : DEFAULT_VIEW_DISTANCE;
+  const int maxChunkX = world->minChunkX + world->chunksPerSide - 1;
+  const int maxChunkZ = world->minChunkZ + world->chunksPerSide - 1;
+  const float loX = floorf((eye.x - world->origin.x - distance) / span) - 1;
+  const float hiX = floorf((eye.x - world->origin.x + distance) / span) + 1;
+  const float loZ = floorf((eye.z - world->origin.z - distance) / span) - 1;
+  const float hiZ = floorf((eye.z - world->origin.z + distance) / span) + 1;
+  const int minX = (int)fminf((float)maxChunkX + 1, fmaxf((float)world->minChunkX, loX));
+  const int maxX = (int)fmaxf((float)world->minChunkX - 1, fminf((float)maxChunkX, hiX));
+  const int minZ = (int)fminf((float)maxChunkZ + 1, fmaxf((float)world->minChunkZ, loZ));
+  const int maxZ = (int)fmaxf((float)world->minChunkZ - 1, fminf((float)maxChunkZ, hiZ));
+  const size_t needed = minX <= maxX && minZ <= maxZ ?
       (size_t)(maxX - minX + 1) * (maxZ - minZ + 1) * WORLD_SECTION_COUNT : 0;
   if (needed > renderer->visibleMeshCapacity) {
     size_t *indices = malloc(needed * sizeof(*indices));
@@ -540,10 +540,10 @@ static int renderer_sync_view(Renderer *renderer, World *world, const Player *pl
     renderer->visibleMeshCapacity = needed;
   }
   for (size_t n = 0; n < renderer->visibleMeshCount; n++) {
-    size_t i = renderer->visibleMeshes[n];
+    const size_t i = renderer->visibleMeshes[n];
     SectionGpuMesh *gpu = &renderer->meshes[i];
-    int cx = world->chunks[i / WORLD_SECTION_COUNT].x;
-    int cz = world->chunks[i / WORLD_SECTION_COUNT].z;
+    const int cx = world->chunks[i / WORLD_SECTION_COUNT].x;
+    const int cz = world->chunks[i / WORLD_SECTION_COUNT].z;
     if (cx >= minX && cx <= maxX && cz >= minZ && cz <= maxZ)
       continue;
     Subchunk *section = world_section(world, cx, WORLD_MIN_SECTION_Y + (int)(i % WORLD_SECTION_COUNT), cz);
@@ -564,7 +564,7 @@ static int renderer_sync_view(Renderer *renderer, World *world, const Player *pl
         renderer->visibleMeshes[renderer->visibleMeshCount++] = chunk * WORLD_SECTION_COUNT + s;
     }
   for (size_t n = 0; n < renderer->visibleMeshCount; n += WORLD_SECTION_COUNT) {
-    size_t i = renderer->visibleMeshes[n];
+    const size_t i = renderer->visibleMeshes[n];
     const Chunk *chunk = &world->chunks[i / WORLD_SECTION_COUNT];
     if (!world_materialize_chunk(world, chunk->x, chunk->z))
       return 0;
@@ -664,7 +664,7 @@ static const unsigned char *font_glyph(const char character) {
 
 static int build_text_vertices(const char *text, const float shadowOffset,
                                const int framebufferWidth, const int framebufferHeight,
-                               float *vertices, float x, float y, float scale) {
+                               float *vertices, const float x, const float y, const float scale) {
   int vertexCount = 0;
 
   for (int characterIndex = 0; text[characterIndex] != '\0';
@@ -736,7 +736,7 @@ static void render_fps(const Renderer *renderer, const int fps) {
 }
 
 static void draw_menu_vertices(const Renderer *renderer, const float *vertices,
-                                int count, Vec3 color) {
+                                const int count, const Vec3 color) {
   glBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr)(count * 3 * sizeof(float)), vertices);
   glUniform3f(renderer->colorLocation, color.x, color.y, color.z);
   glDrawArrays(GL_TRIANGLES, 0, count);
@@ -744,11 +744,11 @@ static void draw_menu_vertices(const Renderer *renderer, const float *vertices,
 
 static void draw_menu_rectangle(const Renderer *renderer, float x, float y,
                                  float width, float height, Vec3 color) {
-  float left = 2 * x / renderer->framebufferWidth - 1;
-  float right = 2 * (x + width) / renderer->framebufferWidth - 1;
-  float top = 1 - 2 * y / renderer->framebufferHeight;
-  float bottom = 1 - 2 * (y + height) / renderer->framebufferHeight;
-  float vertices[] = {left, top, 0, right, top, 0, right, bottom, 0,
+  const float left = 2 * x / (float)renderer->framebufferWidth - 1;
+  const float right = 2 * (x + width) / (float)renderer->framebufferWidth - 1;
+  const float top = 1 - 2 * y / (float)renderer->framebufferHeight;
+  const float bottom = 1 - 2 * (y + height) / (float)renderer->framebufferHeight;
+  const float vertices[] = {left, top, 0, right, top, 0, right, bottom, 0,
                        left, top, 0, right, bottom, 0, left, bottom, 0};
   draw_menu_vertices(renderer, vertices, 6, color);
 }
@@ -756,40 +756,42 @@ static void draw_menu_rectangle(const Renderer *renderer, float x, float y,
 static void draw_menu_text(const Renderer *renderer, const char *text,
                             float centerX, float y, float scale, Vec3 color) {
   float vertices[FPS_TEXT_MAX_CHARS * 5 * 7 * 6 * 3];
-  float width = ((float)strlen(text) * 18 - 4) * scale;
-  int count = build_text_vertices(text, 0, renderer->framebufferWidth,
+  const float width = ((float)strlen(text) * 18 - 4) * scale;
+  const int count = build_text_vertices(text, 0, renderer->framebufferWidth,
                                   renderer->framebufferHeight, vertices,
                                   centerX - width / 2, y, scale);
   draw_menu_vertices(renderer, vertices, count, color);
 }
 
 static void draw_menu_button(const Renderer *renderer, const char *label,
-                              float centerX, float top, float width, float scale,
-                              int hovered, int enabled) {
-  Vec3 color = !enabled ? (Vec3){0.15f, 0.18f, 0.15f} :
-      hovered ? (Vec3){0.46f, 0.58f, 0.38f} : (Vec3){0.25f, 0.32f, 0.24f};
+                              const float centerX, const float top, const float width, const float scale,
+                              const int hovered, const int enabled) {
+  const Vec3 color = !enabled ? (Vec3){.x = 0.15f, .y = 0.18f, .z = 0.15f} :
+      hovered ? (Vec3){.x = 0.46f, .y = 0.58f, .z = 0.38f} : (Vec3){.x = 0.25f, .y = 0.32f, .z = 0.24f};
   draw_menu_rectangle(renderer, centerX - width * scale / 2, top,
                        width * scale, 48 * scale, color);
   draw_menu_text(renderer, label, centerX, top + 14 * scale, scale,
-                   enabled ? (Vec3){0.95f, 0.98f, 0.92f} : (Vec3){0.4f, 0.45f, 0.4f});
+                   enabled ? (Vec3){.x = 0.95f, .y = 0.98f, .z = 0.92f} : (Vec3){.x = 0.4f, .y = 0.45f, .z = 0.4f});
 }
 
 static void render_pause_menu(const Application *application) {
   const Renderer *renderer = &application->renderer;
-  int width = renderer->framebufferWidth, height = renderer->framebufferHeight;
+  const int width = renderer->framebufferWidth;
+  const int height = renderer->framebufferHeight;
   if (width <= 0 || height <= 0)
     return;
-  float scale = fminf(width / 640.0f, height / 480.0f);
-  float centerX = width * 0.5f, centerY = height * 0.5f;
+  const float scale = fminf((float)width / 640.0f, (float)height / 480.0f);
+  const float centerX = (float)width * 0.5f;
+  const float centerY = (float)height * 0.5f;
   double cursorX, cursorY;
   int windowWidth, windowHeight;
   glfwGetCursorPos(application->window, &cursorX, &cursorY);
   glfwGetWindowSize(application->window, &windowWidth, &windowHeight);
-  int hovered = windowWidth > 0 && windowHeight > 0 ?
+  const int hovered = windowWidth > 0 && windowHeight > 0 ?
       pause_menu_button(application, cursorX * width / windowWidth, cursorY * height / windowHeight,
                          width, height) : 0;
-  GLboolean depthEnabled = glIsEnabled(GL_DEPTH_TEST);
-  GLboolean cullEnabled = glIsEnabled(GL_CULL_FACE);
+  const GLboolean depthEnabled = glIsEnabled(GL_DEPTH_TEST);
+  const GLboolean cullEnabled = glIsEnabled(GL_CULL_FACE);
   glDisable(GL_DEPTH_TEST);
   glDisable(GL_CULL_FACE);
   mat4 identity;
@@ -799,7 +801,7 @@ static void render_pause_menu(const Application *application) {
   glBindVertexArray(renderer->textVao);
   glBindBuffer(GL_ARRAY_BUFFER, renderer->textVbo);
   draw_menu_rectangle(renderer, centerX - 180 * scale, centerY - 160 * scale,
-                       360 * scale, 300 * scale, (Vec3){0.09f, 0.12f, 0.10f});
+                       360 * scale, 300 * scale, (Vec3){.x = 0.09f, .y = 0.12f, .z = 0.10f});
   draw_menu_text(renderer, application->settingsOpen ? "SETTINGS" : "PAUSED",
                  centerX, centerY - 130 * scale, scale * 1.2f,
                  (Vec3){0.95f, 0.98f, 0.92f});
@@ -807,12 +809,12 @@ static void render_pause_menu(const Application *application) {
     char value[16];
     snprintf(value, sizeof(value), "%.0f UNITS", renderer->viewDistance);
     draw_menu_text(renderer, "VIEW DISTANCE", centerX, centerY - 65 * scale,
-                   scale, (Vec3){0.95f, 0.98f, 0.92f});
+                   scale, (Vec3){.x = 0.95f, .y = 0.98f, .z = 0.92f});
     draw_menu_text(renderer, value, centerX, centerY - 9 * scale,
                    scale * 0.85f, (Vec3){0.95f, 0.98f, 0.92f});
   }
   MenuButton buttons[3];
-  int count = menu_buttons(application, buttons);
+  const int count = menu_buttons(application, buttons);
   for (int i = 0; i < count; i++) {
     const MenuButton *button = &buttons[i];
     draw_menu_button(renderer, button->label, centerX + button->centerX * scale,
@@ -832,23 +834,23 @@ static void render_pause_menu(const Application *application) {
    No normalization is needed, and boxes crossing a plane remain visible. */
 static int section_in_frustum(const SectionGpuMesh *mesh, const mat4 mvp) {
   for(int axis=0;axis<3;axis++) for(int sign=-1;sign<=1;sign+=2) {
-    float a=mvp[3]+sign*mvp[axis];
-    float b=mvp[7]+sign*mvp[4+axis];
-    float c=mvp[11]+sign*mvp[8+axis];
-    float d=mvp[15]+sign*mvp[12+axis];
-    float x=a>=0 ? mesh->boundsMax.x : mesh->boundsMin.x;
-    float y=b>=0 ? mesh->boundsMax.y : mesh->boundsMin.y;
-    float z=c>=0 ? mesh->boundsMax.z : mesh->boundsMin.z;
+    const float a=mvp[3]+(float)sign*mvp[axis];
+    const float b=mvp[7]+(float)sign*mvp[4+axis];
+    const float c=mvp[11]+(float)sign*mvp[8+axis];
+    const float d=mvp[15]+(float)sign*mvp[12+axis];
+    const float x=a>=0 ? mesh->boundsMax.x : mesh->boundsMin.x;
+    const float y=b>=0 ? mesh->boundsMax.y : mesh->boundsMin.y;
+    const float z=c>=0 ? mesh->boundsMax.z : mesh->boundsMin.z;
     if(a*x+b*y+c*z+d<0) return 0;
   }
   return 1;
 }
 
-static int section_within_view_distance(const SectionGpuMesh *mesh, Vec3 eye,
-                                         float distance) {
-  float dx = fmaxf(mesh->boundsMin.x - eye.x, fmaxf(0, eye.x - mesh->boundsMax.x));
-  float dy = fmaxf(mesh->boundsMin.y - eye.y, fmaxf(0, eye.y - mesh->boundsMax.y));
-  float dz = fmaxf(mesh->boundsMin.z - eye.z, fmaxf(0, eye.z - mesh->boundsMax.z));
+static int section_within_view_distance(const SectionGpuMesh *mesh, const Vec3 eye,
+                                         const float distance) {
+  const float dx = fmaxf(mesh->boundsMin.x - eye.x, fmaxf(0, eye.x - mesh->boundsMax.x));
+  const float dy = fmaxf(mesh->boundsMin.y - eye.y, fmaxf(0, eye.y - mesh->boundsMax.y));
+  const float dz = fmaxf(mesh->boundsMin.z - eye.z, fmaxf(0, eye.z - mesh->boundsMax.z));
   return dx * dx + dy * dy + dz * dz <= distance * distance;
 }
 
@@ -861,9 +863,9 @@ static void render_world(const Renderer *renderer, const Player *player) {
   mat4 proj, view, mvp;
   const float aspectRatio =
       (float)renderer->framebufferWidth / (float)renderer->framebufferHeight;
-  float viewDistance = renderer->viewDistance > 0 ? renderer->viewDistance : DEFAULT_VIEW_DISTANCE;
+  const float viewDistance = renderer->viewDistance > 0 ? renderer->viewDistance : DEFAULT_VIEW_DISTANCE;
   mat4_perspective(75.0f * (3.14159f / 180.0f), aspectRatio, 0.05f, viewDistance, proj);
-  Vec3 cameraPosition = player_eye_position(player);
+  const Vec3 cameraPosition = player_eye_position(player);
   const Vec3 target = vec3_add(cameraPosition, player->camera.front);
   mat4_lookat(cameraPosition, target, player->camera.up, view);
   mat4_multiply(proj, view, mvp);
@@ -874,9 +876,9 @@ static void render_world(const Renderer *renderer, const Player *player) {
     if (!block_type_color((BlockType)type, &color))
       continue;
     glUniform3f(renderer->colorLocation, color.x, color.y, color.z);
-    size_t count = renderer->streamed ? renderer->visibleMeshCount : renderer->meshCount;
+    const size_t count = renderer->streamed ? renderer->visibleMeshCount : renderer->meshCount;
     for (size_t n = 0; n < count; n++) {
-      size_t i = renderer->streamed ? renderer->visibleMeshes[n] : n;
+      const size_t i = renderer->streamed ? renderer->visibleMeshes[n] : n;
       const SectionGpuMesh *mesh = &renderer->meshes[i];
       if (!mesh->vertexCount[type] ||
           !section_within_view_distance(mesh, cameraPosition, viewDistance) ||
@@ -1021,7 +1023,7 @@ static int application_init(Application *application) {
 
 static void application_update(Application *application) {
   GLFWwindow *window = application->window;
-  int wasPaused = application->paused;
+  const int wasPaused = application->paused;
   glfwPollEvents();
 
   const double currentFrame = glfwGetTime();

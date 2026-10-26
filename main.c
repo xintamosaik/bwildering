@@ -25,6 +25,8 @@ typedef struct {
 } SectionGpuMesh;
 
 typedef struct {
+  /* Owns GPU resources for one bounded world layout. Destroy while its GL
+     context is current, before destroying the window/context. */
   SectionGpuMesh *meshes;
   size_t meshCount;
   GLuint textVao;
@@ -318,6 +320,14 @@ static int renderer_upload_section_mesh(SectionGpuMesh *target,
   return 1;
 }
 
+/* Synchronize before drawing. Each section replacement commits independently;
+   failure leaves its previous mesh and dirty flag intact, stops this pass, and
+   keeps earlier successful replacements. Collision already sees CPU edits.
+   Missing/empty sections retire geometry without allocating a VAO/VBO for air.
+   The collection is tied to the first world's bounds and ordered chunk layout.
+   Same-layout regeneration is supported; for changed bounds/layout, explicitly
+   destroy/reinitialize the renderer and mark allocated sections dirty before
+   syncing. Equal mesh counts alone do not establish layout compatibility. */
 static int renderer_sync_world(Renderer *renderer, World *world) {
   size_t count = world->chunkCount * WORLD_SECTION_COUNT;
   if (!renderer->meshes && count) {

@@ -125,6 +125,11 @@ typedef struct {
      Edited chunks stay resident; unedited chunks can be regenerated after eviction. */
   int proceduralTerrain;
   uint32_t terrainSeed;
+  /* Conservative envelope of materialized, potentially evictable columns.
+     Edited columns may lie outside it because they cannot be released. */
+  int hasMaterializedBounds;
+  int minMaterializedChunkX, maxMaterializedChunkX;
+  int minMaterializedChunkZ, maxMaterializedChunkZ;
 } World;
 
 typedef float mat4[16];
@@ -208,6 +213,11 @@ int create_terrain_streamed(World *world, int blocksPerSide, Vec3 center,
 int world_materialize_chunk(World *world, int chunkX, int chunkZ);
 /* Evict only unedited procedural chunks; subsequent reads regenerate their values. */
 void world_release_chunk(World *world, int chunkX, int chunkZ);
+/* Release unedited columns outside inclusive residency bounds (min > max is
+   an empty neighbourhood). Tracks actual
+   materialization independently of renderer success; unchanged bounds cost O(1).
+   Returns the number of previously resident columns released. */
+size_t world_release_chunks_outside(World *world, int minX, int maxX, int minZ, int maxZ);
 /* Transactionally replaces an initialized CPU mesh. Empty sections are valid. */
 int section_mesh_build(const World *world, int chunkX, int sectionY, int chunkZ,
                        SectionMesh *mesh);

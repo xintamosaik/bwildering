@@ -242,6 +242,16 @@ int world_materialize_chunk(World *world, int cx, int cz) {
       world->voxelCount += pending[s]->voxelCount;
     }
   chunk->terrainReady = 1;
+  if (!world->hasMaterializedBounds) {
+    world->minMaterializedChunkX = world->maxMaterializedChunkX = cx;
+    world->minMaterializedChunkZ = world->maxMaterializedChunkZ = cz;
+    world->hasMaterializedBounds = 1;
+  } else {
+    if (cx < world->minMaterializedChunkX) world->minMaterializedChunkX = cx;
+    if (cx > world->maxMaterializedChunkX) world->maxMaterializedChunkX = cx;
+    if (cz < world->minMaterializedChunkZ) world->minMaterializedChunkZ = cz;
+    if (cz > world->maxMaterializedChunkZ) world->maxMaterializedChunkZ = cz;
+  }
   return 1;
 }
 
@@ -259,6 +269,36 @@ void world_release_chunk(World *world, int cx, int cz) {
   }
   chunk->sections = NULL;
   chunk->terrainReady = 0;
+}
+
+size_t world_release_chunks_outside(World *world, int minX, int maxX, int minZ, int maxZ) {
+  if (!world || !world->proceduralTerrain || !world->hasMaterializedBounds) return 0;
+  int oldMinX = world->minMaterializedChunkX, oldMaxX = world->maxMaterializedChunkX;
+  int oldMinZ = world->minMaterializedChunkZ, oldMaxZ = world->maxMaterializedChunkZ;
+  if (oldMinX >= minX && oldMaxX <= maxX && oldMinZ >= minZ && oldMaxZ <= maxZ) return 0;
+  size_t released = 0;
+  /* Visit only departing strips of the conservative materialized envelope. */
+  for (int x = oldMinX; x <= oldMaxX; x++) {
+    int insideX = x >= minX && x <= maxX;
+    for (int z = oldMinZ; z <= oldMaxZ; z++) {
+      if (insideX && z >= minZ && z <= maxZ) {
+        z = maxZ < oldMaxZ ? maxZ : oldMaxZ;
+        continue;
+      }
+      Chunk *chunk = find_chunk_mut(world, x, z);
+      if (chunk && !chunk->edited && (chunk->terrainReady || chunk->sections)) {
+        world_release_chunk(world, x, z);
+        released++;
+      }
+    }
+  }
+  world->minMaterializedChunkX = oldMinX > minX ? oldMinX : minX;
+  world->maxMaterializedChunkX = oldMaxX < maxX ? oldMaxX : maxX;
+  world->minMaterializedChunkZ = oldMinZ > minZ ? oldMinZ : minZ;
+  world->maxMaterializedChunkZ = oldMaxZ < maxZ ? oldMaxZ : maxZ;
+  world->hasMaterializedBounds = world->minMaterializedChunkX <= world->maxMaterializedChunkX &&
+      world->minMaterializedChunkZ <= world->maxMaterializedChunkZ;
+  return released;
 }
 
 int world_set_block(World *world, int x, int y, int z, BlockType type) {

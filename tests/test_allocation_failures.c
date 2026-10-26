@@ -130,6 +130,7 @@ int main(void) {
     assert(!world_materialize_chunk(&streamed, 0, 0));
     fail_after = -1;
     assert(streamed.sectionCount == 0 && streamed.voxelCount == 0);
+    assert(!streamed.hasMaterializedBounds);
     for (int sy = WORLD_MIN_SECTION_Y; sy < WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT; sy++)
       assert(world_section(&streamed, 0, sy, 0) == NULL);
     assert(world_get_block(&streamed, 0, column.height - 1, 0) == column.material);

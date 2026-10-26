@@ -546,8 +546,10 @@ static int renderer_sync_world(Renderer *renderer, World *world) {
   return 1;
 }
 
-/* Generate only the view neighbourhood. Retiring unedited chunks bounds CPU
-   memory during exploration; edited chunks retain their changes for revisits. */
+/* Sole residency owner for streamed gameplay: a square view radius in X/Z plus
+   one chunk of padding, clipped to world bounds. Retire before allocating the
+   next neighbourhood, including chunks with no renderer records (failed sync).
+   Edited CPU columns remain authoritative; their derived GPU data can retire. */
 static int renderer_sync_view(Renderer *renderer, World *world, const Player *player) {
   if (!world->proceduralTerrain)
     return renderer_sync_world(renderer, world);
@@ -555,7 +557,8 @@ static int renderer_sync_view(Renderer *renderer, World *world, const Player *pl
   if (!isfinite(eye.x) || !isfinite(eye.z))
     return 0;
   const float span = world->blockSize * SECTION_SIZE;
-  const float distance = renderer->viewDistance > 0 ? renderer->viewDistance : DEFAULT_VIEW_DISTANCE;
+  const float distance = isfinite(renderer->viewDistance) && renderer->viewDistance > 0 ?
+      fminf(renderer->viewDistance, MAX_VIEW_DISTANCE) : DEFAULT_VIEW_DISTANCE;
   const int maxChunkX = world->minChunkX + world->chunksPerSide - 1;
   const int maxChunkZ = world->minChunkZ + world->chunksPerSide - 1;
   const float loX = floorf((eye.x - world->origin.x - distance) / span) - 1;
@@ -566,17 +569,28 @@ static int renderer_sync_view(Renderer *renderer, World *world, const Player *pl
   const int maxX = (int)fmaxf((float)world->minChunkX - 1, fminf((float)maxChunkX, hiX));
   const int minZ = (int)fminf((float)maxChunkZ + 1, fmaxf((float)world->minChunkZ, loZ));
   const int maxZ = (int)fmaxf((float)world->minChunkZ - 1, fminf((float)maxChunkZ, hiZ));
+  /* No indices may survive metadata replacement or an interrupted sync pass. */
+  renderer->streamed = 1;
+  renderer->visibleMeshCount = renderer->drawMeshCount = 0;
   /* Retire departing columns before collecting current section identities. */
   for (size_t i = 0; i < renderer->meshCount; i++) {
     SectionGpuMesh *m = &renderer->meshes[i];
     if (m->chunkX >= minX && m->chunkX <= maxX && m->chunkZ >= minZ && m->chunkZ <= maxZ) continue;
     Subchunk *section = world_section_mut(world, m->chunkX, m->sectionY, m->chunkZ);
     if (section) section->dirty = 1;
+    if (renderer->performance && renderer->performance->enabled && m->vbo) {
+      renderer->performance->frame.retiredMeshes++;
+      for (int t = 0; t < BLOCK_TYPE_COUNT; t++)
+        renderer->performance->frame.retiredBytes += (size_t)m->vertexCount[t] * sizeof(SurfaceVertex);
+    }
     int x = m->chunkX, y = m->sectionY, z = m->chunkZ;
     section_gpu_mesh_destroy(m);
     m->chunkX = x; m->sectionY = y; m->chunkZ = z;
-    world_release_chunk(world, x, z);
   }
+  /* CPU residency must not depend on successful renderer metadata allocation. */
+  size_t evicted = world_release_chunks_outside(world, minX, maxX, minZ, maxZ);
+  if (renderer->performance && renderer->performance->enabled)
+    renderer->performance->frame.evictedChunks += evicted;
   for (int cx = minX; cx <= maxX; cx++)
     for (int cz = minZ; cz <= maxZ; cz++) {
       double start = perf_clock(renderer->performance);
@@ -1034,7 +1048,7 @@ static void performance_report(Application *a, const char *phase) {
       "update_ms=%.3f sync_ms=%.3f materialize_ms=%.3f mesh_ms=%.3f upload_ms=%.3f "
       "render_ms=%.3f swap_ms=%.3f visibility_ms=%.3f distance_tests_avg=%.1f "
       "frustum_tests_avg=%.1f material_changes_avg=%.1f visibility_fallbacks=%zu "
-      "rebuilds=%zu upload_calls=%zu upload_bytes=%zu "
+      "rebuilds=%zu upload_calls=%zu upload_bytes=%zu evicted_chunks=%zu retired_meshes=%zu retired_bytes=%zu "
       "draws_avg=%.1f triangles_avg=%.1f resident_chunks=%zu sections=%zu edited=%zu dirty=%zu "
       "neighborhood_slots=%zu world_metadata_bytes=%zu renderer_metadata_bytes=%zu "
       "resident_voxel_bytes=%zu visible_index_bytes=%zu draw_index_bytes=%zu peak_cpu_mesh_bytes=%zu "
@@ -1046,6 +1060,7 @@ static void performance_report(Application *a, const char *phase) {
       p->total.visibility*1000/n, p->total.distanceTests/n, p->total.frustumTests/n,
       p->total.materialChanges/n, p->total.visibilityFallbacks,
       p->total.rebuilds, p->total.uploadCalls, p->total.uploadBytes,
+      p->total.evictedChunks, p->total.retiredMeshes, p->total.retiredBytes,
       p->total.draws/n, p->total.triangles/n, a->residentChunks, a->world.sectionCount,
       a->editedChunks, a->dirtySections, a->renderer.visibleMeshCount,
       sizeof(World) + a->world.chunkCount * sizeof(Chunk),

@@ -7,11 +7,19 @@ static void *draw_test_realloc(void *pointer, size_t bytes) {
   if (draw_allocations_before_failure > 0) draw_allocations_before_failure--;
   return realloc(pointer, bytes);
 }
+static int metadata_allocations_before_failure = -1;
+static void *metadata_test_calloc(size_t count, size_t bytes) {
+  if (metadata_allocations_before_failure == 0) return NULL;
+  if (metadata_allocations_before_failure > 0) metadata_allocations_before_failure--;
+  return calloc(count, bytes);
+}
+#define calloc metadata_test_calloc
 #define realloc draw_test_realloc
 #define main bwildering_application_main
 #include "../main.c"
 #undef main
 #undef realloc
+#undef calloc
 #include <assert.h>
 
 static PFNGLBUFFERDATAPROC real_buffer_upload;
@@ -328,6 +336,70 @@ static void test_streamed_exploration_revisits_edited_terrain(void) {
   world_destroy(&world);
 }
 
+/* Eviction also owns CPU columns omitted from renderer metadata, and cancels
+   dirty mesh retries when leaving the neighbourhood. */
+static void test_streamed_retirement_after_failed_sync(void) {
+  World world = {0};
+  Renderer renderer = {.viewDistance = 25};
+  Performance p = {.enabled = 1};
+  renderer.performance = &p;
+  assert(create_terrain_streamed(&world, 1024, (Vec3){0}, 1, WORLD_SEED));
+  Player player = {.position = {0.5f, 410, 0.5f}, .eyeHeight = 1};
+  metadata_allocations_before_failure = 0;
+  assert(!renderer_sync_view(&renderer, &world, &player));
+  metadata_allocations_before_failure = -1;
+  assert(world.sectionCount && !renderer.meshCount);
+  player.position.x = 2000;
+  assert(renderer_sync_view(&renderer, &world, &player));
+  assert(!world.sectionCount); /* No GPU records existed to drive CPU eviction. */
+  player.position.x = 0.5f;
+  p.frame = (FrameWork){0};
+  /* Explicitly materialized columns are subject to the same residency policy. */
+  assert(world_materialize_chunk(&world, -24, 0));
+  assert(world_section(&world, -24, WORLD_MIN_SECTION_Y, 0));
+  assert(world_set_block(&world, 0, 400, 0, BLOCK_TYPE_STONE));
+  assert(renderer_sync_view(&renderer, &world, &player));
+  assert(!world_section(&world, -24, WORLD_MIN_SECTION_Y, 0));
+  assert(p.frame.evictedChunks == 1);
+  SectionGpuMesh *gpu = gpu_section(&renderer, 0, 25, 0);
+  assert(gpu && vertex_count(gpu) == 36);
+  GLuint vao = gpu->vao, vbo = gpu->vbo;
+  assert(world_set_block(&world, 0, 400, 0, BLOCK_TYPE_SNOW));
+  real_buffer_upload = __glewBufferData;
+  uploads_before_failure = 0;
+  __glewBufferData = fail_buffer_upload;
+  assert(!renderer_sync_view(&renderer, &world, &player));
+  __glewBufferData = real_buffer_upload;
+  assert(world_section(&world, 0, 25, 0)->dirty);
+  assert(glIsBuffer(vbo));
+  /* Leave the whole world: no new uploads can reuse the deleted GL names. */
+  player.position.x = 2000;
+  assert(renderer_sync_view(&renderer, &world, &player));
+  assert(!glIsBuffer(vbo) && !glIsVertexArray(vao));
+  assert(!renderer.visibleMeshCount && !renderer.drawMeshCount);
+  assert(p.frame.retiredMeshes && p.frame.retiredBytes);
+  for (size_t c = 0; c < world.chunkCount; c++) {
+    const Chunk *chunk = &world.chunks[c];
+    if (!chunk->edited) assert(!chunk->sections && !chunk->terrainReady);
+  }
+  assert(world_get_block(&world, 0, 400, 0) == BLOCK_TYPE_SNOW);
+  assert_empty_gpu_world(&renderer);
+  player.position.x = 0.5f;
+  assert(renderer_sync_view(&renderer, &world, &player));
+  gpu = gpu_section(&renderer, 0, 25, 0);
+  assert(gpu && gpu->vertexCount[BLOCK_TYPE_SNOW] == 36);
+  assert(!world_section(&world, 0, 25, 0)->dirty);
+  /* Every regenerated cell in an unedited column matches the seeded baseline. */
+  for (int x = 16; x < 32; x++)
+    for (int z = 0; z < 16; z++) {
+      TerrainColumn column = terrain_sample_column(WORLD_SEED, x, z);
+      for (int y = TERRAIN_BASE_Y; y < 384; y++)
+        assert(world_get_block(&world, x, y, z) == terrain_column_block(column, y));
+    }
+  renderer_destroy(&renderer);
+  world_destroy(&world);
+}
+
 static void test_performance_counters(void) {
   Application a = {0};
   a.performance.enabled = 1;
@@ -587,6 +659,7 @@ int main(void) {
   test_rendered_movement();
   test_view_distance_and_edits_change_rendered_geometry();
   test_streamed_exploration_revisits_edited_terrain();
+  test_streamed_retirement_after_failed_sync();
   assert(glGetError() == GL_NO_ERROR);
   glfwDestroyWindow(window);
   glfwTerminate();

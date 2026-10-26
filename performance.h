@@ -7,6 +7,7 @@ typedef struct {
   double raw, update, sync, materialize, mesh, upload, render, swap, visibility;
   size_t distanceTests, frustumTests, materialChanges, visibilityFallbacks;
   size_t rebuilds, uploadCalls, uploadBytes, draws, triangles, peakMeshBytes;
+  size_t evictedChunks, retiredMeshes, retiredBytes;
 } FrameWork;
 typedef struct {
   FrameWork frame, total;
@@ -32,6 +33,7 @@ static void perf_record(Performance *p) {
   PERF_SUM(raw); PERF_SUM(update); PERF_SUM(sync); PERF_SUM(materialize);
   PERF_SUM(mesh); PERF_SUM(upload); PERF_SUM(render); PERF_SUM(swap);
   PERF_SUM(rebuilds); PERF_SUM(uploadCalls); PERF_SUM(uploadBytes);
+  PERF_SUM(evictedChunks); PERF_SUM(retiredMeshes); PERF_SUM(retiredBytes);
   PERF_SUM(draws); PERF_SUM(triangles); PERF_SUM(visibility);
   PERF_SUM(distanceTests); PERF_SUM(frustumTests);
   PERF_SUM(materialChanges); PERF_SUM(visibilityFallbacks);

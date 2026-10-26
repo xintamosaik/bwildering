@@ -1487,6 +1487,34 @@ static void test_layered_generation_and_sparse_edits(void) {
   }
 }
 
+static void test_residency_departing_strips(void) {
+  World world = {0};
+  assert(create_terrain_streamed(&world, 128, (Vec3){0}, 1, 1));
+  for (int x = -2; x <= 2; x++)
+    for (int z = -2; z <= 2; z++)
+      assert(world_materialize_chunk(&world, x, z));
+  assert(world_set_block(&world, -32, 400, -32, BLOCK_TYPE_SNOW));
+  /* Clip both axes; retain the centre and the edited departing corner. */
+  assert(world_release_chunks_outside(&world, -1, 1, -1, 1) == 15);
+  for (int x = -2; x <= 2; x++)
+    for (int z = -2; z <= 2; z++) {
+      int retained = (x >= -1 && x <= 1 && z >= -1 && z <= 1) || (x == -2 && z == -2);
+      assert((world_section(&world, x, WORLD_MIN_SECTION_Y, z) != NULL) == retained);
+    }
+  assert(world_release_chunks_outside(&world, -1, 1, -1, 1) == 0);
+  /* An explicit materialization outside unchanged view bounds is still found. */
+  assert(world_materialize_chunk(&world, 3, 0));
+  assert(world_release_chunks_outside(&world, -1, 1, -1, 1) == 1);
+  assert(!world_section(&world, 3, WORLD_MIN_SECTION_Y, 0));
+  /* A disjoint or empty neighbourhood releases every remaining baseline column. */
+  assert(world_release_chunks_outside(&world, 4, 3, 4, 3) == 9);
+  assert(!world.hasMaterializedBounds);
+  assert(world_get_block(&world, -32, 400, -32) == BLOCK_TYPE_SNOW);
+  assert(world_materialize_chunk(&world, 0, 0));
+  assert(world_release_chunks_outside(&world, 2, 3, 2, 3) == 1);
+  world_destroy(&world);
+}
+
 int main(void) {
   test_vector_normalization();
   test_matrix_multiply_identity();
@@ -1521,6 +1549,7 @@ int main(void) {
   test_terrain_relief_and_underground_depth();
   test_layered_generation_and_sparse_edits();
   test_streamed_terrain_matches_eager_and_preserves_edits();
+  test_residency_departing_strips();
   test_place_block_on_viewed_face();
   test_placement_reach_misses_and_player_overlap();
   test_placement_oblique_view_and_reach_boundary();

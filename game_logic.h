@@ -32,6 +32,7 @@ typedef struct {
 } PlayerInput;
 
 typedef enum {
+  /* Zero is grass; initialize air storage to BLOCK_TYPE_EMPTY, not zero. */
   BLOCK_TYPE_GRASS,
   BLOCK_TYPE_STONE,
   BLOCK_TYPE_WATER,
@@ -73,7 +74,9 @@ typedef struct {
 } Chunk;
 
 /* Owning type: initialize to zero, destroy explicitly, and do not copy by value.
-   Missing sections read as air. Bounds are horizontal side length and Y [-32,32).
+   Missing sections read as air. Horizontal side is 1..192; voxel Y is [-32,32).
+   Empty allocated sections remain owned retirement markers until destruction;
+   sectionCount includes them. Renderer sync must retire their GPU geometry.
    Voxel coordinates are signed; render positions use origin + voxel * blockSize. */
 typedef struct {
   Chunk *chunks;
@@ -112,7 +115,9 @@ int world_init(World *world, int side, Vec3 center, float blockSize);
 void world_destroy(World *world);
 Subchunk *world_section(const World *world, int chunkX, int sectionY, int chunkZ);
 BlockType world_get_block(const World *world, int x, int y, int z);
-/* Returns success, including identical writes; rejects invalid types/bounds. */
+/* Returns success, including identical writes; rejects invalid types/bounds.
+   Nonempty writes allocate missing sections lazily, initialized to air.
+   Successful edits update CPU storage immediately; GPU meshes follow on sync. */
 int world_set_block(World *world, int x, int y, int z, BlockType type);
 /* Highest occupied surface, for spawn selection (not cave collision). */
 float world_surface_height(const World *world, float x, float z);

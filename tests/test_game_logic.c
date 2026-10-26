@@ -503,11 +503,24 @@ static void test_section_faces_and_replacement(void) {
     SurfaceVertex *original = one.vertices;
     assert(!section_mesh_build(&world, INT_MAX, 0, 0, &one));
     assert(one.vertices == original && one.vertexCount == 36);
+    /* A missing section must also replace an existing mesh with no geometry. */
+    assert(world_section(&world, 0, 1, 0) == NULL);
+    assert(section_mesh_build(&world, 0, 1, 0, &one));
+    assert(one.vertices == NULL && one.vertexCount == 0);
+    assert(section_mesh_build(&world, voxel_section_coord(a[0]),
+                              voxel_section_coord(a[1]), voxel_section_coord(a[2]),
+                              &one));
+    assert(one.vertexCount == 36);
     assert(world_set_block(&world, b[0], b[1], b[2], BLOCK_TYPE_WATER));
     size_t draws, nonempty;
     assert(mesh_world(&world, &draws, &nonempty) == 60);
     assert(world_set_block(&world, a[0], a[1], a[2], BLOCK_TYPE_EMPTY));
     assert(world_set_block(&world, b[0], b[1], b[2], BLOCK_TYPE_EMPTY));
+    /* Retain the empty CPU section so synchronization can retire its GPU mesh. */
+    Subchunk *retired = world_section(&world, voxel_section_coord(a[0]),
+                                      voxel_section_coord(a[1]),
+                                      voxel_section_coord(a[2]));
+    assert(retired && retired->voxelCount == 0 && retired->dirty);
     assert(section_mesh_build(&world, voxel_section_coord(a[0]),
                               voxel_section_coord(a[1]), voxel_section_coord(a[2]),
                               &one));

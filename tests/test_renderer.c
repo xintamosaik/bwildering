@@ -1,8 +1,17 @@
 /* Exercise the private renderer in a real GL context without adding test hooks
    or development controls to the game. */
+#include <stdlib.h>
+static int draw_allocations_before_failure = -1;
+static void *draw_test_realloc(void *pointer, size_t bytes) {
+  if (draw_allocations_before_failure == 0) return NULL;
+  if (draw_allocations_before_failure > 0) draw_allocations_before_failure--;
+  return realloc(pointer, bytes);
+}
+#define realloc draw_test_realloc
 #define main bwildering_application_main
 #include "../main.c"
 #undef main
+#undef realloc
 #include <assert.h>
 
 static PFNGLBUFFERDATAPROC real_buffer_upload;
@@ -59,7 +68,7 @@ typedef struct {
 } DepthFrame;
 
 /* Depth distinguishes drawn geometry from any clear colour or palette. */
-static DepthFrame capture_world(const Renderer *renderer, const Player *player) {
+static DepthFrame capture_world(Renderer *renderer, const Player *player) {
   int width = renderer->framebufferWidth, height = renderer->framebufferHeight;
   assert(width > 0 && height > 0);
   DepthFrame frame = {.count = (size_t)width * height};
@@ -107,6 +116,15 @@ static void test_frustum(void) {
   mesh.boundsMin = (Vec3){0.5f, 0.5f, 0.5f};
   mesh.boundsMax = (Vec3){2, 2, 2};
   assert(section_in_frustum(&mesh, identity));
+  mesh.boundsMin = (Vec3){-1, -1, 1};
+  mesh.boundsMax = (Vec3){1, 1, 2};
+  assert(section_in_frustum(&mesh, identity)); /* Touching the far plane. */
+  mesh.boundsMin.z = 1.001f;
+  assert(!section_in_frustum(&mesh, identity));
+  mesh.boundsMin = (Vec3){25, 0, 0};
+  mesh.boundsMax = (Vec3){26, 1, 1};
+  assert(section_within_view_distance(&mesh, (Vec3){0}, 25));
+  assert(!section_within_view_distance(&mesh, (Vec3){-0.001f, 0, 0}, 25));
 }
 
 static void test_rendered_movement(void) {
@@ -191,8 +209,51 @@ static void test_view_distance_and_edits_change_rendered_geometry(void) {
   assert_terrain_visible(&visible);
   assert_view_changed(&tooFar, &visible);
   free(tooFar.depth);
+  /* Failed initial allocation and failed growth both render complete geometry.
+     Force growth after one collected section to exercise partial-list discard. */
+  Performance p = {.enabled = 1};
+  renderer.performance = &p;
+  free(renderer.drawMeshes);
+  renderer.drawMeshes = NULL;
+  renderer.drawMeshCount = renderer.drawMeshCapacity = 0;
+  for (int attempt = 0; attempt < 2; attempt++) {
+    size_t *storage = renderer.drawMeshes;
+    size_t capacity = renderer.drawMeshCapacity;
+    draw_allocations_before_failure = 0;
+    p.frame = (FrameWork){0};
+    DepthFrame fallback = capture_world(&renderer, &player);
+    draw_allocations_before_failure = -1;
+    assert(p.frame.visibilityFallbacks == 1);
+    assert(renderer.drawMeshes == storage && renderer.drawMeshCapacity == capacity);
+    assert(!renderer.drawMeshCount);
+    for (size_t i = 0; i < visible.count; i++)
+      assert(fabsf(visible.depth[i] - fallback.depth[i]) < 0.00001f);
+    free(fallback.depth);
+    p.frame = (FrameWork){0};
+    DepthFrame retry = capture_world(&renderer, &player);
+    assert(!p.frame.visibilityFallbacks && renderer.drawMeshCount > 1);
+    for (size_t i = 0; i < visible.count; i++)
+      assert(fabsf(visible.depth[i] - retry.depth[i]) < 0.00001f);
+    free(retry.depth);
+    if (!attempt) renderer.drawMeshCapacity = 1;
+  }
+  renderer.performance = NULL;
+  player.camera.front.z = 1;
+  DepthFrame behind = capture_world(&renderer, &player);
+  assert(!behind.covered && !renderer.drawMeshCount);
+  free(behind.depth);
+  player.camera.front.z = -1;
   free(visible.depth);
   renderer.viewDistance = 25;
+  player.position.z = -24.5f; /* Wall straddles the far clip plane. */
+  DepthFrame boundary = capture_world(&renderer, &player);
+  assert_terrain_visible(&boundary);
+  player.position.z = -23.5f;
+  DepthFrame outsideBoundary = capture_world(&renderer, &player);
+  assert(!outsideBoundary.covered);
+  assert_view_changed(&boundary, &outsideBoundary);
+  free(boundary.depth);
+  free(outsideBoundary.depth);
   player.position.z = -30;
   DepthFrame approached = capture_world(&renderer, &player);
   assert_terrain_visible(&approached);
@@ -205,6 +266,7 @@ static void test_view_distance_and_edits_change_rendered_geometry(void) {
   assert(removed.covered == 0);
   free(removed.depth);
   renderer_destroy(&renderer);
+  assert(!renderer.drawMeshes && !renderer.drawMeshCapacity);
   world_destroy(&world);
 }
 
@@ -281,6 +343,8 @@ static void test_performance_counters(void) {
   performance_snapshot(&a);
   assert(!a.residentChunks && !a.dirtySections && !a.gpuBytes);
   assert(!a.performance.frame.draws && !a.performance.frame.uploadCalls);
+  assert(!a.performance.frame.distanceTests && !a.performance.frame.frustumTests);
+  assert(!a.renderer.drawMeshCount && !a.renderer.drawMeshCapacity);
   assert(world_set_block(&a.world, 0, 0, 0, BLOCK_TYPE_STONE));
   performance_snapshot(&a);
   assert(a.residentChunks == 1 && a.dirtySections == 1);
@@ -291,6 +355,17 @@ static void test_performance_counters(void) {
   assert(a.performance.frame.uploadBytes == 36 * sizeof(SurfaceVertex));
   assert(a.performance.frame.peakMeshBytes == 36 * sizeof(SurfaceVertex));
   assert(a.performance.frame.draws == 1 && a.performance.frame.triangles == 12);
+  assert(a.performance.frame.distanceTests == 1 && a.performance.frame.frustumTests == 1);
+  /* Multiple materials in the same section still need just one visibility test. */
+  assert(world_set_block(&a.world, 2, 0, 0, BLOCK_TYPE_GRASS));
+  assert(renderer_sync_world(&a.renderer, &a.world));
+  performance_reset(&a.performance);
+  render_world(&a.renderer, &player);
+  assert(a.performance.frame.distanceTests == 1 && a.performance.frame.frustumTests == 1);
+  assert(a.performance.frame.draws == 2 && a.performance.frame.triangles == 24);
+  assert(world_set_block(&a.world, 2, 0, 0, BLOCK_TYPE_EMPTY));
+  assert(renderer_sync_world(&a.renderer, &a.world));
+  performance_snapshot(&a);
   assert(a.gpuBytes == 36 * sizeof(SurfaceVertex) && !a.dirtySections);
   /* Failed requests count as work while committed storage stays unchanged. */
   assert(world_set_block(&a.world, 0, 0, 0, BLOCK_TYPE_GRASS));

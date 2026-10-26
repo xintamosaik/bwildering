@@ -34,6 +34,9 @@ typedef struct {
   size_t meshCount;
   size_t *visibleMeshes;
   size_t visibleMeshCount, visibleMeshCapacity;
+  /* Final camera-visible sections; independent of streaming residency. */
+  size_t *drawMeshes;
+  size_t drawMeshCount, drawMeshCapacity;
   int streamed;
   Performance *performance;
   double metadataSeconds;
@@ -356,6 +359,7 @@ static void renderer_destroy(Renderer *renderer) {
     section_gpu_mesh_destroy(&renderer->meshes[i]);
   free(renderer->meshes);
   free(renderer->visibleMeshes);
+  free(renderer->drawMeshes);
   if (renderer->textVao != 0)
     glDeleteVertexArrays(1, &renderer->textVao);
   if (renderer->textVbo != 0)
@@ -908,7 +912,43 @@ static int section_within_view_distance(const SectionGpuMesh *mesh, const Vec3 e
   return dx * dx + dy * dy + dz * dz <= distance * distance;
 }
 
-static void render_world(const Renderer *renderer, const Player *player) {
+/* Allocation failure leaves storage owned and reusable. The caller falls back
+   to direct visibility checks for this frame, never a stale/partial draw list. */
+static int renderer_collect_draw_meshes(Renderer *renderer, Vec3 eye,
+                                        float distance, const mat4 mvp) {
+  renderer->drawMeshCount = 0;
+  const size_t count = renderer->streamed ? renderer->visibleMeshCount : renderer->meshCount;
+  Performance *p = renderer->performance;
+  for (size_t n = 0; n < count; n++) {
+    size_t i = renderer->streamed ? renderer->visibleMeshes[n] : n;
+    const SectionGpuMesh *mesh = &renderer->meshes[i];
+    int nonempty = 0;
+    for (int t = 0; t < BLOCK_TYPE_COUNT; t++)
+      nonempty |= mesh->vertexCount[t] != 0;
+    if (!nonempty) continue;
+    if (p && p->enabled) p->frame.distanceTests++;
+    if (!section_within_view_distance(mesh, eye, distance)) continue;
+    if (p && p->enabled) p->frame.frustumTests++;
+    if (!section_in_frustum(mesh, mvp)) continue;
+    if (renderer->drawMeshCount == renderer->drawMeshCapacity) {
+      size_t capacity = renderer->drawMeshCapacity ? renderer->drawMeshCapacity * 2 : 64;
+      if (capacity > count) capacity = count;
+      size_t *indices = realloc(renderer->drawMeshes, capacity * sizeof(*indices));
+      if (!indices) {
+        renderer->drawMeshCount = 0;
+        if (p && p->enabled) p->frame.visibilityFallbacks++;
+        return 0;
+      }
+      renderer->drawMeshes = indices;
+      renderer->drawMeshCapacity = capacity;
+    }
+    renderer->drawMeshes[renderer->drawMeshCount++] = i;
+  }
+  return 1;
+}
+
+static void render_world(Renderer *renderer, const Player *player) {
+  renderer->drawMeshCount = 0;
   if (renderer->framebufferWidth <= 0 || renderer->framebufferHeight <= 0)
     return;
 
@@ -924,20 +964,30 @@ static void render_world(const Renderer *renderer, const Player *player) {
   mat4_lookat(cameraPosition, target, player->camera.up, view);
   mat4_multiply(proj, view, mvp);
 
+  Performance *p = renderer->performance;
+  double start = perf_clock(p);
+  int collected = renderer_collect_draw_meshes(renderer, cameraPosition, viewDistance, mvp);
+  if (p && p->enabled) p->frame.visibility += perf_clock(p) - start;
   glUniformMatrix4fv(renderer->mvpLocation, 1, GL_FALSE, (float *)mvp);
   for (int type = 0; type < BLOCK_TYPE_COUNT; type++) {
     Vec3 color;
     if (!block_type_color((BlockType)type, &color))
       continue;
     glUniform3f(renderer->colorLocation, color.x, color.y, color.z);
-    const size_t count = renderer->streamed ? renderer->visibleMeshCount : renderer->meshCount;
+    if (p && p->enabled) p->frame.materialChanges++;
+    const size_t count = collected ? renderer->drawMeshCount :
+        (renderer->streamed ? renderer->visibleMeshCount : renderer->meshCount);
     for (size_t n = 0; n < count; n++) {
-      const size_t i = renderer->streamed ? renderer->visibleMeshes[n] : n;
+      const size_t i = collected ? renderer->drawMeshes[n] :
+          (renderer->streamed ? renderer->visibleMeshes[n] : n);
       const SectionGpuMesh *mesh = &renderer->meshes[i];
-      if (!mesh->vertexCount[type] ||
-          !section_within_view_distance(mesh, cameraPosition, viewDistance) ||
-          !section_in_frustum(mesh, mvp))
-        continue;
+      if (!mesh->vertexCount[type]) continue;
+      if (!collected) {
+        if (p && p->enabled) p->frame.distanceTests++;
+        if (!section_within_view_distance(mesh, cameraPosition, viewDistance)) continue;
+        if (p && p->enabled) p->frame.frustumTests++;
+        if (!section_in_frustum(mesh, mvp)) continue;
+      }
       glBindVertexArray(mesh->vao);
       glDrawArrays(GL_TRIANGLES, mesh->firstVertex[type], mesh->vertexCount[type]);
       if (renderer->performance && renderer->performance->enabled) {
@@ -988,22 +1038,27 @@ static void performance_report(Application *a, const char *phase) {
   double n = p->count ? (double)p->count : 1;
   fprintf(stdout, "PERF phase=%s samples=%zu frame_ms=%.3f/%.3f/%.3f "
       "update_ms=%.3f sync_ms=%.3f materialize_ms=%.3f mesh_ms=%.3f upload_ms=%.3f "
-      "render_ms=%.3f swap_ms=%.3f rebuilds=%zu upload_calls=%zu upload_bytes=%zu "
+      "render_ms=%.3f swap_ms=%.3f visibility_ms=%.3f distance_tests_avg=%.1f "
+      "frustum_tests_avg=%.1f material_changes_avg=%.1f visibility_fallbacks=%zu "
+      "rebuilds=%zu upload_calls=%zu upload_bytes=%zu "
       "draws_avg=%.1f triangles_avg=%.1f resident_chunks=%zu sections=%zu edited=%zu dirty=%zu "
       "neighborhood_slots=%zu world_metadata_bytes=%zu renderer_metadata_bytes=%zu "
-      "resident_voxel_bytes=%zu visible_index_bytes=%zu peak_cpu_mesh_bytes=%zu "
+      "resident_voxel_bytes=%zu visible_index_bytes=%zu draw_index_bytes=%zu peak_cpu_mesh_bytes=%zu "
       "gpu_world_requested_bytes=%zu world_metadata_ms=%.3f renderer_metadata_ms=%.3f startup_ms=%.3f "
       "seed=%u side=%d distance=%.0f resolution=%dx%d swap_interval=0 overlay=%d paused=%d\n",
       phase, p->count, p->average*1000, p->p95*1000, p->maximum*1000,
       p->total.update*1000/n, p->total.sync*1000/n, p->total.materialize*1000/n,
       p->total.mesh*1000/n, p->total.upload*1000/n, p->total.render*1000/n, p->total.swap*1000/n,
+      p->total.visibility*1000/n, p->total.distanceTests/n, p->total.frustumTests/n,
+      p->total.materialChanges/n, p->total.visibilityFallbacks,
       p->total.rebuilds, p->total.uploadCalls, p->total.uploadBytes,
       p->total.draws/n, p->total.triangles/n, a->residentChunks, a->world.sectionCount,
       a->editedChunks, a->dirtySections, a->renderer.visibleMeshCount,
       sizeof(World) + a->world.chunkCount * sizeof(Chunk),
       sizeof(Renderer) + a->renderer.meshCount * sizeof(SectionGpuMesh),
       a->world.sectionCount * sizeof(Subchunk),
-      a->renderer.visibleMeshCapacity * sizeof(size_t), p->total.peakMeshBytes,
+      a->renderer.visibleMeshCapacity * sizeof(size_t),
+      a->renderer.drawMeshCapacity * sizeof(size_t), p->total.peakMeshBytes,
       a->gpuBytes, a->worldMetadataSeconds*1000, a->renderer.metadataSeconds*1000,
       a->startupSeconds*1000, a->world.terrainSeed, a->world.blocksPerSide,
       a->renderer.viewDistance, a->renderer.framebufferWidth, a->renderer.framebufferHeight,

@@ -9,3 +9,4 @@ test_allocation_failures_sanitize
 test_pause_menu
 test_pause_menu_sanitize
 performance_capture
+visibility_capture

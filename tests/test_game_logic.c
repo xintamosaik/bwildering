@@ -396,7 +396,7 @@ static void test_coordinates_and_storage(void) {
   assert(world.voxelCount == count);
   Chunk *original = world.chunks;
   assert(!world_init(&world, 0, (Vec3){0}, 1));
-  assert(!create_terrain(&world, 193, (Vec3){0}, 1, 1));
+  assert(!create_terrain(&world, WORLD_MAX_BLOCKS_PER_SIDE + 1, (Vec3){0}, 1, 1));
   assert(!create_platform(&world, 1, (Vec3){NAN, 0, 0}, 1, 1));
   assert(!world_init(&world, 1, (Vec3){0}, 0));
   assert(!world_init(&world, 1, (Vec3){0}, NAN));
@@ -1064,6 +1064,51 @@ static void test_generated_terrain_spawn(void) {
   }
 }
 
+static void test_expanded_world_terrain_and_boundaries(void) {
+  World world = {0};
+  uint32_t seed = UINT32_C(0x4B1D2A37);
+  int side = PLATFORM_BLOCKS_PER_SIDE;
+  clock_t start = clock();
+  assert(create_terrain(&world, side, (Vec3){0}, 1, seed));
+  const int samples[] = {-side / 2, -side / 2 + 1, -97, 0, 96, side / 2 - 2, side / 2 - 1};
+  for (size_t x = 0; x < sizeof(samples) / sizeof(*samples); x++)
+    for (size_t z = 0; z < sizeof(samples) / sizeof(*samples); z++) {
+      int vx = samples[x], vz = samples[z];
+      TerrainColumn column = terrain_sample_column(seed, vx, vz);
+      assert(world_get_block(&world, vx, column.height - 1, vz) == column.material);
+      assert_near(world_surface_height(&world, vx + 0.5f, vz + 0.5f), column.height);
+      assert(world_get_block(&world, vx, column.height, vz) == BLOCK_TYPE_EMPTY);
+      /* Edits work throughout the expanded area, including the furthest corners. */
+      assert(world_set_block(&world, vx, column.height, vz, BLOCK_TYPE_STONE));
+      assert_near(world_surface_height(&world, vx + 0.5f, vz + 0.5f), column.height + 1);
+      assert(world_set_block(&world, vx, column.height, vz, BLOCK_TYPE_EMPTY));
+    }
+  assert(!world_set_block(&world, -side / 2 - 1, 0, 0, BLOCK_TYPE_STONE));
+  assert(!world_set_block(&world, side / 2, 0, 0, BLOCK_TYPE_STONE));
+  assert(!world_set_block(&world, 0, 0, -side / 2 - 1, BLOCK_TYPE_STONE));
+  assert(!world_set_block(&world, 0, 0, side / 2, BLOCK_TYPE_STONE));
+  float spawnY = world_surface_height(&world, 0.5f, 0.5f);
+  Player player = make_player((Vec3){0.5f, spawnY, 0.5f}, 0);
+  for (int frame = 0; frame < 60; frame++)
+    update_player(&player, (PlayerInput){0}, 1.0f / 60, &world);
+  assert(player.grounded);
+  assert_near(player.position.y, spawnY);
+  size_t draws, sections;
+  size_t vertices = mesh_world(&world, &draws, &sections);
+  assert(vertices > 0);
+  printf("Expanded %dx%d world: %zu vertices, CPU generation + meshing %.3f ms\n",
+         side, side, vertices, 1000.0 * (clock() - start) / CLOCKS_PER_SEC);
+  world_destroy(&world);
+  /* The supported maximum can be initialized and edited at both opposite edges. */
+  int maximum = WORLD_MAX_BLOCKS_PER_SIDE;
+  assert(world_init(&world, maximum, (Vec3){0}, 1));
+  assert(world_set_block(&world, -maximum / 2, 0, -maximum / 2, BLOCK_TYPE_STONE));
+  assert(world_set_block(&world, maximum / 2 - 1, 0, maximum / 2 - 1, BLOCK_TYPE_GRASS));
+  assert(world_get_block(&world, -maximum / 2, 0, -maximum / 2) == BLOCK_TYPE_STONE);
+  assert(world_get_block(&world, maximum / 2 - 1, 0, maximum / 2 - 1) == BLOCK_TYPE_GRASS);
+  world_destroy(&world);
+}
+
 int main(void) {
   test_vector_normalization();
   test_matrix_multiply_identity();
@@ -1089,6 +1134,7 @@ int main(void) {
   test_thin_walls_at_section_boundaries();
   test_vertical_contacts_at_section_boundaries();
   test_generated_terrain_spawn();
+  test_expanded_world_terrain_and_boundaries();
   test_place_block_on_viewed_face();
   test_placement_reach_misses_and_player_overlap();
   test_placement_oblique_view_and_reach_boundary();

@@ -58,7 +58,8 @@ typedef struct {
 } SectionMesh;
 
 enum {
-  PLATFORM_BLOCKS_PER_SIDE = 192,
+  PLATFORM_BLOCKS_PER_SIDE = 768,
+  WORLD_MAX_BLOCKS_PER_SIDE = 1024,
   SECTION_SIZE = 16,
   SECTION_VOLUME = 16 * 16 * 16,
   WORLD_MIN_SECTION_Y = -2,
@@ -80,7 +81,8 @@ typedef struct {
 } Chunk;
 
 /* Owning type: initialize to zero, destroy explicitly, and do not copy by value.
-   Missing sections read as air. Horizontal side is 1..192; voxel Y is [-32,32).
+   Missing sections read as air. Horizontal side is 1..WORLD_MAX_BLOCKS_PER_SIDE;
+   voxel Y is [-32,32).
    Empty allocated sections remain owned retirement markers until destruction;
    sectionCount includes them. Renderer sync must retire their GPU geometry.
    Voxel coordinates are signed; render positions use origin + voxel * blockSize. */
@@ -117,7 +119,7 @@ int voxel_local_coord(int coordinate);
 int block_is_solid(BlockType type);
 int block_face_visible(BlockType type, BlockType neighbor);
 /* Initialization/generation replace an existing initialized world only on success.
-   side is 1..192; blockSize must be finite and >= 0.001 world units, and
+   side is 1..WORLD_MAX_BLOCKS_PER_SIDE; blockSize must be finite and >= 0.001 world units, and
    individual cells must be representable by floats throughout the world.
    center.x/z center the footprint; center.y is the voxel Y=0 reference plane. */
 int world_init(World *world, int side, Vec3 center, float blockSize);

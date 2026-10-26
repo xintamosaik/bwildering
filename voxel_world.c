@@ -50,7 +50,7 @@ int world_init(World *world, int side, Vec3 center, float size) {
 int world_init_region(World *world, int minX, int minZ, int side, Vec3 origin,
                        float size) {
   /* Validate in wide arithmetic before endpoint, chunk or neighbour arithmetic. */
-  if (!world || side <= 0 || side > PLATFORM_BLOCKS_PER_SIDE ||
+  if (!world || side <= 0 || side > WORLD_MAX_BLOCKS_PER_SIDE ||
       minX < WORLD_COORD_MIN || minZ < WORLD_COORD_MIN ||
       (int64_t)minX + side - 1 > WORLD_COORD_MAX ||
       (int64_t)minZ + side - 1 > WORLD_COORD_MAX || !isfinite(size) ||

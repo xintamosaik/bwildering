@@ -277,7 +277,8 @@ int main(void) {
   glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
   Application application;
   assert(application_init(&application));
-  assert(application.world.voxelCount > 0 && application.renderer.meshCount == 576);
+  assert(application.world.voxelCount > 0 && application.renderer.meshCount > 0);
+  assert(application.world.blocksPerSide == PLATFORM_BLOCKS_PER_SIDE);
   float spawnY = world_surface_height(&application.world, application.player.position.x,
                                       application.player.position.z);
   assert(isfinite(spawnY) && application.player.position.y == spawnY);

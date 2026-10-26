@@ -227,7 +227,7 @@ static int renderer_init(Renderer *renderer) {
   glBindVertexArray(renderer->textVao);
   glBindBuffer(GL_ARRAY_BUFFER, renderer->textVbo);
   glBufferData(GL_ARRAY_BUFFER,
-               FPS_TEXT_MAX_CHARS * 5 * 7 * 6 * 3 * sizeof(float), NULL,
+               (GLsizeiptr)(FPS_TEXT_MAX_CHARS * 5 * 7 * 6 * 3 * sizeof(float)), NULL,
                GL_DYNAMIC_DRAW);
   glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float),
                         (void *)0);
@@ -402,14 +402,16 @@ static void render_fps(const Renderer *renderer, int fps) {
   int vertexCount = build_text_vertices(
       text, 1.0f, renderer->framebufferWidth, renderer->framebufferHeight,
       vertices);
-  glBufferSubData(GL_ARRAY_BUFFER, 0, vertexCount * 3 * sizeof(float), vertices);
+  glBufferSubData(GL_ARRAY_BUFFER, 0,
+                  (GLsizeiptr)(vertexCount * 3 * sizeof(float)), vertices);
   glUniform3f(renderer->colorLocation, 0.02f, 0.03f, 0.02f);
   glDrawArrays(GL_TRIANGLES, 0, vertexCount);
 
   vertexCount = build_text_vertices(
       text, 0.0f, renderer->framebufferWidth, renderer->framebufferHeight,
       vertices);
-  glBufferSubData(GL_ARRAY_BUFFER, 0, vertexCount * 3 * sizeof(float), vertices);
+  glBufferSubData(GL_ARRAY_BUFFER, 0,
+                  (GLsizeiptr)(vertexCount * 3 * sizeof(float)), vertices);
   glUniform3f(renderer->colorLocation, 0.95f, 0.98f, 0.92f);
   glDrawArrays(GL_TRIANGLES, 0, vertexCount);
 

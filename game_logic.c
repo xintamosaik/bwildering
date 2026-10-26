@@ -5,11 +5,12 @@
 #include <stdlib.h>
 
 static const float GRAVITY = 9.81f;
+/* Muted earth tones: olive, warm stone, dusty teal, and ochre. */
 static const Vec3 BLOCK_TYPE_COLORS[BLOCK_TYPE_COUNT] = {
-  [BLOCK_TYPE_GRASS] = {.x = 0.38f, .y = 0.62f, .z = 0.42f},
-  [BLOCK_TYPE_STONE] = {.x = 0.55f, .y = 0.58f, .z = 0.60f},
-  [BLOCK_TYPE_WATER] = {.x = 0.20f, .y = 0.48f, .z = 0.78f},
-  [BLOCK_TYPE_SAND] = {.x = 0.86f, .y = 0.72f, .z = 0.42f},
+  [BLOCK_TYPE_GRASS] = {.x = 0.46f, .y = 0.52f, .z = 0.38f},
+  [BLOCK_TYPE_STONE] = {.x = 0.53f, .y = 0.51f, .z = 0.48f},
+  [BLOCK_TYPE_WATER] = {.x = 0.36f, .y = 0.50f, .z = 0.52f},
+  [BLOCK_TYPE_SAND] = {.x = 0.68f, .y = 0.60f, .z = 0.44f},
 };
 
 static uint32_t next_random(uint32_t *state) {

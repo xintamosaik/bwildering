@@ -296,7 +296,7 @@ static int renderer_upload_platform_mesh(Renderer *renderer,
   return 1;
 }
 
-static const unsigned char *font_glyph(char character) {
+static const unsigned char *font_glyph(const char character) {
   static const unsigned char glyph0[7] = {0x0e, 0x11, 0x13, 0x15,
                                           0x19, 0x11, 0x0e};
   static const unsigned char glyph1[7] = {0x04, 0x0c, 0x04, 0x04,
@@ -346,7 +346,7 @@ static const unsigned char *font_glyph(char character) {
 }
 
 static int build_text_vertices(const char *text, const float shadowOffset,
-                               int framebufferWidth, const int framebufferHeight,
+                               const int framebufferWidth, const int framebufferHeight,
                                float *vertices) {
   int vertexCount = 0;
 

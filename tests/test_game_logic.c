@@ -56,10 +56,10 @@ static void test_matrix_multiply_identity(void) {
 static void test_block_type_palette(void) {
   Vec3 colors[BLOCK_TYPE_COUNT];
   const Vec3 expectedColors[BLOCK_TYPE_COUNT] = {
-      [BLOCK_TYPE_GRASS] = {0.38f, 0.62f, 0.42f},
-      [BLOCK_TYPE_STONE] = {0.55f, 0.58f, 0.60f},
-      [BLOCK_TYPE_WATER] = {0.20f, 0.48f, 0.78f},
-      [BLOCK_TYPE_SAND] = {0.86f, 0.72f, 0.42f},
+      [BLOCK_TYPE_GRASS] = {.x = 0.46f, .y = 0.52f, .z = 0.38f},
+      [BLOCK_TYPE_STONE] = {.x = 0.53f, .y = 0.51f, .z = 0.48f},
+      [BLOCK_TYPE_WATER] = {.x = 0.36f, .y = 0.50f, .z = 0.52f},
+      [BLOCK_TYPE_SAND] = {.x = 0.68f, .y = 0.60f, .z = 0.44f},
   };
   for (int type = BLOCK_TYPE_GRASS; type < BLOCK_TYPE_COUNT; type++) {
     assert(block_type_color((BlockType)type, &colors[type]));
@@ -92,7 +92,7 @@ static void test_platform_generates_seeded_block_types(void) {
   World differentSeed = {0};
   World zeroSeed = {0};
   World sameZeroSeed = {0};
-  Vec3 center = {0.0f, 0.0f, 0.0f};
+  const Vec3 center = {.x = 0.0f, .y = 0.0f, .z = 0.0f};
   assert(create_platform(&first, 8, center, 1.0f, 42));
   assert(create_platform(&sameSeed, 8, center, 1.0f, 42));
   assert(create_platform(&differentSeed, 8, center, 1.0f, 43));
@@ -118,8 +118,8 @@ static void test_platform_generates_seeded_block_types(void) {
     assert(first.blocks[i].type < BLOCK_TYPE_COUNT);
     typeCounts[first.blocks[i].type]++;
 
-    int x = i / 8;
-    int z = i % 8;
+    const int x = i / 8;
+    const int z = i % 8;
     if (x + 1 < 8 &&
         first.blocks[i].type == first.blocks[i + 8].type)
       matchingNeighbors++;

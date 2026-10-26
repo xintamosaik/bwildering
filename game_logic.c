@@ -133,7 +133,7 @@ void mat4_lookat(Vec3 eye, Vec3 target, Vec3 up, mat4 dest) {
   dest[14] = vec3_dot(f, eye);
 }
 
-void mat4_multiply(mat4 a, mat4 b, mat4 dest) {
+void mat4_multiply(const mat4 a, const mat4 b, mat4 dest) {
   mat4 res;
   for (int i = 0; i < 4; i++) {
     for (int j = 0; j < 4; j++) {

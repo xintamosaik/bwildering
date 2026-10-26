@@ -82,10 +82,10 @@ static void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
 
 static PlayerInput read_player_input(GLFWwindow *window) {
   PlayerInput input = {0};
-  input.forward = (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) -
-                  (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS);
-  input.strafe = (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) -
-                 (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS);
+  input.forward = (float)((glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) -
+                          (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS));
+  input.strafe = (float)((glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) -
+                         (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS));
   input.jump = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
   return input;
 }
@@ -124,7 +124,7 @@ static void update_camera(Camera *camera, MouseInput *input) {
 static GLuint compile_shader(GLenum type, const char *source) {
   GLuint shader = glCreateShader(type);
   if (shader == 0) {
-    fprintf(stderr, "Failed to create shader\n");
+    fprintf(stderr, "Fdailed to create shader\n");
     return 0;
   }
 
@@ -216,12 +216,14 @@ static int renderer_init(Renderer *renderer) {
   *renderer = (Renderer){0};
   renderer->program = create_shader_program();
   if (renderer->program == 0)
-    goto fail;
+    return 0;
 
   glGenVertexArrays(1, &renderer->textVao);
   glGenBuffers(1, &renderer->textVbo);
-  if (renderer->textVao == 0 || renderer->textVbo == 0)
-    goto fail;
+  if (renderer->textVao == 0 || renderer->textVbo == 0) {
+    renderer_destroy(renderer);
+    return 0;
+  }
   glBindVertexArray(renderer->textVao);
   glBindBuffer(GL_ARRAY_BUFFER, renderer->textVbo);
   glBufferData(GL_ARRAY_BUFFER,
@@ -234,19 +236,17 @@ static int renderer_init(Renderer *renderer) {
   renderer->mvpLocation = glGetUniformLocation(renderer->program, "mvp");
   if (renderer->mvpLocation < 0) {
     fprintf(stderr, "Failed to locate mvp uniform\n");
-    goto fail;
+    renderer_destroy(renderer);
+    return 0;
   }
   renderer->colorLocation = glGetUniformLocation(renderer->program, "color");
   if (renderer->colorLocation < 0) {
     fprintf(stderr, "Failed to locate color uniform\n");
-    goto fail;
+    renderer_destroy(renderer);
+    return 0;
   }
 
   return 1;
-
-fail:
-  renderer_destroy(renderer);
-  return 0;
 }
 
 static int renderer_upload_platform_mesh(Renderer *renderer,
@@ -263,8 +263,12 @@ static int renderer_upload_platform_mesh(Renderer *renderer,
 
   glGenVertexArrays(1, &renderer->platformVao);
   glGenBuffers(1, &renderer->platformVbo);
-  if (renderer->platformVao == 0 || renderer->platformVbo == 0)
-    goto fail;
+  if (renderer->platformVao == 0 || renderer->platformVbo == 0) {
+    renderer->platformVao = 0;
+    renderer->platformVbo = 0;
+    fprintf(stderr, "Failed to upload the platform surface mesh\n");
+    return 0;
+  }
 
   glBindVertexArray(renderer->platformVao);
   glBindBuffer(GL_ARRAY_BUFFER, renderer->platformVbo);
@@ -274,8 +278,14 @@ static int renderer_upload_platform_mesh(Renderer *renderer,
   glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(SurfaceVertex),
                         (void *)0);
   glEnableVertexAttribArray(0);
-  if (glGetError() != GL_NO_ERROR)
-    goto fail;
+  if (glGetError() != GL_NO_ERROR) {
+    glDeleteVertexArrays(1, &renderer->platformVao);
+    glDeleteBuffers(1, &renderer->platformVbo);
+    renderer->platformVao = 0;
+    renderer->platformVbo = 0;
+    fprintf(stderr, "Failed to upload the platform surface mesh\n");
+    return 0;
+  }
 
   for (int type = 0; type < BLOCK_TYPE_COUNT; type++) {
     renderer->firstVertex[type] = (GLint)mesh->firstVertex[type];
@@ -284,16 +294,6 @@ static int renderer_upload_platform_mesh(Renderer *renderer,
   glBindVertexArray(0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   return 1;
-
-fail:
-  if (renderer->platformVao != 0)
-    glDeleteVertexArrays(1, &renderer->platformVao);
-  if (renderer->platformVbo != 0)
-    glDeleteBuffers(1, &renderer->platformVbo);
-  renderer->platformVao = 0;
-  renderer->platformVbo = 0;
-  fprintf(stderr, "Failed to upload the platform surface mesh\n");
-  return 0;
 }
 
 static const unsigned char *font_glyph(char character) {
@@ -357,23 +357,23 @@ static int build_text_vertices(const char *text, float shadowOffset,
     const unsigned char *glyph = font_glyph(text[characterIndex]);
     if (glyph == NULL)
       continue;
-    float originX = 16.0f + characterIndex * 18.0f + shadowOffset;
+    float originX = 16.0f + (float)characterIndex * 18.0f + shadowOffset;
     float originY = 16.0f + shadowOffset;
     for (int row = 0; row < 7; row++) {
       for (int column = 0; column < 5; column++) {
         if ((glyph[row] & (1u << (4 - column))) == 0)
           continue;
-        float left = originX + column * cellSize;
-        float top = originY + row * cellSize;
+        float left = originX + (float)column * cellSize;
+        float top = originY + (float)row * cellSize;
         float right = left + pixelSize;
         float bottom = top + pixelSize;
         const float quad[6][2] = {{left, top}, {right, top}, {right, bottom},
                                   {left, top}, {right, bottom}, {left, bottom}};
         for (int vertex = 0; vertex < 6; vertex++) {
           vertices[vertexCount * 3] =
-              2.0f * quad[vertex][0] / framebufferWidth - 1.0f;
+              2.0f * quad[vertex][0] / (float)framebufferWidth - 1.0f;
           vertices[vertexCount * 3 + 1] =
-              1.0f - 2.0f * quad[vertex][1] / framebufferHeight;
+              1.0f - 2.0f * quad[vertex][1] / (float)framebufferHeight;
           vertices[vertexCount * 3 + 2] = 0.0f;
           vertexCount++;
         }
@@ -515,7 +515,8 @@ static int application_init(Application *application) {
       glfwCreateWindow(800, 600, "bwildering 0.1", NULL, NULL);
   if (application->window == NULL) {
     fprintf(stderr, "Failed to create GLFW window\n");
-    goto fail;
+    application_shutdown(application);
+    return 0;
   }
   glfwMakeContextCurrent(application->window);
   // Keep VSync off while measuring the uncapped development baseline.
@@ -530,16 +531,19 @@ static int application_init(Application *application) {
   glewExperimental = GL_TRUE;
   GLenum glewStatus = glewInit();
   if (glewStatus != GLEW_OK) {
-    fprintf(stderr, "Failed to initialize GLEW: %s\n",
+    fprintf(stderr, "Failed to initialize GLEW: %p\n",
             glewGetErrorString(glewStatus));
-    goto fail;
+    application_shutdown(application);
+    return 0;
   }
 
   glEnable(GL_DEPTH_TEST);
   glEnable(GL_MULTISAMPLE);
 
-  if (!renderer_init(&application->renderer))
-    goto fail;
+  if (!renderer_init(&application->renderer)) {
+    application_shutdown(application);
+    return 0;
+  }
   application->rendererInitialized = 1;
 
   glfwGetFramebufferSize(application->window,
@@ -554,27 +558,27 @@ static int application_init(Application *application) {
                        BLOCK_SIZE, WORLD_SEED)) {
     fprintf(stderr, "Failed to create platform: world capacity is %d blocks\n",
             WORLD_MAX_BLOCKS);
-    goto fail;
+    application_shutdown(application);
+    return 0;
   }
   PlatformSurfaceMesh platformMesh = {0};
   if (!platform_surface_mesh_build(&application->world,
                                    PLATFORM_BLOCKS_PER_SIDE, &platformMesh)) {
     fprintf(stderr, "Failed to build the platform surface mesh\n");
-    goto fail;
+    application_shutdown(application);
+    return 0;
   }
   int meshUploaded =
       renderer_upload_platform_mesh(&application->renderer, &platformMesh);
   platform_surface_mesh_destroy(&platformMesh);
-  if (!meshUploaded)
-    goto fail;
+  if (!meshUploaded) {
+    application_shutdown(application);
+    return 0;
+  }
 
   application->lastFrame = glfwGetTime();
   application->fpsWindowStart = application->lastFrame;
   return 1;
-
-fail:
-  application_shutdown(application);
-  return 0;
 }
 
 static void application_update(Application *application) {

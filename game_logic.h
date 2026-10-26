@@ -89,14 +89,25 @@ enum {
   WORLD_COORD_MAX = 1048575
 };
 
+typedef enum { SECTION_EMPTY, SECTION_UNIFORM, SECTION_DENSE } SectionStorage;
+
+/* Owned by its chunk; blocks is owned only by this section, never shared. */
 typedef struct Subchunk {
   int meshCandidate; /* Conservative surface/edge exposure, or an edited section. */
   int sectionY;
   struct Subchunk *next;
-  uint8_t blocks[SECTION_VOLUME];
+  SectionStorage storage;
+  uint8_t material; /* EMPTY for empty sections; solid for uniform sections. */
+  uint8_t *blocks; /* Owned SECTION_VOLUME bytes only in SECTION_DENSE. */
   size_t voxelCount;
   int dirty;
 } Subchunk;
+
+/* index must be in [0, SECTION_VOLUME). Missing sections read as air. */
+static inline BlockType section_block(const Subchunk *section, size_t index) {
+  return !section || section->storage == SECTION_EMPTY ? BLOCK_TYPE_EMPTY :
+      (BlockType)(section->storage == SECTION_UNIFORM ? section->material : section->blocks[index]);
+}
 
 typedef struct {
   int x, z;
@@ -171,6 +182,7 @@ Subchunk *world_section_mut(World *world, int chunkX, int sectionY, int chunkZ);
 BlockType world_get_block(const World *world, int x, int y, int z);
 /* Returns success, including identical writes; rejects invalid types/bounds.
    Writes allocate missing sections lazily, initialized to air or seeded terrain.
+   Allocation failure leaves section ownership, values and metadata unchanged.
    Successful edits update CPU data/counts immediately, so collision sees them
    before rendering catches up. Identical writes leave dirty flags unchanged.
    Edits dirty this section and existing sections sharing an affected face;

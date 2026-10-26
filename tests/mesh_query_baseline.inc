@@ -23,7 +23,7 @@ static int baseline_mesh_build(const World *world, int cx, int sy, int cz, Secti
   if (!section || section->voxelCount == 0 || (!section->meshCandidate && !editedNeighbor)) {
     section_mesh_destroy(mesh);
     *mesh = result;
-    free(temporary);
+    section_destroy(temporary);
     return 1;
   }
   const int dx[6] = {-1, 1, 0, 0, 0, 0}, dy[6] = {0, 0, -1, 1, 0, 0},
@@ -44,12 +44,12 @@ static int baseline_mesh_build(const World *world, int cx, int sy, int cz, Secti
     for (int x = 0; x < 16; x++)
       for (int y = 0; y < 16; y++)
         for (int z = 0; z < 16; z++) {
-          BlockType type = (BlockType)section->blocks[(x * 16 + y) * 16 + z];
+          BlockType type = section_block(section, (x * 16 + y) * 16 + z);
           if (type == BLOCK_TYPE_EMPTY)
             continue;
           if (!block_is_solid(type)) {
             section_mesh_destroy(&result);
-            free(temporary);
+            section_destroy(temporary);
             return 0;
           }
           int wx = cx * 16 + x, wy = sy * 16 + y, wz = cz * 16 + z;
@@ -82,13 +82,13 @@ static int baseline_mesh_build(const World *world, int cx, int sy, int cz, Secti
                             ? malloc(result.vertexCount * sizeof(*result.vertices))
                             : NULL;
       if (result.vertexCount && !result.vertices) {
-        free(temporary);
+        section_destroy(temporary);
         return 0;
       }
     }
   }
   section_mesh_destroy(mesh);
   *mesh = result;
-  free(temporary);
+  section_destroy(temporary);
   return 1;
 }

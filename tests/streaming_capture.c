@@ -102,7 +102,7 @@ int main(int argc, char **argv) {
     struct rusage usage;
     assert(getrusage(RUSAGE_SELF, &usage) == 0);
     size_t owned = sizeof(a.world) + a.world.chunkCount * sizeof(Chunk) +
-        a.world.sectionCount * sizeof(Subchunk) + sizeof(a.renderer) +
+        a.residentVoxelBytes + sizeof(a.renderer) +
         a.renderer.meshCount * sizeof(SectionGpuMesh) +
         a.renderer.visibleMeshCapacity * sizeof(size_t) + a.renderer.drawMeshCapacity * sizeof(size_t);
     FrameWork *f = &a.performance.frame;

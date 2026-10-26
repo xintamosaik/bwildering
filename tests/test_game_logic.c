@@ -775,7 +775,7 @@ static void test_section_access(void) {
         assert(!world_section(readWorld, x, y, z)->dirty);
         assert(world_set_block(&world, x * SECTION_SIZE, y * SECTION_SIZE,
                                z * SECTION_SIZE, BLOCK_TYPE_GRASS));
-        assert(section->dirty && section->blocks[0] == BLOCK_TYPE_GRASS);
+        assert(section->dirty && section_block(section, 0) == BLOCK_TYPE_GRASS);
         assert(world_section(readWorld, x, y, z) == mutableSection);
       }
   assert_missing_section(&world, 0, 1, 0);
@@ -1816,7 +1816,7 @@ static void test_chunk_lifecycle_invariants(void) {
         sections++;
         size_t occupied = 0;
         for (size_t b = 0; b < SECTION_VOLUME; b++)
-          occupied += s->blocks[b] != BLOCK_TYPE_EMPTY;
+          occupied += section_block(s, b) != BLOCK_TYPE_EMPTY;
         assert(s->voxelCount == occupied);
         voxels += occupied;
       }
@@ -1854,7 +1854,88 @@ static void test_residency_departing_strips(void) {
   world_destroy(&world);
 }
 
+/* Compare compressed reads and exact geometry to independently forced dense
+   storage, including cached neighbors, signed coordinates and partial bounds. */
+static void test_section_storage(void) {
+  World world = {0}, dense = {0};
+  assert(create_terrain_region(&world, -17, -17, 49, (Vec3){2, 3, 4}, 1, 1));
+  assert(create_terrain_region(&dense, -17, -17, 49, (Vec3){2, 3, 4}, 1, 1));
+  size_t uniform = 0, mixed = 0;
+  for (size_t c = 0; c < dense.chunkCount; c++) {
+    for (Subchunk *s = dense.chunks[c].sections; s; s = s->next) {
+      if (s->storage == SECTION_DENSE) { mixed++; continue; }
+      assert(!s->blocks);
+      uniform += s->storage == SECTION_UNIFORM;
+      s->blocks = malloc(SECTION_VOLUME);
+      assert(s->blocks);
+      memset(s->blocks, s->storage == SECTION_EMPTY ? BLOCK_TYPE_EMPTY : s->material,
+             SECTION_VOLUME);
+      s->storage = SECTION_DENSE;
+    }
+  }
+  assert(uniform && mixed);
+  compare_region(&world, &dense);
+  for (size_t c = 0; c < world.chunkCount; c++) {
+    const Chunk *chunk = &world.chunks[c];
+    for (const Subchunk *s = chunk->sections; s; s = s->next) {
+      SectionMesh a = {0}, b = {0};
+      assert(section_mesh_build(&world, chunk->x, s->sectionY, chunk->z, &a));
+      assert(section_mesh_build(&dense, chunk->x, s->sectionY, chunk->z, &b));
+      assert(a.vertexCount == b.vertexCount);
+      assert(!memcmp(a.firstVertex, b.firstVertex, sizeof(a.firstVertex)));
+      assert(!memcmp(a.typeVertexCount, b.typeVertexCount, sizeof(a.typeVertexCount)));
+      if (a.vertexCount)
+        assert(!memcmp(a.vertices, b.vertices, a.vertexCount * sizeof(*a.vertices)));
+      section_mesh_destroy(&a);
+      section_mesh_destroy(&b);
+    }
+  }
+  world_destroy(&world);
+  world_destroy(&dense);
+
+  /* Every material can compact, expand on a removal or material replacement,
+     and compact back, retaining section identity and correct dirty metadata. */
+  assert(world_init_region(&world, -16, -16, 16, (Vec3){0}, 1));
+  for (int material = 0; material < BLOCK_TYPE_COUNT; material++) {
+    for (int x = -16; x < 0; x++)
+      for (int y = -16; y < 0; y++)
+        for (int z = -16; z < 0; z++)
+          assert(world_set_block(&world, x, y, z, (BlockType)material));
+    Subchunk *s = world_section_mut(&world, -1, -1, -1);
+    assert(s && s->storage == SECTION_UNIFORM && !s->blocks);
+    assert(s->material == material && s->voxelCount == SECTION_VOLUME);
+    s->dirty = 0;
+    assert(world_set_block(&world, -16, -16, -16, (BlockType)material));
+    assert(!s->dirty && s->storage == SECTION_UNIFORM);
+    BlockType replacements[] = {BLOCK_TYPE_EMPTY, (BlockType)((material + 1) % BLOCK_TYPE_COUNT)};
+    for (size_t r = 0; r < 2; r++) {
+      assert(world_set_block(&world, -16, -16, -16, replacements[r]));
+      assert(s == world_section(&world, -1, -1, -1));
+      assert(s->storage == SECTION_DENSE && s->blocks && s->dirty && s->meshCandidate);
+      for (size_t i = 0; i < SECTION_VOLUME; i++)
+        assert(section_block(s, i) == (i ? (BlockType)material : replacements[r]));
+      assert(world.voxelCount == SECTION_VOLUME - (r == 0));
+      assert(world_set_block(&world, -16, -16, -16, (BlockType)material));
+      assert(s->storage == SECTION_UNIFORM && !s->blocks);
+      assert(world.voxelCount == SECTION_VOLUME);
+    }
+  }
+  Subchunk *s = world_section_mut(&world, -1, -1, -1);
+  for (int x = -16; x < 0; x++)
+    for (int y = -16; y < 0; y++)
+      for (int z = -16; z < 0; z++)
+        assert(world_set_block(&world, x, y, z, BLOCK_TYPE_EMPTY));
+  assert(world.sectionCount == 1 && !world.voxelCount);
+  assert(s->storage == SECTION_EMPTY && !s->blocks && s->dirty);
+  assert(world_set_block(&world, -1, -1, -1, BLOCK_TYPE_GRASS));
+  assert(s->storage == SECTION_DENSE && s->voxelCount == 1);
+  assert(world_get_block(&world, -1, -1, -1) == BLOCK_TYPE_GRASS);
+  assert(world_get_block(&world, -16, -16, -16) == BLOCK_TYPE_EMPTY);
+  world_destroy(&world);
+}
+
 int main(void) {
+  test_section_storage();
   test_vector_normalization();
   test_matrix_multiply_identity();
   test_block_type_palette();

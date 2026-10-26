@@ -83,12 +83,18 @@ static void test_materialization_preserves_existing_ownership(void) {
     World original = world; /* Borrowed snapshot, never destroyed. */
     Chunk *chunks = malloc(world.chunkCount * sizeof(*chunks));
     Subchunk *sections = malloc(world.sectionCount * sizeof(*sections));
-    assert(chunks && sections);
+    uint8_t *payloads = malloc(world.sectionCount * SECTION_VOLUME);
+    assert(chunks && sections && payloads);
     memcpy(chunks, world.chunks, world.chunkCount * sizeof(*chunks));
     size_t n = 0;
     for (size_t c = 0; c < world.chunkCount; c++)
       for (const Subchunk *s = world.chunks[c].sections; s; s = s->next)
-        sections[n++] = *s;
+        {
+          sections[n] = *s;
+          for (size_t b = 0; b < SECTION_VOLUME; b++)
+            payloads[n * SECTION_VOLUME + b] = (uint8_t)section_block(s, b);
+          n++;
+        }
     fail_after = (int)failure;
     assert(!world_materialize_chunk(&world, 0, 0));
     fail_after = -1;
@@ -109,7 +115,10 @@ static void test_materialization_preserves_existing_ownership(void) {
         assert(s->next == saved->next && s->sectionY == saved->sectionY);
         assert(s->dirty == saved->dirty && s->meshCandidate == saved->meshCandidate);
         assert(s->voxelCount == saved->voxelCount);
-        assert(!memcmp(s->blocks, saved->blocks, sizeof(s->blocks)));
+        assert(s->storage == saved->storage && s->material == saved->material);
+        assert(s->blocks == saved->blocks);
+        for (size_t b = 0; b < SECTION_VOLUME; b++)
+          assert(section_block(s, b) == payloads[(n - 1) * SECTION_VOLUME + b]);
       }
     }
     assert_world_equal(&world, &reference);
@@ -117,6 +126,7 @@ static void test_materialization_preserves_existing_ownership(void) {
     assert_world_equal(&world, &reference);
     free(chunks);
     free(sections);
+    free(payloads);
     world_destroy(&world);
   }
   world_destroy(&reference);
@@ -154,7 +164,66 @@ static void test_regenerated_mesh_failure_retry(void) {
   world_destroy(&world);
 }
 
+static void test_storage_expansion_failure(void) {
+  for (int mode = 0; mode < 4; mode++) {
+    World world = {0};
+    assert(create_terrain_streamed(&world, 32, (Vec3){0}, 1, 1));
+    if (mode < 2) assert(world_materialize_chunk(&world, 0, 0));
+    int y = mode == 0 || mode == 2 ? TERRAIN_BASE_Y : 416;
+    if (mode == 1) {
+      assert(world_set_block(&world, 0, y, 0, BLOCK_TYPE_SNOW));
+      assert(world_set_block(&world, 0, y, 0, BLOCK_TYPE_EMPTY));
+    }
+    Subchunk *s = world_section_mut(&world, 0, voxel_section_coord(y), 0);
+    if (s) {
+      assert(s->storage == (mode == 0 ? SECTION_UNIFORM : SECTION_EMPTY));
+      s->dirty = s->meshCandidate = 0;
+    }
+    /* Neighbor flags must not change when a boundary edit fails. */
+    assert(world_set_block(&world, -1, y, 0, BLOCK_TYPE_SNOW));
+    Subchunk *neighbor = world_section_mut(&world, -1, voxel_section_coord(y), 0);
+    neighbor->dirty = neighbor->meshCandidate = 0;
+    Chunk *chunk = &world.chunks[(0 - world.minChunkX) * world.chunksPerSide - world.minChunkZ];
+    int edited = chunk->edited;
+    Subchunk saved = s ? *s : (Subchunk){0};
+    Subchunk *head = chunk->sections;
+    size_t sections = world.sectionCount, voxels = world.voxelCount;
+    /* Existing uniform/empty: one payload allocation. Missing procedural/air:
+       section node succeeds, payload fails on the second attempt. */
+    int allocations = s ? 1 : 2;
+    BlockType before[SECTION_VOLUME];
+    for (int x = 0; x < 16; x++)
+      for (int ly = 0; ly < 16; ly++)
+        for (int z = 0; z < 16; z++)
+          before[(x * 16 + ly) * 16 + z] = world_get_block(&world, x, y + ly, z);
+    for (int failure = 0; failure < allocations; failure++) {
+      fail_after = failure;
+      assert(!world_set_block(&world, 0, y, 0, BLOCK_TYPE_GRASS));
+      fail_after = -1;
+      assert(world.sectionCount == sections && world.voxelCount == voxels);
+      assert(chunk->sections == head && chunk->edited == edited);
+      assert(!neighbor->dirty && !neighbor->meshCandidate);
+      assert(world_section(&world, 0, voxel_section_coord(y), 0) == s);
+      if (s) {
+        assert(s->storage == saved.storage && s->material == saved.material);
+        assert(s->blocks == saved.blocks && s->next == saved.next);
+        assert(s->dirty == saved.dirty && s->meshCandidate == saved.meshCandidate);
+        assert(s->voxelCount == saved.voxelCount && s->sectionY == saved.sectionY);
+      }
+      for (int x = 0; x < 16; x++)
+        for (int ly = 0; ly < 16; ly++)
+          for (int z = 0; z < 16; z++)
+            assert(world_get_block(&world, x, y + ly, z) == before[(x * 16 + ly) * 16 + z]);
+    }
+    assert(world_set_block(&world, 0, y, 0, BLOCK_TYPE_GRASS));
+    assert(world_get_block(&world, 0, y, 0) == BLOCK_TYPE_GRASS);
+    assert(neighbor->dirty && neighbor->meshCandidate);
+    world_destroy(&world);
+  }
+}
+
 int main(void) {
+  test_storage_expansion_failure();
   test_materialization_preserves_existing_ownership();
   test_regenerated_mesh_failure_retry();
   World world = {0};

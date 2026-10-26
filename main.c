@@ -57,7 +57,7 @@ typedef struct {
   Renderer renderer;
   World world;
   Performance performance;
-  size_t residentChunks, editedChunks, dirtySections, gpuBytes;
+  size_t residentChunks, editedChunks, dirtySections, gpuBytes, residentVoxelBytes;
   double worldMetadataSeconds, startupSeconds;
   double rawFrame;
   double lastFrame;
@@ -1023,11 +1023,14 @@ static void framebuffer_size_callback(GLFWwindow *window, const int width,
 /* Expensive metadata scans happen only at explicit capture/window boundaries. */
 static void performance_snapshot(Application *a) {
   a->residentChunks = a->editedChunks = a->dirtySections = a->gpuBytes = 0;
+  a->residentVoxelBytes = 0;
   for (size_t c = 0; c < a->world.chunkCount; c++) {
     const Chunk *chunk = &a->world.chunks[c];
     int resident = chunk->terrainReady;
     a->editedChunks += chunk->edited != 0;
     for (const Subchunk *section = chunk->sections; section; section = section->next) {
+      a->residentVoxelBytes += sizeof(*section) +
+          (section->storage == SECTION_DENSE ? SECTION_VOLUME : 0);
       resident |= section != NULL;
       a->dirtySections += section && section->dirty;
     }
@@ -1065,7 +1068,7 @@ static void performance_report(Application *a, const char *phase) {
       a->editedChunks, a->dirtySections, a->renderer.visibleMeshCount,
       sizeof(World) + a->world.chunkCount * sizeof(Chunk),
       sizeof(Renderer) + a->renderer.meshCount * sizeof(SectionGpuMesh),
-      a->world.sectionCount * sizeof(Subchunk),
+      a->residentVoxelBytes,
       a->renderer.visibleMeshCapacity * sizeof(size_t),
       a->renderer.drawMeshCapacity * sizeof(size_t), p->total.peakMeshBytes,
       a->gpuBytes, a->worldMetadataSeconds*1000, a->renderer.metadataSeconds*1000,

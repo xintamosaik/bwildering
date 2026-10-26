@@ -1,0 +1,94 @@
+# Test design
+
+Tests should state the behaviour they protect and tolerate changes that preserve it.
+Grey-box tests are useful here: inspecting state is appropriate when ownership,
+invalidation, or recovery is the behaviour under test.
+
+| Area | Assertions to use |
+| --- | --- |
+| World size | Test the smallest supported size, the documented maximum, and the first invalid sizes. Rejected replacement must preserve the old world. Keep these separate from the default gameplay size. |
+| Application startup | Check configured bounds, safe spawn, grounding/jumping, and visible terrain. Mesh-slot counts do not establish that terrain renders. |
+| Terrain generation | Check same-seed repeatability, different-seed variation, continuous regions, filled columns, valid materials, and non-flat hills. Check exposed mesh surface area rather than a fixed vertex total. Exact hashes would impose a separate terrain-format compatibility requirement that this game does not currently have. |
+| Palette | Check valid, distinct colours and invalid-input behaviour. Exact RGB values are an art choice. |
+| Meshing | Use small, explicitly constructed shapes for exact geometry assertions. Counts such as 36 vertices for one cube belong here, rather than in application smoke tests. |
+| Dirty sections | Check the identities of affected sections, including unaffected neighbours and identical writes. The right number of wrong neighbours is still a bug. |
+| Allocation failure | Discover allocation points from a successful run. Each injected failure must leave either the complete new world or the intact old world. Check contents as well as transactional ownership. |
+| Menu interaction | Find the displayed control by label, then dispatch a real mouse callback at its position. Exercise different window sizes and pixel densities. Keep reachable terrain in the fixture so leaked gameplay clicks would change it. |
+| Pausing | Compare gameplay values explicitly, rather than raw struct bytes. Verify frozen movement/view, input isolation, and resumed movement. |
+| Rendering | Inspect depth coverage to distinguish geometry from a coloured background. Compare views during movement/jumping and after landing, without storing driver-specific screenshots. |
+| Streaming | Compare procedural reads and meshes with fully generated terrain. Verify edits made before materialization, eviction/regeneration, revisits, allocation-failure retries, and bounded residency as the view moves or shrinks. |
+
+Named fixture sizes, such as the 192-block generator scenario, are independent of
+the game's default world size. They should remain fixed when that default changes.
+Movement speeds, jump envelopes, crouch offsets, section boundaries, and mesh
+formats are explicit behaviour or focused component contracts; avoid removing
+those assertions just to make a change pass.
+
+`test_hidden_section_neighbor_edits` compares optimized meshes with an independent
+voxel-face enumerator before removal, after exposure and after restoration. It
+checks face positions, outward winding and every material across all six section
+boundaries at negative and nonnegative Y. Eager and streamed fixtures cover both
+resident neighbours and edits before materialization, with exact dirty-section
+identity checks. See [issue 004](../issues/004-mesh-candidate-correctness.md).
+
+`make test` runs logic, allocation-failure, and headless menu interaction tests.
+`make test-renderer` additionally requires an X11 display and OpenGL 3.3 context.
+`make test-sanitize` runs the non-graphical suites with ASan and UBSan. Environments
+that cannot run LeakSanitizer under tracing can use
+`ASAN_OPTIONS=detect_leaks=0 make test-sanitize`; this does not check leaks.
+
+The headless menu suite substitutes window input and time, but calls the real
+application update and callbacks. It does not verify GLFW's delivery of physical
+keyboard/mouse events or the visual appearance of menu text.
+
+`make performance_capture` builds the opt-in scripted performance runner. See
+[the performance note](../performance-note.md) for scenarios,
+controls, metric definitions, captured results and their limits.
+
+`make visibility_capture` builds the opt-in comparison of the original rendering
+loop, the final visibility list with material-first drawing, and section-first
+drawing. It checks exact submitted ranges, triangle counts and depth parity
+before measuring CPU submission and whole-frame distributions. See the
+[visibility experiment](../plans/review-follow-up/visibility-measurements.md)
+for reproduction and results.
+
+`make streaming_capture && ./streaming_capture` runs the fixed-seed travel
+benchmark in a real GL context. It checks a bounded unedited working set and
+reports per-stop CPU/GPU residency, memory, materialization/mesh/upload timings
+and retirements. See [the streaming policy and measurements](../streaming.md).
+
+`./streaming_capture --sync` measures stationary and walking synchronization
+with instrumentation disabled, separating frame-path overhead from cold travel.
+
+Lifecycle invariants are exercised by `test_chunk_lifecycle_invariants` in the
+logic suite, the edited-materialization and regenerated-mesh failure cases in
+`test_allocation_failures`, and `test_streamed_retirement_after_failed_sync` in
+the renderer suite. The fixtures use both edited and unedited columns and compare
+exact block values, mesh vertices and material ranges across departure/revisit.
+
+| Transition | Ownership and dirty-state contract checked |
+| --- | --- |
+| Materialize | Missing CPU sections commit together; existing edits, section links, counts, flags and materialized bounds survive failure. |
+| Edit/rebuild | CPU blocks are authoritative immediately. CPU meshing borrows sections and leaves dirty flags unchanged. Successful GPU upload clears dirty; failed upload preserves old VAO/VBO, buffer bytes and ranges for retry. |
+| Grow renderer storage | Failed metadata growth preserves the record array and live handles. Failed visible-index growth retains its storage and clears submission counts, even if metadata has already committed. |
+| Leave | Unedited CPU columns are released; edited sections and empty edit markers retain their identity. All departing GPU geometry retires, including an old mesh awaiting retry; retained CPU sections become dirty. |
+| Revisit | Unedited cells regenerate from the seed; edits and removals survive. Rebuilt GPU buffer bytes and material ranges match CPU snapshots, and uploaded sections become clean. |
+
+Failures are transactional per chunk materialization or section replacement,
+not per whole renderer pass. Residency retirement and earlier successful uploads
+may commit before a later allocation/upload fails. Run the renderer suite with
+`make test-renderer` to check actual GL ownership and buffer readback; the default
+headless suite checks CPU ownership and regeneration independently.
+
+`make mesh_query_benchmark mesh_query_profile` builds headless mesh-query
+experiments. Run `./mesh_query_benchmark 500` for uninstrumented before/after
+build times and `./mesh_query_profile 50` for query, lookup and column-sampling
+costs/counts. Both compare exact mesh vertices and material ranges against the
+frozen pre-005 mesher. See [mesh-query measurements](../mesh-query-performance.md)
+for fixtures, instrumentation limits and the storage decision.
+
+`make section_storage_benchmark && ./section_storage_benchmark` measures live
+section allocations (including glibc overhead) on three mountainous regions and
+prints generation timings and complete voxel checksums. See
+[section storage](../section-storage.md) for before/after results and transition
+tests.

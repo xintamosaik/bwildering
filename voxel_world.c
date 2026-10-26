@@ -40,13 +40,47 @@ int block_face_visible(BlockType type, BlockType neighbor) {
   return block_is_solid(type) && !block_is_solid(neighbor);
 }
 
+static void section_destroy(Subchunk *section) {
+  if (!section) return;
+  free(section->blocks);
+  free(section);
+}
+
+/* Compact without allocating. Mixed full sections usually differ early. */
+static void section_compact(Subchunk *section) {
+  if (section->storage != SECTION_DENSE) return;
+  uint8_t material = BLOCK_TYPE_EMPTY;
+  if (section->voxelCount) {
+    if (section->voxelCount != SECTION_VOLUME) return;
+    material = section->blocks[0];
+    for (size_t i = 1; i < SECTION_VOLUME; i++)
+      if (section->blocks[i] != material) return;
+  }
+  free(section->blocks);
+  section->blocks = NULL;
+  section->material = material;
+  section->storage = section->voxelCount ? SECTION_UNIFORM : SECTION_EMPTY;
+}
+
+/* Allocate first; callers commit ownership/counts only after success. */
+static int section_expand(Subchunk *section) {
+  if (section->storage == SECTION_DENSE) return 1;
+  uint8_t *blocks = malloc(SECTION_VOLUME);
+  if (!blocks) return 0;
+  memset(blocks, section->storage == SECTION_EMPTY ? BLOCK_TYPE_EMPTY : section->material,
+         SECTION_VOLUME);
+  section->blocks = blocks;
+  section->storage = SECTION_DENSE;
+  return 1;
+}
+
 void world_destroy(World *world) {
   if (!world)
     return;
   for (size_t c = 0; c < world->chunkCount; c++)
     {
       Subchunk *section = world->chunks[c].sections;
-      while (section) { Subchunk *next = section->next; free(section); section = next; }
+      while (section) { Subchunk *next = section->next; section_destroy(section); section = next; }
     }
   free(world->chunks);
   *world = (World){0};
@@ -165,7 +199,7 @@ BlockType world_get_block(const World *world, int x, int y, int z) {
   const Subchunk *section = world_section(world, voxel_section_coord(x), voxel_section_coord(y),
                                     voxel_section_coord(z));
   if (section)
-    return (BlockType)section->blocks[block_index(x, y, z)];
+    return section_block(section, block_index(x, y, z));
   const Chunk *chunk = find_chunk(world, voxel_section_coord(x), voxel_section_coord(z));
   if (world->proceduralTerrain && !chunk->terrainReady &&
       y >= TERRAIN_BASE_Y && y < (WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT) * SECTION_SIZE)
@@ -178,14 +212,13 @@ static Subchunk *terrain_section(const World *world, int cx, int sy, int cz,
   Subchunk *section = malloc(sizeof(*section));
   if (!section)
     return NULL;
-  memset(section->blocks, BLOCK_TYPE_EMPTY, sizeof(section->blocks));
-  section->voxelCount = 0;
-  section->dirty = 1;
-  section->meshCandidate = 1;
-  section->sectionY = sy;
-  section->next = NULL;
+  *section = (Subchunk){.storage = SECTION_EMPTY, .material = BLOCK_TYPE_EMPTY,
+      .dirty = 1, .meshCandidate = 1, .sectionY = sy};
   if (sy < WORLD_MIN_SECTION_Y || sy >= WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT)
     return section;
+  /* Stack staging avoids allocating a dense payload for homogeneous terrain. */
+  uint8_t blocks[SECTION_VOLUME];
+  memset(blocks, BLOCK_TYPE_EMPTY, sizeof(blocks));
   for (int x = 0; x < SECTION_SIZE; x++)
     for (int z = 0; z < SECTION_SIZE; z++) {
       int wx = cx * SECTION_SIZE + x, wz = cz * SECTION_SIZE + z;
@@ -196,10 +229,21 @@ static Subchunk *terrain_section(const World *world, int cx, int sy, int cz,
           MESH_BENCH_SAMPLE(world->terrainSeed, wx, wz);
       for (int y = 0; y < SECTION_SIZE; y++) {
         BlockType type = terrain_column_block(column, sy * SECTION_SIZE + y);
-        section->blocks[(x * SECTION_SIZE + y) * SECTION_SIZE + z] = (uint8_t)type;
+        blocks[(x * SECTION_SIZE + y) * SECTION_SIZE + z] = (uint8_t)type;
         section->voxelCount += type != BLOCK_TYPE_EMPTY;
       }
     }
+  uint8_t material = blocks[0];
+  int uniform = 1;
+  for (size_t i = 1; i < SECTION_VOLUME; i++)
+    if (blocks[i] != material) { uniform = 0; break; }
+  if (uniform) {
+    section->storage = material == BLOCK_TYPE_EMPTY ? SECTION_EMPTY : SECTION_UNIFORM;
+    section->material = material;
+  } else {
+    if (!section_expand(section)) { section_destroy(section); return NULL; }
+    memcpy(section->blocks, blocks, sizeof(blocks));
+  }
   return section;
 }
 
@@ -243,7 +287,7 @@ int world_materialize_chunk(World *world, int cx, int cz) {
     if (pending[s]) pending[s]->meshCandidate = edge || sy == WORLD_MIN_SECTION_Y ||
         (sy + 1) * SECTION_SIZE >= lowest;
     if (!pending[s]) {
-      for (int j = 0; j < WORLD_SECTION_COUNT; j++) free(pending[j]);
+      for (int j = 0; j < WORLD_SECTION_COUNT; j++) section_destroy(pending[j]);
       return 0;
     }
   }
@@ -278,7 +322,7 @@ void world_release_chunk(World *world, int cx, int cz) {
     Subchunk *next = section->next;
     world->voxelCount -= section->voxelCount;
     world->sectionCount--;
-    free(section);
+    section_destroy(section);
     section = next;
   }
   chunk->sections = NULL;
@@ -327,30 +371,27 @@ int world_set_block(World *world, int x, int y, int z, BlockType type) {
       cz = voxel_section_coord(z);
   Chunk *chunk = find_chunk_mut(world, cx, cz);
   Subchunk **slot = section_slot(chunk, sy);
-  if (!*slot || (*slot)->sectionY != sy) {
-    if (world_get_block(world, x, y, z) == type)
-      return 1;
-    Subchunk *section = world->proceduralTerrain && !chunk->terrainReady ?
-        terrain_section(world, cx, sy, cz, NULL) : malloc(sizeof(*section));
-    if (!section)
-      return 0;
-    if (!world->proceduralTerrain || chunk->terrainReady) {
-      memset(section->blocks, BLOCK_TYPE_EMPTY, sizeof(section->blocks));
-      section->voxelCount = 0;
-      section->dirty = 0;
-    }
-    section->meshCandidate = 1;
+  int missing = !*slot || (*slot)->sectionY != sy;
+  int index = block_index(x, y, z);
+  if ((missing ? world_get_block(world, x, y, z) : section_block(*slot, index)) == type)
+    return 1;
+  Subchunk *section = missing ?
+      (world->proceduralTerrain && !chunk->terrainReady ?
+       terrain_section(world, cx, sy, cz, NULL) : calloc(1, sizeof(*section))) : *slot;
+  if (!section) return 0;
+  if (missing && section->storage == SECTION_EMPTY) section->material = BLOCK_TYPE_EMPTY;
+  BlockType old = section_block(section, index);
+  if (!section_expand(section)) {
+    if (missing) section_destroy(section);
+    return 0;
+  }
+  if (missing) {
     section->sectionY = sy;
     section->next = *slot;
     *slot = section;
     world->sectionCount++;
     world->voxelCount += section->voxelCount;
   }
-  Subchunk *section = *slot;
-  int index = block_index(x, y, z);
-  BlockType old = (BlockType)section->blocks[index];
-  if (old == type)
-    return 1;
   if (old == BLOCK_TYPE_EMPTY) {
     section->voxelCount++;
     world->voxelCount++;
@@ -361,6 +402,7 @@ int world_set_block(World *world, int x, int y, int z, BlockType type) {
   }
   section->meshCandidate = 1;
   section->blocks[index] = (uint8_t)type;
+  section_compact(section);
   section->dirty = 1;
   if (world->proceduralTerrain)
     chunk->edited = 1;
@@ -405,7 +447,7 @@ float world_surface_height(const World *world, float x, float z) {
     int y = column.height - 1;
     while (y >= TERRAIN_BASE_Y) {
       const Subchunk *section = world_section(world, voxel_section_coord(ix), voxel_section_coord(y), voxel_section_coord(iz));
-      if (!section || block_is_solid((BlockType)section->blocks[block_index(ix, y, iz)])) break;
+      if (!section || block_is_solid(section_block(section, block_index(ix, y, iz)))) break;
       y--;
     }
     if (y >= TERRAIN_BASE_Y) { top = y + 1; found = 1; }
@@ -413,7 +455,7 @@ float world_surface_height(const World *world, float x, float z) {
   for (const Subchunk *s = chunk->sections; s; s = s->next) {
     if (found && (s->sectionY + 1) * SECTION_SIZE <= top) continue;
     for (int ly = SECTION_SIZE - 1; ly >= 0; ly--)
-      if (block_is_solid((BlockType)s->blocks[block_index(ix, ly, iz)])) {
+      if (block_is_solid(section_block(s, block_index(ix, ly, iz)))) {
         int h = s->sectionY * SECTION_SIZE + ly + 1;
         if (!found || h > top) top = h;
         found = 1;
@@ -447,7 +489,7 @@ static BlockType mesh_boundary_block(const World *world, MeshNeighbors *cache,
       wz = cz * SECTION_SIZE + z;
   if (!in_bounds(world, wx, wy, wz)) return BLOCK_TYPE_EMPTY;
   if (cache->sections[d])
-    return (BlockType)cache->sections[d]->blocks[block_index(x, y, z)];
+    return section_block(cache->sections[d], block_index(x, y, z));
   if (!world->proceduralTerrain || !cache->chunks[d] || cache->chunks[d]->terrainReady ||
       wy < TERRAIN_BASE_Y || wy >= (WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT) * SECTION_SIZE)
     return BLOCK_TYPE_EMPTY;
@@ -481,7 +523,7 @@ int section_mesh_build(const World *world, int cx, int sy, int cz, SectionMesh *
   if (!section || section->voxelCount == 0 || (!section->meshCandidate && !editedNeighbor)) {
     section_mesh_destroy(mesh);
     *mesh = result;
-    free(temporary);
+    section_destroy(temporary);
     return 1;
   }
   const int dx[6] = {-1, 1, 0, 0, 0, 0}, dy[6] = {0, 0, -1, 1, 0, 0},
@@ -499,14 +541,14 @@ int section_mesh_build(const World *world, int cx, int sy, int cz, SectionMesh *
     for (int y = 0; y < SECTION_SIZE; y++)
       for (int z = 0; z < SECTION_SIZE; z++) {
         int index = (x * SECTION_SIZE + y) * SECTION_SIZE + z;
-        BlockType type = (BlockType)section->blocks[index];
+        BlockType type = section_block(section, index);
         if (type == BLOCK_TYPE_EMPTY) continue;
-        if (!block_is_solid(type)) { free(temporary); return 0; }
+        if (!block_is_solid(type)) { section_destroy(temporary); return 0; }
         for (int d = 0; d < 6; d++) {
           int nx = x + dx[d], ny = y + dy[d], nz = z + dz[d];
           BlockType other = nx >= 0 && nx < SECTION_SIZE &&
               ny >= 0 && ny < SECTION_SIZE && nz >= 0 && nz < SECTION_SIZE ?
-              (BlockType)section->blocks[(nx * SECTION_SIZE + ny) * SECTION_SIZE + nz] :
+              section_block(section, (nx * SECTION_SIZE + ny) * SECTION_SIZE + nz) :
               mesh_boundary_block(world, &neighbors, d, cx, sy, cz, nx, ny, nz);
           if (block_face_visible(type, other)) {
             visible[index] |= (uint8_t)(1u << d);
@@ -531,7 +573,7 @@ int section_mesh_build(const World *world, int cx, int sy, int cz, SectionMesh *
   result.vertices = result.vertexCount
                         ? malloc(result.vertexCount * sizeof(*result.vertices)) : NULL;
   if (result.vertexCount && !result.vertices) {
-    free(temporary);
+    section_destroy(temporary);
     return 0;
   }
   size_t cursors[BLOCK_TYPE_COUNT];
@@ -542,7 +584,7 @@ int section_mesh_build(const World *world, int cx, int sy, int cz, SectionMesh *
       for (int z = 0; z < SECTION_SIZE; z++) {
         int index = (x * SECTION_SIZE + y) * SECTION_SIZE + z;
         if (!visible[index]) continue;
-        BlockType type = (BlockType)section->blocks[index];
+        BlockType type = section_block(section, index);
         int wx = cx * SECTION_SIZE + x, wy = sy * SECTION_SIZE + y,
             wz = cz * SECTION_SIZE + z;
         for (int d = 0; d < 6; d++) {
@@ -559,6 +601,6 @@ int section_mesh_build(const World *world, int cx, int sy, int cz, SectionMesh *
       }
   section_mesh_destroy(mesh);
   *mesh = result;
-  free(temporary);
+  section_destroy(temporary);
   return 1;
 }

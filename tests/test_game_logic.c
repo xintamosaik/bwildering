@@ -741,6 +741,120 @@ static void test_cave_and_ceiling_collision(void) {
   world_destroy(&world);
 }
 
+static void test_thin_walls_at_section_boundaries(void) {
+  const int boundaries[] = {0, 16, -16};
+  const float sizes[] = {0.5f, 1, 2};
+  for (int b = 0; b < 3; b++)
+    for (int s = 0; s < 3; s++)
+      for (int axis = 0; axis < 2; axis++)
+        for (int direction = -1; direction <= 1; direction += 2) {
+          int boundary = boundaries[b];
+          float size = sizes[s];
+          World world = {0};
+          assert(world_init_region(&world, boundary - 8, boundary - 8, 16,
+                                    (Vec3){12, -3, 8}, size));
+          int wall = boundary - (direction < 0);
+          for (int x = boundary - 8; x < boundary + 8; x++)
+            for (int z = boundary - 8; z < boundary + 8; z++) {
+              assert(world_set_block(&world, x, -1, z, BLOCK_TYPE_STONE));
+              if ((axis == 0 ? x : z) == wall)
+                for (int y = 0; y < (int)ceilf(1.5f / size); y++)
+                  assert(world_set_block(&world, x, y, z, BLOCK_TYPE_STONE));
+            }
+          Vec3 start = {12 + (boundary + 0.5f) * size, -3,
+                        8 + (boundary + 0.5f) * size};
+          float plane = (axis == 0 ? 12 : 8) + boundary * size;
+          float approach = plane - direction * (2 * size + 0.25f);
+          if (axis == 0)
+            start.x = approach;
+          else
+            start.z = approach;
+          Player player = make_player(start, 1);
+          player.eyeHeight = 0.1f; /* Camera height cannot shrink the body. */
+          PlayerInput input = axis == 0 ? (PlayerInput){.strafe = direction}
+                                       : (PlayerInput){.forward = -direction};
+          /* Eight world units would clear this one-voxel wall without substeps. */
+          update_player(&player, input, 2, &world);
+          float contact = axis == 0 ? player.position.x : player.position.z;
+          assert_near(contact, plane - direction * 0.25f);
+          assert(player.grounded);
+          assert_near(player.position.y, start.y);
+          /* Sustained contact and tangential movement must remain stable. */
+          input = (PlayerInput){.strafe = direction, .forward = -direction};
+          for (int frame = 0; frame < 10; frame++)
+            update_player(&player, input, 0.01f, &world);
+          assert_near(axis == 0 ? player.position.x : player.position.z, contact);
+          assert(direction * (axis == 0 ? player.position.z - start.z
+                                       : player.position.x - start.x) > 0.25f);
+          assert(player.grounded);
+          world_destroy(&world);
+        }
+}
+
+static void test_vertical_contacts_at_section_boundaries(void) {
+  const int boundaries[] = {0, 16, -16};
+  const float sizes[] = {0.5f, 1, 2};
+  for (int b = 0; b < 3; b++)
+    for (int s = 0; s < 3; s++) {
+      World world = {0};
+      float size = sizes[s];
+      int floor = boundaries[b] - 1;
+      int roof = boundaries[b] + (int)ceilf(2 / size);
+      assert(world_init_region(&world, -1, -1, 3, (Vec3){12, -3, 8}, size));
+      assert(world_set_block(&world, 0, floor, 0, BLOCK_TYPE_STONE));
+      assert(world_set_block(&world, 0, roof, 0, BLOCK_TYPE_STONE));
+      float floorY = -3 + boundaries[b] * size;
+      float roofY = -3 + roof * size;
+      Player player = make_player((Vec3){12 + size / 2, floorY + 0.25f,
+                                         8 + size / 2}, 0);
+      player.eyeHeight = 10; /* Body dimensions stay in physical world units. */
+      player.velocityY = -100;
+      update_player(&player, (PlayerInput){0}, 0.25f, &world);
+      assert(player.grounded);
+      assert_near(player.position.y, floorY);
+      assert_near(player.velocityY, 0);
+      assert_near(world_surface_height(&world, player.position.x, player.position.z),
+                  roofY + size);
+      player.grounded = 0;
+      player.velocityY = 100;
+      update_player(&player, (PlayerInput){0}, 0.02f, &world);
+      assert(!player.grounded);
+      assert_near(player.position.y, roofY - 1.5f);
+      assert_near(player.velocityY, 0);
+      for (int frame = 0; frame < 100; frame++)
+        update_player(&player, (PlayerInput){0}, 0.01f, &world);
+      assert(player.grounded);
+      assert_near(player.position.y, floorY);
+      assert(world_set_block(&world, 0, floor, 0, BLOCK_TYPE_EMPTY));
+      update_player(&player, (PlayerInput){0}, 0.1f, &world);
+      assert(!player.grounded && player.position.y < floorY);
+      world_destroy(&world);
+    }
+}
+
+static void test_generated_terrain_spawn(void) {
+  const float sizes[] = {0.5f, 1, 2};
+  for (int s = 0; s < 3; s++) {
+    World world = {0};
+    Vec3 center = {12, -3, 8};
+    assert(create_terrain(&world, 32, center, sizes[s], UINT32_C(0x4B1D2A37)));
+    float spawnY = world_surface_height(&world, center.x, center.z);
+    assert(isfinite(spawnY));
+    Player player = make_player((Vec3){center.x, spawnY, center.z}, 0);
+    for (int frame = 0; frame < 60; frame++)
+      update_player(&player, (PlayerInput){0}, 1.0f / 60, &world);
+    assert(player.grounded);
+    assert_near(player.position.y, spawnY);
+    update_player(&player, (PlayerInput){.jump = 1}, 1.0f / 60, &world);
+    assert(!player.grounded && player.position.y > spawnY);
+    for (int frame = 0; frame < 60; frame++)
+      update_player(&player, (PlayerInput){0}, 1.0f / 60, &world);
+    assert(player.grounded);
+    assert_near(player.position.y, spawnY);
+    world_destroy(&world);
+  }
+}
+
 int main(void) {
   test_vector_normalization();
   test_matrix_multiply_identity();
@@ -761,6 +875,9 @@ int main(void) {
   test_section_faces_and_replacement();
   test_dirty_neighbors();
   test_cave_and_ceiling_collision();
+  test_thin_walls_at_section_boundaries();
+  test_vertical_contacts_at_section_boundaries();
+  test_generated_terrain_spawn();
   puts("All game logic tests passed.");
   return 0;
 }

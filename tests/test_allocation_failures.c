@@ -116,6 +116,27 @@ int main(void) {
     world_destroy(&sentinel);
   }
   world_destroy(&world);
+  /* Chunk generation commits all its sections together, including under OOM. */
+  World streamed = {0};
+  assert(create_terrain_streamed(&streamed, 33, (Vec3){0}, 1, 1));
+  size_t before = allocation_calls;
+  assert(world_materialize_chunk(&streamed, 0, 0));
+  size_t allocations = allocation_calls - before;
+  for (size_t i = 0; i < allocations; i++) {
+    world_destroy(&streamed);
+    assert(create_terrain_streamed(&streamed, 33, (Vec3){0}, 1, 1));
+    TerrainColumn column = terrain_sample_column(1, 0, 0);
+    fail_after = (int)i;
+    assert(!world_materialize_chunk(&streamed, 0, 0));
+    fail_after = -1;
+    assert(streamed.sectionCount == 0 && streamed.voxelCount == 0);
+    for (int sy = WORLD_MIN_SECTION_Y; sy < WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT; sy++)
+      assert(world_section(&streamed, 0, sy, 0) == NULL);
+    assert(world_get_block(&streamed, 0, column.height - 1, 0) == column.material);
+    assert(world_materialize_chunk(&streamed, 0, 0));
+    assert(world_get_block(&streamed, 0, column.height - 1, 0) == column.material);
+  }
+  world_destroy(&streamed);
   puts("All allocation failure tests passed.");
   return 0;
 }

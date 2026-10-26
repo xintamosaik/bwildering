@@ -30,6 +30,9 @@ typedef struct {
      context is current, before destroying the window/context. */
   SectionGpuMesh *meshes;
   size_t meshCount;
+  size_t *visibleMeshes;
+  size_t visibleMeshCount, visibleMeshCapacity;
+  int streamed;
   GLuint textVao;
   GLuint textVbo;
   GLuint program;
@@ -344,6 +347,7 @@ static void renderer_destroy(Renderer *renderer) {
   for (size_t i = 0; i < renderer->meshCount; i++)
     section_gpu_mesh_destroy(&renderer->meshes[i]);
   free(renderer->meshes);
+  free(renderer->visibleMeshes);
   if (renderer->textVao != 0)
     glDeleteVertexArrays(1, &renderer->textVao);
   if (renderer->textVbo != 0)
@@ -448,7 +452,7 @@ static int renderer_upload_section_mesh(SectionGpuMesh *target,
    Same-layout regeneration is supported; for changed bounds/layout, explicitly
    destroy/reinitialize the renderer and mark allocated sections dirty before
    syncing. Equal mesh counts alone do not establish layout compatibility. */
-static int renderer_sync_world(Renderer *renderer, World *world) {
+static int renderer_prepare_world(Renderer *renderer, const World *world) {
   size_t count = world->chunkCount * WORLD_SECTION_COUNT;
   if (!renderer->meshes && count) {
     renderer->meshes = calloc(count, sizeof(*renderer->meshes));
@@ -465,27 +469,108 @@ static int renderer_sync_world(Renderer *renderer, World *world) {
   }
   if (renderer->meshCount != count)
     return 0;
-  for (size_t i = 0; i < count; i++) {
-    SectionGpuMesh *gpu = &renderer->meshes[i];
-    Subchunk *section = world_section(world, gpu->chunkX, gpu->sectionY, gpu->chunkZ);
-    if (!section) {
-      /* A regenerated world can omit a section that previously had a mesh. */
-      section_gpu_mesh_destroy(gpu);
-      gpu->chunkX = world->chunks[i / WORLD_SECTION_COUNT].x;
-      gpu->chunkZ = world->chunks[i / WORLD_SECTION_COUNT].z;
-      gpu->sectionY = WORLD_MIN_SECTION_Y + (int)(i % WORLD_SECTION_COUNT);
-      continue;
-    }
-    if (!section->dirty)
-      continue;
-    SectionMesh cpu = {0};
-    int success =
-        section_mesh_build(world, gpu->chunkX, gpu->sectionY, gpu->chunkZ, &cpu) &&
-        renderer_upload_section_mesh(gpu, &cpu);
-    section_mesh_destroy(&cpu);
-    if (!success)
+  return 1;
+}
+
+static int renderer_sync_section(Renderer *renderer, World *world, size_t i) {
+  SectionGpuMesh *gpu = &renderer->meshes[i];
+  Subchunk *section = world_section(world, gpu->chunkX, gpu->sectionY, gpu->chunkZ);
+  if (!section) {
+    /* A regenerated world can omit a section that previously had a mesh. */
+    section_gpu_mesh_destroy(gpu);
+    gpu->chunkX = world->chunks[i / WORLD_SECTION_COUNT].x;
+    gpu->chunkZ = world->chunks[i / WORLD_SECTION_COUNT].z;
+    gpu->sectionY = WORLD_MIN_SECTION_Y + (int)(i % WORLD_SECTION_COUNT);
+    return 1;
+  }
+  if (!section->dirty)
+    return 1;
+  SectionMesh cpu = {0};
+  int success =
+      section_mesh_build(world, gpu->chunkX, gpu->sectionY, gpu->chunkZ, &cpu) &&
+      renderer_upload_section_mesh(gpu, &cpu);
+  section_mesh_destroy(&cpu);
+  if (!success)
+    return 0;
+  section->dirty = 0;
+  return 1;
+}
+
+static int renderer_sync_world(Renderer *renderer, World *world) {
+  if (!renderer_prepare_world(renderer, world))
+    return 0;
+  for (size_t i = 0; i < renderer->meshCount; i++)
+    if (!renderer_sync_section(renderer, world, i))
       return 0;
-    section->dirty = 0;
+  return 1;
+}
+
+/* Generate only the view neighbourhood. Retiring unedited chunks bounds CPU
+   memory during exploration; edited chunks retain their changes for revisits. */
+static int renderer_sync_view(Renderer *renderer, World *world, const Player *player) {
+  if (!world->proceduralTerrain)
+    return renderer_sync_world(renderer, world);
+  if (!renderer_prepare_world(renderer, world))
+    return 0;
+  Vec3 eye = player_eye_position(player);
+  if (!isfinite(eye.x) || !isfinite(eye.z))
+    return 0;
+  float span = world->blockSize * SECTION_SIZE;
+  float distance = renderer->viewDistance > 0 ? renderer->viewDistance : DEFAULT_VIEW_DISTANCE;
+  int maxChunkX = world->minChunkX + world->chunksPerSide - 1;
+  int maxChunkZ = world->minChunkZ + world->chunksPerSide - 1;
+  float loX = floorf((eye.x - world->origin.x - distance) / span) - 1;
+  float hiX = floorf((eye.x - world->origin.x + distance) / span) + 1;
+  float loZ = floorf((eye.z - world->origin.z - distance) / span) - 1;
+  float hiZ = floorf((eye.z - world->origin.z + distance) / span) + 1;
+  int minX = (int)fminf(maxChunkX + 1, fmaxf(world->minChunkX, loX));
+  int maxX = (int)fmaxf(world->minChunkX - 1, fminf(maxChunkX, hiX));
+  int minZ = (int)fminf(maxChunkZ + 1, fmaxf(world->minChunkZ, loZ));
+  int maxZ = (int)fmaxf(world->minChunkZ - 1, fminf(maxChunkZ, hiZ));
+  size_t needed = minX <= maxX && minZ <= maxZ ?
+      (size_t)(maxX - minX + 1) * (maxZ - minZ + 1) * WORLD_SECTION_COUNT : 0;
+  if (needed > renderer->visibleMeshCapacity) {
+    size_t *indices = malloc(needed * sizeof(*indices));
+    if (!indices)
+      return 0;
+    if (renderer->visibleMeshCount)
+      memcpy(indices, renderer->visibleMeshes, renderer->visibleMeshCount * sizeof(*indices));
+    free(renderer->visibleMeshes);
+    renderer->visibleMeshes = indices;
+    renderer->visibleMeshCapacity = needed;
+  }
+  for (size_t n = 0; n < renderer->visibleMeshCount; n++) {
+    size_t i = renderer->visibleMeshes[n];
+    SectionGpuMesh *gpu = &renderer->meshes[i];
+    int cx = world->chunks[i / WORLD_SECTION_COUNT].x;
+    int cz = world->chunks[i / WORLD_SECTION_COUNT].z;
+    if (cx >= minX && cx <= maxX && cz >= minZ && cz <= maxZ)
+      continue;
+    Subchunk *section = world_section(world, cx, WORLD_MIN_SECTION_Y + (int)(i % WORLD_SECTION_COUNT), cz);
+    if (section) section->dirty = 1;
+    section_gpu_mesh_destroy(gpu);
+    gpu->chunkX = cx;
+    gpu->chunkZ = cz;
+    gpu->sectionY = WORLD_MIN_SECTION_Y + (int)(i % WORLD_SECTION_COUNT);
+    if (i % WORLD_SECTION_COUNT == 0)
+      world_release_chunk(world, cx, cz);
+  }
+  renderer->streamed = 1;
+  renderer->visibleMeshCount = 0;
+  for (int cx = minX; cx <= maxX; cx++)
+    for (int cz = minZ; cz <= maxZ; cz++) {
+      size_t chunk = (size_t)(cx - world->minChunkX) * world->chunksPerSide + cz - world->minChunkZ;
+      for (int s = 0; s < WORLD_SECTION_COUNT; s++)
+        renderer->visibleMeshes[renderer->visibleMeshCount++] = chunk * WORLD_SECTION_COUNT + s;
+    }
+  for (size_t n = 0; n < renderer->visibleMeshCount; n += WORLD_SECTION_COUNT) {
+    size_t i = renderer->visibleMeshes[n];
+    const Chunk *chunk = &world->chunks[i / WORLD_SECTION_COUNT];
+    if (!world_materialize_chunk(world, chunk->x, chunk->z))
+      return 0;
+    for (int s = 0; s < WORLD_SECTION_COUNT; s++)
+      if (!renderer_sync_section(renderer, world, i + s))
+        return 0;
   }
   return 1;
 }
@@ -789,7 +874,9 @@ static void render_world(const Renderer *renderer, const Player *player) {
     if (!block_type_color((BlockType)type, &color))
       continue;
     glUniform3f(renderer->colorLocation, color.x, color.y, color.z);
-    for (size_t i = 0; i < renderer->meshCount; i++) {
+    size_t count = renderer->streamed ? renderer->visibleMeshCount : renderer->meshCount;
+    for (size_t n = 0; n < count; n++) {
+      size_t i = renderer->streamed ? renderer->visibleMeshes[n] : n;
       const SectionGpuMesh *mesh = &renderer->meshes[i];
       if (!mesh->vertexCount[type] ||
           !section_within_view_distance(mesh, cameraPosition, viewDistance) ||
@@ -910,15 +997,18 @@ static int application_init(Application *application) {
   glfwSetFramebufferSizeCallback(application->window,
                                  framebuffer_size_callback);
 
-  if (!create_terrain(&application->world, PLATFORM_BLOCKS_PER_SIDE, CENTER,
+  if (!create_terrain_streamed(&application->world, PLATFORM_BLOCKS_PER_SIDE, CENTER,
                        BLOCK_SIZE, WORLD_SEED)) {
     fprintf(stderr, "Failed to create voxel terrain\n");
     application_shutdown(application);
     return 0;
   }
-  application->player.position.y = world_surface_height(
-      &application->world, application->player.position.x, application->player.position.z);
-  if (!renderer_sync_world(&application->renderer,&application->world)) {
+  if (!player_spawn_on_surface(&application->player, &application->world)) {
+    fprintf(stderr, "Failed to find safe terrain for spawning\n");
+    application_shutdown(application);
+    return 0;
+  }
+  if (!renderer_sync_view(&application->renderer, &application->world, &application->player)) {
     fprintf(stderr,"Failed to build or upload section meshes\n");
     application_shutdown(application);
     return 0;
@@ -1016,7 +1106,7 @@ int main(void) {
   int meshRebuildFailed = 0;
   while (!glfwWindowShouldClose(application.window)) {
     application_update(&application);
-    if (!renderer_sync_world(&application.renderer, &application.world)) {
+    if (!renderer_sync_view(&application.renderer, &application.world, &application.player)) {
       if (!meshRebuildFailed)
         fprintf(stderr, "Failed to rebuild dirty section meshes; retaining previous "
                         "meshes and retrying\n");

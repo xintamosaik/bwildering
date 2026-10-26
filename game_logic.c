@@ -165,7 +165,7 @@ static float terrain_lattice(const int x, const int z, const uint32_t seed) {
 
 float terrain_noise(const int x, const int z, const int scale,
                            const uint32_t seed) {
-  if (scale != 8 && scale != 16 && scale != 32)
+  if (scale < 8 || scale > 512 || (scale & (scale - 1)) != 0)
     return NAN;
   const int gx = voxel_floor_div(x, scale);
   const int gz = voxel_floor_div(z, scale);
@@ -181,13 +181,20 @@ float terrain_noise(const int x, const int z, const int scale,
 }
 
 TerrainColumn terrain_sample_column(uint32_t seed, int x, int z) {
-  int height = (int)(10.0f * terrain_noise(x, z, 32, seed) +
-                     4.0f * terrain_noise(x, z, 16, seed ^ UINT32_C(0xA341316C)) +
-                     1.5f * terrain_noise(x, z, 8, seed ^ UINT32_C(0xC8013EA4)));
-  BlockType type = height <= 4    ? BLOCK_TYPE_SAND
-                   : height >= 10 ? BLOCK_TYPE_STONE
+  int height = (int)(4.0f + 40.0f * terrain_noise(x, z, 256, seed) +
+                     18.0f * terrain_noise(x, z, 64, seed ^ UINT32_C(0xA341316C)) +
+                     5.0f * terrain_noise(x, z, 16, seed ^ UINT32_C(0xC8013EA4)) +
+                     3.0f * terrain_noise(x, z, 8, seed ^ UINT32_C(0x7F4A7C15)));
+  BlockType type = height <= 16    ? BLOCK_TYPE_SAND
+                   : height >= 48 ? BLOCK_TYPE_STONE
                                   : BLOCK_TYPE_GRASS;
   return (TerrainColumn){height, type};
+}
+
+BlockType terrain_column_block(TerrainColumn column, int y) {
+  if (y < TERRAIN_BASE_Y || y >= column.height)
+    return BLOCK_TYPE_EMPTY;
+  return y < column.height - 4 ? BLOCK_TYPE_STONE : column.material;
 }
 
 /* The flat platform retains its global shuffle fixture. */
@@ -237,8 +244,8 @@ int create_terrain_region(World *world, int minX, int minZ, int side,
   for (int x = minX; x < minX + side; x++)
     for (int z = minZ; z < minZ + side; z++) {
       TerrainColumn column = terrain_sample_column(seed, x, z);
-      for (int y = -1; y < column.height; y++)
-        if (!world_set_block(&result, x, y, z, column.material)) {
+      for (int y = TERRAIN_BASE_Y; y < column.height; y++)
+        if (!world_set_block(&result, x, y, z, terrain_column_block(column, y))) {
           world_destroy(&result);
           return 0;
         }
@@ -253,6 +260,17 @@ int create_terrain(World *world, int side, Vec3 center, float size, uint32_t see
   origin.x -= (float)(side % 2) * size * 0.5f;
   origin.z -= (float)(side % 2) * size * 0.5f;
   return create_terrain_region(world, -(side / 2), -(side / 2), side, origin, size, seed);
+}
+
+int create_terrain_streamed(World *world, int side, Vec3 center, float size, uint32_t seed) {
+  World result = {0};
+  if (!world || !world_init(&result, side, center, size))
+    return 0;
+  result.proceduralTerrain = 1;
+  result.terrainSeed = seed;
+  world_destroy(world);
+  *world = result;
+  return 1;
 }
 
 /* The body is independent of camera eye height. */
@@ -405,6 +423,39 @@ Vec3 player_eye_position(const Player *player) {
   Vec3 eye = player->position;
   eye.y += player->eyeHeight - (player->crouching ? 0.3f : 0.0f);
   return eye;
+}
+
+int player_spawn_on_surface(Player *player, const World *world) {
+  if (!player || !world || !world->chunks)
+    return 0;
+  const float insetRadius = PLAYER_RADIUS - 0.00001f;
+  float loX = (player->position.x - insetRadius - world->origin.x) / world->blockSize;
+  float hiX = (player->position.x + insetRadius - world->origin.x) / world->blockSize;
+  float loZ = (player->position.z - insetRadius - world->origin.z) / world->blockSize;
+  float hiZ = (player->position.z + insetRadius - world->origin.z) / world->blockSize;
+  if (!isfinite(loX) || !isfinite(hiX) || !isfinite(loZ) || !isfinite(hiZ) ||
+      hiX <= world->minX || loX >= world->minX + world->blocksPerSide ||
+      hiZ <= world->minZ || loZ >= world->minZ + world->blocksPerSide)
+    return 0;
+  int firstX = (int)floorf(fmaxf(loX, world->minX));
+  int lastX = (int)ceilf(fminf(hiX, world->minX + world->blocksPerSide)) - 1;
+  int firstZ = (int)floorf(fmaxf(loZ, world->minZ));
+  int lastZ = (int)ceilf(fminf(hiZ, world->minZ + world->blocksPerSide)) - 1;
+  int height = WORLD_MIN_SECTION_Y * SECTION_SIZE;
+  for (int x = firstX; x <= lastX; x++)
+    for (int z = firstZ; z <= lastZ; z++)
+      for (int y = (WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT) * SECTION_SIZE - 1;
+           y >= height; y--)
+        if (block_is_solid(world_get_block(world, x, y, z))) {
+          height = y + 1;
+          break;
+        }
+  if (height == WORLD_MIN_SECTION_Y * SECTION_SIZE)
+    return 0;
+  player->position.y = world->origin.y + height * world->blockSize;
+  player->velocityY = 0;
+  player->grounded = 1;
+  return 1;
 }
 
 void update_player(Player *player, PlayerInput input, float dt, const World *world) {

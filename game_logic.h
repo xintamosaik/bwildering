@@ -58,12 +58,13 @@ typedef struct {
 } SectionMesh;
 
 enum {
-  PLATFORM_BLOCKS_PER_SIDE = 768,
-  WORLD_MAX_BLOCKS_PER_SIDE = 1024,
+  PLATFORM_BLOCKS_PER_SIDE = 4608,
+  WORLD_MAX_BLOCKS_PER_SIDE = 6144,
   SECTION_SIZE = 16,
   SECTION_VOLUME = 16 * 16 * 16,
   WORLD_MIN_SECTION_Y = -2,
-  WORLD_SECTION_COUNT = 4,
+  WORLD_SECTION_COUNT = 8,
+  TERRAIN_BASE_Y = -30,
   /* Bounded storage leaves ample room for section corners and neighbours. */
   WORLD_COORD_MIN = -1048575,
   WORLD_COORD_MAX = 1048575
@@ -78,11 +79,14 @@ typedef struct {
 typedef struct {
   int x, z;
   Subchunk *sections[WORLD_SECTION_COUNT];
+  int terrainReady;
+  int edited;
 } Chunk;
 
 /* Owning type: initialize to zero, destroy explicitly, and do not copy by value.
-   Missing sections read as air. Horizontal side is 1..WORLD_MAX_BLOCKS_PER_SIDE;
-   voxel Y is [-32,32).
+   Missing sections read as air in ordinary worlds; streamed worlds synthesize
+   missing chunks from their seed. Horizontal side is 1..WORLD_MAX_BLOCKS_PER_SIDE;
+   voxel Y is [-32,96).
    Empty allocated sections remain owned retirement markers until destruction;
    sectionCount includes them. Renderer sync must retire their GPU geometry.
    Voxel coordinates are signed; render positions use origin + voxel * blockSize. */
@@ -95,6 +99,10 @@ typedef struct {
   int minX, minZ, blocksPerSide;
   Vec3 origin;
   float blockSize;
+  /* Streamed terrain synthesizes missing chunks. Counts describe resident data.
+     Edited chunks stay resident; unedited chunks can be regenerated after eviction. */
+  int proceduralTerrain;
+  uint32_t terrainSeed;
 } World;
 
 typedef float mat4[16];
@@ -133,7 +141,7 @@ void world_destroy(World *world);
 Subchunk *world_section(const World *world, int chunkX, int sectionY, int chunkZ);
 BlockType world_get_block(const World *world, int x, int y, int z);
 /* Returns success, including identical writes; rejects invalid types/bounds.
-   Nonempty writes allocate missing sections lazily, initialized to air.
+   Writes allocate missing sections lazily, initialized to air or seeded terrain.
    Successful edits update CPU data/counts immediately, so collision sees them
    before rendering catches up. Identical writes leave dirty flags unchanged.
    Edits dirty this section and existing sections sharing an affected face;
@@ -150,20 +158,28 @@ int block_type_color(BlockType type, Vec3 *color);
 int create_platform(World *world, int blocksPerSide, Vec3 center,
                     float blockSize, uint32_t seed);
 typedef struct {
-  int height; /* Filled voxels are Y=-1 through height-1. */
-  BlockType material;
+  int height; /* Filled voxels are TERRAIN_BASE_Y through height-1. */
+  BlockType material; /* Surface material; deeper layers are stone. */
 } TerrainColumn;
 
 /* Pure signed voxel sampling, independent of bounds and render transform.
-   Sampler accepts every int X/Z. Noise supports scales 8,16,32 (else NAN). */
+   Sampler accepts every int X/Z. Noise supports powers of two from 8 to 512. */
 float terrain_noise(int worldX, int worldZ, int scale, uint32_t seed);
 TerrainColumn terrain_sample_column(uint32_t seed, int worldX, int worldZ);
+BlockType terrain_column_block(TerrainColumn column, int y);
 /* Transactional bounded region generation; bounds/transform as world_init_region. */
 int create_terrain_region(World *world, int minX, int minZ, int side,
                           Vec3 origin, float blockSize, uint32_t seed);
 /* Seeded, smooth terraced hills with elevation-dependent surface materials. */
 int create_terrain(World *world, int blocksPerSide, Vec3 center,
                    float blockSize, uint32_t seed);
+/* Same terrain and bounds, generated on demand rather than all at startup. */
+int create_terrain_streamed(World *world, int blocksPerSide, Vec3 center,
+                            float blockSize, uint32_t seed);
+/* Transactionally fill missing sections, preserving edits already in this chunk. */
+int world_materialize_chunk(World *world, int chunkX, int chunkZ);
+/* Evict only unedited procedural chunks; subsequent reads regenerate their values. */
+void world_release_chunk(World *world, int chunkX, int chunkZ);
 /* Transactionally replaces an initialized CPU mesh. Empty sections are valid. */
 int section_mesh_build(const World *world, int chunkX, int sectionY, int chunkZ,
                        SectionMesh *mesh);
@@ -172,6 +188,8 @@ void update_player(Player *updatedPlayer, PlayerInput input, float deltaTime,
                    const World *world);
 /* Effective camera position, including the held crouch's 0.3-unit offset. */
 Vec3 player_eye_position(const Player *player);
+/* Place feet above all terrain overlapping the body footprint. */
+int player_spawn_on_surface(Player *player, const World *world);
 /* Place against the first block along the view ray, within reach in world units.
    Rejects misses, occupied eyes, invalid materials, and overlap with the player. */
 int player_place_block(World *world, const Player *player, BlockType type, float reach);

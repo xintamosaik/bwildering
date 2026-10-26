@@ -208,6 +208,64 @@ static void test_view_distance_and_edits_change_rendered_geometry(void) {
   world_destroy(&world);
 }
 
+static void test_streamed_exploration_revisits_edited_terrain(void) {
+  World world = {0};
+  Renderer renderer = {0};
+  uint32_t seed = UINT32_C(0x4B1D2A37);
+  assert(create_terrain_streamed(&world, 1024, (Vec3){0}, 1, seed));
+  assert(renderer_init(&renderer));
+  renderer.framebufferWidth = 640;
+  renderer.framebufferHeight = 480;
+  renderer.viewDistance = 25;
+  int height = terrain_sample_column(seed, 0, 0).height;
+  Player player = {.position = {0.5f, height + 8, 4.5f}, .eyeHeight = 1,
+      .camera = {.front = {0, -0.8944272f, -0.4472136f}, .up = {0, 1, 0}}};
+  assert(renderer_sync_view(&renderer, &world, &player));
+  DepthFrame before = capture_world(&renderer, &player);
+  assert_terrain_visible(&before);
+  assert(world_set_block(&world, 0, height, 0, BLOCK_TYPE_STONE));
+  assert(renderer_sync_view(&renderer, &world, &player));
+  DepthFrame edited = capture_world(&renderer, &player);
+  assert_view_changed(&before, &edited);
+  free(before.depth);
+  Player originalView = player;
+  for (int visit = 1; visit <= 3; visit++) {
+    player.position.x = visit * 96 + 0.5f;
+    player.position.y = world_surface_height(&world, player.position.x, player.position.z) + 8;
+    assert(renderer_sync_view(&renderer, &world, &player));
+    DepthFrame explored = capture_world(&renderer, &player);
+    assert_terrain_visible(&explored);
+    free(explored.depth);
+    /* A bounded view neighbourhood plus one edited chunk stays resident. */
+    assert(world.sectionCount <= renderer.visibleMeshCount + WORLD_SECTION_COUNT);
+    assert(world_get_block(&world, 0, height, 0) == BLOCK_TYPE_STONE);
+  }
+  player = originalView;
+  assert(renderer_sync_view(&renderer, &world, &player));
+  DepthFrame revisited = capture_world(&renderer, &player);
+  assert(revisited.count == edited.count);
+  for (size_t i = 0; i < edited.count; i++)
+    assert(fabsf(revisited.depth[i] - edited.depth[i]) < 0.0001f);
+  free(edited.depth);
+  free(revisited.depth);
+  assert(world_get_block(&world, 0, height, 0) == BLOCK_TYPE_STONE);
+  size_t narrowSections = world.sectionCount;
+  renderer.viewDistance = 300;
+  assert(renderer_sync_view(&renderer, &world, &player));
+  size_t wideSections = world.sectionCount;
+  assert(wideSections > narrowSections);
+  DepthFrame wide = capture_world(&renderer, &player);
+  assert_terrain_visible(&wide);
+  free(wide.depth);
+  renderer.viewDistance = 25;
+  assert(renderer_sync_view(&renderer, &world, &player));
+  assert(world.sectionCount < wideSections);
+  assert(world.sectionCount <= renderer.visibleMeshCount + WORLD_SECTION_COUNT);
+  assert(world_get_block(&world, 0, height, 0) == BLOCK_TYPE_STONE);
+  renderer_destroy(&renderer);
+  world_destroy(&world);
+}
+
 int main(void) {
   test_frustum();
   glfwSetErrorCallback(glfw_test_error);
@@ -367,6 +425,7 @@ int main(void) {
   world_destroy(&world);
   test_rendered_movement();
   test_view_distance_and_edits_change_rendered_geometry();
+  test_streamed_exploration_revisits_edited_terrain();
   assert(glGetError() == GL_NO_ERROR);
   glfwDestroyWindow(window);
   glfwTerminate();
@@ -374,7 +433,15 @@ int main(void) {
   assert(glfwInit());
   glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
   Application application;
+  double applicationStart = glfwGetTime();
   assert(application_init(&application));
+  size_t terrainVertices = 0;
+  for (size_t n = 0; n < application.renderer.visibleMeshCount; n++)
+    terrainVertices += vertex_count(&application.renderer.meshes[application.renderer.visibleMeshes[n]]);
+  printf("Default %dx%d world: startup %.1f ms, %zu resident sections, %.1f MiB terrain vertices\n",
+         application.world.blocksPerSide, application.world.blocksPerSide,
+         1000 * (glfwGetTime() - applicationStart), application.world.sectionCount,
+         terrainVertices * sizeof(SurfaceVertex) / (1024.0 * 1024.0));
   assert(application.world.blocksPerSide == PLATFORM_BLOCKS_PER_SIDE);
   float spawnY = world_surface_height(&application.world, application.player.position.x,
                                       application.player.position.z);

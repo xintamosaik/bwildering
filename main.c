@@ -60,7 +60,7 @@ static const int FPS_TEXT_MAX_CHARS = 16;
 #pragma endregion
 
 #pragma region Input
-static void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
+static void mouse_callback(GLFWwindow *window, const double position_x, const double position_y) {
   if (glfwGetInputMode(window, GLFW_CURSOR) != GLFW_CURSOR_DISABLED)
     return;
   Application *application = glfwGetWindowUserPointer(window);
@@ -68,16 +68,16 @@ static void mouse_callback(GLFWwindow *window, double xpos, double ypos) {
     return;
   MouseInput *mouseInput = &application->mouseInput;
   if (mouseInput->firstMouse) {
-    mouseInput->lastX = xpos;
-    mouseInput->lastY = ypos;
+    mouseInput->lastX = position_x;
+    mouseInput->lastY = position_y;
     mouseInput->firstMouse = 0;
     return;
   }
 
-  mouseInput->deltaX += xpos - mouseInput->lastX;
-  mouseInput->deltaY += mouseInput->lastY - ypos;
-  mouseInput->lastX = xpos;
-  mouseInput->lastY = ypos;
+  mouseInput->deltaX += position_x - mouseInput->lastX;
+  mouseInput->deltaY += mouseInput->lastY - position_y;
+  mouseInput->lastX = position_x;
+  mouseInput->lastY = position_y;
 }
 
 static PlayerInput read_player_input(GLFWwindow *window) {
@@ -122,9 +122,9 @@ static void update_camera(Camera *camera, MouseInput *input) {
 
 #pragma region Rendering
 static GLuint compile_shader(GLenum type, const char *source) {
-  GLuint shader = glCreateShader(type);
+  const GLuint shader = glCreateShader(type);
   if (shader == 0) {
-    fprintf(stderr, "Fdailed to create shader\n");
+    fprintf(stderr, "Failed to create shader\n");
     return 0;
   }
 
@@ -161,17 +161,17 @@ static GLuint create_shader_program(void) {
       "    FragColor = vec4(color, 1.0);\n"
       "}\n";
 
-  GLuint vertexShader = compile_shader(GL_VERTEX_SHADER, vertexShaderSource);
+  const GLuint vertexShader = compile_shader(GL_VERTEX_SHADER, vertexShaderSource);
   if (vertexShader == 0)
     return 0;
 
-  GLuint fragmentShader = compile_shader(GL_FRAGMENT_SHADER, fragmentShaderSource);
+  const GLuint fragmentShader = compile_shader(GL_FRAGMENT_SHADER, fragmentShaderSource);
   if (fragmentShader == 0) {
     glDeleteShader(vertexShader);
     return 0;
   }
 
-  GLuint program = glCreateProgram();
+  const GLuint program = glCreateProgram();
   if (program == 0) {
     fprintf(stderr, "Failed to create shader program\n");
     glDeleteShader(vertexShader);
@@ -345,8 +345,8 @@ static const unsigned char *font_glyph(char character) {
   }
 }
 
-static int build_text_vertices(const char *text, float shadowOffset,
-                               int framebufferWidth, int framebufferHeight,
+static int build_text_vertices(const char *text, const float shadowOffset,
+                               int framebufferWidth, const int framebufferHeight,
                                float *vertices) {
   int vertexCount = 0;
 
@@ -355,18 +355,18 @@ static int build_text_vertices(const char *text, float shadowOffset,
     const unsigned char *glyph = font_glyph(text[characterIndex]);
     if (glyph == NULL)
       continue;
-    float originX = 16.0f + (float)characterIndex * 18.0f + shadowOffset;
-    float originY = 16.0f + shadowOffset;
+    const float originX = 16.0f + (float)characterIndex * 18.0f + shadowOffset;
+    const float originY = 16.0f + shadowOffset;
     for (int row = 0; row < 7; row++) {
       for (int column = 0; column < 5; column++) {
         if ((glyph[row] & (1u << (4 - column))) == 0)
           continue;
         const float pixelSize = 2.0f;
         const float cellSize = 3.0f;
-        float left = originX + (float)column * cellSize;
-        float top = originY + (float)row * cellSize;
-        float right = left + pixelSize;
-        float bottom = top + pixelSize;
+        const float left = originX + (float)column * cellSize;
+        const float top = originY + (float)row * cellSize;
+        const float right = left + pixelSize;
+        const float bottom = top + pixelSize;
         const float quad[6][2] = {{left, top}, {right, top}, {right, bottom},
                                   {left, top}, {right, bottom}, {left, bottom}};
         for (int vertex = 0; vertex < 6; vertex++) {
@@ -383,7 +383,7 @@ static int build_text_vertices(const char *text, float shadowOffset,
   return vertexCount;
 }
 
-static void render_fps(const Renderer *renderer, int fps) {
+static void render_fps(const Renderer *renderer, const int fps) {
   if (renderer->framebufferWidth <= 0 || renderer->framebufferHeight <= 0)
     return;
 
@@ -425,13 +425,13 @@ static void render_world(const Renderer *renderer, const Player *player) {
   glUseProgram(renderer->program);
 
   mat4 proj, view, mvp;
-  float aspectRatio = (float)renderer->framebufferWidth /
+  const float aspectRatio = (float)renderer->framebufferWidth /
                       (float)renderer->framebufferHeight;
   mat4_perspective(75.0f * (3.14159f / 180.0f), aspectRatio, 0.1f, 100.0f,
                    proj);
   Vec3 cameraPosition = player->position;
   cameraPosition.y += player->eyeHeight;
-  Vec3 target = vec3_add(cameraPosition, player->camera.front);
+  const Vec3 target = vec3_add(cameraPosition, player->camera.front);
   mat4_lookat(cameraPosition, target, player->camera.up, view);
   mat4_multiply(proj, view, mvp);
 
@@ -452,8 +452,8 @@ static void render_world(const Renderer *renderer, const Player *player) {
 #pragma endregion
 
 #pragma region Application
-static void framebuffer_size_callback(GLFWwindow *window, int width,
-                                      int height) {
+static void framebuffer_size_callback(GLFWwindow *window, const int width,
+                                      const int height) {
   Application *application = glfwGetWindowUserPointer(window);
   if (application == NULL)
     return;
@@ -514,7 +514,7 @@ static int application_init(Application *application) {
   glfwWindowHint(GLFW_SAMPLES, 4);
 
   application->window =
-      glfwCreateWindow(800, 600, "bwildering 0.1", NULL, NULL);
+      glfwCreateWindow(1920, 1200, "bwildering 0.1", NULL, NULL);
   if (application->window == NULL) {
     fprintf(stderr, "Failed to create GLFW window\n");
     application_shutdown(application);
@@ -531,7 +531,7 @@ static int application_init(Application *application) {
   glfwSetInputMode(application->window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
   glewExperimental = GL_TRUE;
-  GLenum glewStatus = glewInit();
+  const GLenum glewStatus = glewInit();
   if (glewStatus != GLEW_OK) {
     fprintf(stderr, "Failed to initialize GLEW: %p\n",
             glewGetErrorString(glewStatus));
@@ -587,7 +587,7 @@ static void application_update(Application *application) {
   GLFWwindow *window = application->window;
   glfwPollEvents();
 
-  double currentFrame = glfwGetTime();
+  const double currentFrame = glfwGetTime();
   double deltaTime = currentFrame - application->lastFrame;
   application->lastFrame = currentFrame;
   if (deltaTime < 0.0)
@@ -596,16 +596,16 @@ static void application_update(Application *application) {
     deltaTime = MAX_FRAME_DELTA_TIME;
 
   application->fpsFrameCount++;
-  double fpsElapsed = currentFrame - application->fpsWindowStart;
+  const double fpsElapsed = currentFrame - application->fpsWindowStart;
   if (fpsElapsed >= 1.0) {
     application->fps = (int)(application->fpsFrameCount / fpsElapsed + 0.5);
     application->fpsFrameCount = 0;
     application->fpsWindowStart = currentFrame;
   }
 
-  int escapeIsDown = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
+  const int escapeIsDown = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
   if (escapeIsDown && !application->escapeWasDown) {
-    int cursorCaptured =
+    const int cursorCaptured =
         glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED;
     glfwSetInputMode(window, GLFW_CURSOR,
                      cursorCaptured ? GLFW_CURSOR_NORMAL

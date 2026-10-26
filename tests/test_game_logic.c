@@ -575,7 +575,7 @@ static void test_terrain_collision(void) {
   /* Jumping over a one-block step lands on its top. */
   player = make_player((Vec3){0.25f, 0, 0}, 1);
   update_player(&player, (PlayerInput){.jump = 1}, 0.01f, &world);
-  for (int i = 0; i < 30; i++)
+  for (int i = 0; i < 45; i++)
     update_player(&player, (PlayerInput){.strafe = 1}, 0.01f, &world);
   assert(player.position.x > 0.5f);
   for (int i = 0; i < 100; i++)
@@ -583,7 +583,7 @@ static void test_terrain_collision(void) {
   assert(player.grounded);
   assert_near(player.position.y, 1);
   /* Walking down begins falling and lands on the lower neighbor. */
-  update_player(&player, (PlayerInput){.strafe = -1}, 0.15f, &world);
+  update_player(&player, (PlayerInput){.strafe = -1}, 0.25f, &world);
   assert(!player.grounded);
   for (int i = 0; i < 100; i++)
     update_player(&player, (PlayerInput){0}, 0.01f, &world);
@@ -591,7 +591,55 @@ static void test_terrain_collision(void) {
   assert_near(player.position.y, 0);
 }
 
+static void test_camera_stays_clear_of_walls(void) {
+  const int dx[] = {-1, 1, 0, 0};
+  const int dz[] = {0, 0, -1, 1};
+  for (int direction = 0; direction < 4; direction++) {
+    World world = {0};
+    assert(create_platform(&world, 3, (Vec3){0}, 1, 1));
+    world.elevations[world_index(1 + dx[direction], 1 + dz[direction], 3)] = 3;
+    Player player = make_player((Vec3){0, 0, 0}, 1);
+    player.eyeHeight = 1;
+    const PlayerInput input = {.strafe = dx[direction], .forward = -dz[direction]};
+    for (int frame = 0; frame < 100; frame++)
+      update_player(&player, input, 0.12f, &world);
+    const float approach = player.position.x * dx[direction] + player.position.z * dz[direction];
+    assert(approach > 0.1f && approach <= 0.25f);
+    assert(player.grounded);
+    assert_near(player.position.y, 0);
+  }
+}
+
+static void test_player_footprint_at_corners_and_ledges(void) {
+  World world = {0};
+  assert(create_platform(&world, 3, (Vec3){0}, 1, 1));
+  /* The center point misses this column; the player's corner overlaps it. */
+  world.elevations[world_index(2, 2, 3)] = 3;
+  Player player = make_player((Vec3){0, 0, 0.6f}, 1);
+  update_player(&player, (PlayerInput){.strafe = 1}, 0.12f, &world);
+  assert(player.position.x <= 0.25f);
+  /* Tangential movement still slides along the wall. */
+  const float previousX = player.position.x;
+  update_player(&player, (PlayerInput){.strafe = 1, .forward = -1}, 0.12f, &world);
+  assert_near(player.position.x, previousX);
+  assert(player.position.z > 0.6f);
+
+  world = single_block_world();
+  player = make_player((Vec3){0.6f, 0, 0}, 1);
+  update_player(&player, (PlayerInput){0}, 0.01f, &world);
+  assert(player.grounded); /* Footprint still overlaps the ledge. */
+  player = make_player((Vec3){0.6f, 0.1f, 0}, 0);
+  player.velocityY = -1;
+  update_player(&player, (PlayerInput){0}, 0.1f, &world);
+  assert(player.grounded);
+  assert_near(player.position.y, 0);
+  update_player(&player, (PlayerInput){.strafe = 1}, 0.1f, &world);
+  assert(!player.grounded);
+}
+
 int main(void) {
+  test_camera_stays_clear_of_walls();
+  test_player_footprint_at_corners_and_ledges();
   test_seeded_terrain();
   test_terrain_cliff_mesh();
   test_terrain_collision();

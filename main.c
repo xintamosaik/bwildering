@@ -433,7 +433,7 @@ static void render_world(const Renderer *renderer, const Player *player) {
   mat4 proj, view, mvp;
   const float aspectRatio = (float)renderer->framebufferWidth /
                       (float)renderer->framebufferHeight;
-  mat4_perspective(75.0f * (3.14159f / 180.0f), aspectRatio, 0.1f, 100.0f,
+  mat4_perspective(75.0f * (3.14159f / 180.0f), aspectRatio, 0.05f, 100.0f,
                    proj);
   Vec3 cameraPosition = player->position;
   cameraPosition.y += player->eyeHeight;

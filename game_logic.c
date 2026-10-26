@@ -407,20 +407,52 @@ void platform_surface_mesh_destroy(PlatformSurfaceMesh *mesh) {
   *mesh = (PlatformSurfaceMesh){0};
 }
 
+/* Keep the camera away from walls and support the player's whole footprint. */
+static const float PLAYER_RADIUS = 0.25f;
+
+static float player_support_height(const World *world, const float x, const float z) {
+  if (!world_grid_valid(world))
+    return NAN;
+  const float halfSide = world->blocksPerSide / 2.0f;
+  const float minX = (x - PLAYER_RADIUS - world->center.x) / world->blockSize + halfSide;
+  const float maxX = (x + PLAYER_RADIUS - world->center.x) / world->blockSize + halfSide;
+  const float minZ = (z - PLAYER_RADIUS - world->center.z) / world->blockSize + halfSide;
+  const float maxZ = (z + PLAYER_RADIUS - world->center.z) / world->blockSize + halfSide;
+  const int side = world->blocksPerSide;
+  if (maxX <= 0 || maxZ <= 0 || minX >= side || minZ >= side)
+    return NAN;
+  const int firstX = (int)floorf(fmaxf(0, minX));
+  const int firstZ = (int)floorf(fmaxf(0, minZ));
+  const int lastX = (int)ceilf(fminf((float)side, maxX)) - 1;
+  const int lastZ = (int)ceilf(fminf((float)side, maxZ)) - 1;
+  float highest = NAN;
+  for (int cellX = firstX; cellX <= lastX; cellX++) {
+    for (int cellZ = firstZ; cellZ <= lastZ; cellZ++) {
+      if (world_is_solid(world, cellX, cellZ)) {
+        const float top = column_top(world, cellX, cellZ);
+        if (isnan(highest) || top > highest)
+          highest = top;
+      }
+    }
+  }
+  return highest;
+}
+
 /* Sweep in small increments so a long frame cannot tunnel through a column.
    Resolve axes separately so the player can slide along a cliff face. */
 static void move_player_horizontal(Player *player, const Vec3 movement,
                                     const World *world) {
   const float distance = fmaxf(fabsf(movement.x), fabsf(movement.z));
-  const float stepSize = world_grid_valid(world) ? world->blockSize * 0.25f : 1.0f;
+  const float stepSize = world_grid_valid(world) ?
+      fminf(world->blockSize * 0.25f, PLAYER_RADIUS * 0.5f) : 1.0f;
   const int steps = (int)fmaxf(1.0f, ceilf(distance / stepSize));
   for (int i = 0; i < steps; i++) {
     float next = player->position.x + movement.x / steps;
-    float top = world_surface_height(world, next, player->position.z);
+    float top = player_support_height(world, next, player->position.z);
     if (isnan(top) || player->position.y >= top - 0.001f)
       player->position.x = next;
     next = player->position.z + movement.z / steps;
-    top = world_surface_height(world, player->position.x, next);
+    top = player_support_height(world, player->position.x, next);
     if (isnan(top) || player->position.y >= top - 0.001f)
       player->position.z = next;
   }
@@ -438,7 +470,7 @@ void update_player(Player *updatedPlayer, const PlayerInput input, const float d
     movement = vec3_normalize(movement);
   move_player_horizontal(updatedPlayer, vec3_scale(movement, moveSpeed * deltaTime), world);
 
-  const float top = world_surface_height(world, updatedPlayer->position.x,
+  const float top = player_support_height(world, updatedPlayer->position.x,
                                           updatedPlayer->position.z);
   if (updatedPlayer->grounded &&
       (isnan(top) || fabsf(updatedPlayer->position.y - top) >= 0.001f))

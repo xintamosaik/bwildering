@@ -6,10 +6,10 @@
 
 static const float GRAVITY = 9.81f;
 static const Vec3 BLOCK_TYPE_COLORS[BLOCK_TYPE_COUNT] = {
-  [BLOCK_TYPE_GRASS] = {0.38f, 0.62f, 0.42f},
-  [BLOCK_TYPE_STONE] = {0.55f, 0.58f, 0.60f},
-  [BLOCK_TYPE_WATER] = {0.20f, 0.48f, 0.78f},
-  [BLOCK_TYPE_SAND] = {0.86f, 0.72f, 0.42f},
+  [BLOCK_TYPE_GRASS] = {.x = 0.38f, .y = 0.62f, .z = 0.42f},
+  [BLOCK_TYPE_STONE] = {.x = 0.55f, .y = 0.58f, .z = 0.60f},
+  [BLOCK_TYPE_WATER] = {.x = 0.20f, .y = 0.48f, .z = 0.78f},
+  [BLOCK_TYPE_SAND] = {.x = 0.86f, .y = 0.72f, .z = 0.42f},
 };
 
 static uint32_t next_random(uint32_t *state) {
@@ -25,7 +25,7 @@ uint32_t random_bounded(uint32_t *state, uint32_t upperBound) {
   if (state == NULL || upperBound == 0u)
     return 0u;
 
-  uint32_t threshold = (0u - upperBound) % upperBound;
+  const uint32_t threshold = (0u - upperBound) % upperBound;
   uint32_t value;
   do {
     value = next_random(state);
@@ -34,33 +34,33 @@ uint32_t random_bounded(uint32_t *state, uint32_t upperBound) {
   return value % upperBound;
 }
 
-Vec3 vec3_add(Vec3 a, Vec3 b) {
-  return (Vec3){a.x + b.x, a.y + b.y, a.z + b.z};
+Vec3 vec3_add(const Vec3 a, const Vec3 b) {
+  return (Vec3){.x = a.x + b.x, .y = a.y + b.y, .z = a.z + b.z};
 }
 
-Vec3 vec3_sub(Vec3 a, Vec3 b) {
-  return (Vec3){a.x - b.x, a.y - b.y, a.z - b.z};
+Vec3 vec3_sub(const Vec3 a, const Vec3 b) {
+  return (Vec3){.x = a.x - b.x, .y = a.y - b.y, .z = a.z - b.z};
 }
 
-Vec3 vec3_scale(Vec3 v, float scalar) {
-  return (Vec3){v.x * scalar, v.y * scalar, v.z * scalar};
+Vec3 vec3_scale(const Vec3 v, const float scalar) {
+  return (Vec3){.x = v.x * scalar, .y = v.y * scalar, .z = v.z * scalar};
 }
 
-Vec3 vec3_normalize(Vec3 v) {
-  float length = sqrtf(vec3_dot(v, v));
+Vec3 vec3_normalize(const Vec3 v) {
+  const float length = sqrtf(vec3_dot(v, v));
   if (length == 0.0f)
-    return (Vec3){0.0f, 0.0f, 0.0f};
+    return (Vec3){.x = 0.0f, .y = 0.0f, .z = 0.0f};
   return vec3_scale(v, 1.0f / length);
 }
 
-Vec3 vec3_cross(Vec3 a, Vec3 b) {
-  return (Vec3){a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z,
-                a.x * b.y - a.y * b.x};
+Vec3 vec3_cross(const Vec3 a, const Vec3 b) {
+  return (Vec3){.x = a.y * b.z - a.z * b.y, .y = a.z * b.x - a.x * b.z,
+                .z = a.x * b.y - a.y * b.x};
 }
 
-float vec3_dot(Vec3 a, Vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+float vec3_dot(const Vec3 a, const Vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
 
-int block_type_color(BlockType type, Vec3 *color) {
+int block_type_color(const BlockType type, Vec3 *color) {
   if (color == NULL || type < BLOCK_TYPE_GRASS || type >= BLOCK_TYPE_COUNT)
     return 0;
 
@@ -68,10 +68,10 @@ int block_type_color(BlockType type, Vec3 *color) {
   return 1;
 }
 
-void mat4_rotate(mat4 dest, float angle, float x, float y, float z) {
-  float c = cosf(angle);
-  float s = sinf(angle);
-  float len = sqrtf(x * x + y * y + z * z);
+void mat4_rotate(mat4 dest, const float angle, float x, float y, float z) {
+  const float c = cosf(angle);
+  const float s = sinf(angle);
+  const float len = sqrtf(x * x + y * y + z * z);
   if (len == 0.0f) {
     mat4_identity(dest);
     return;
@@ -79,7 +79,7 @@ void mat4_rotate(mat4 dest, float angle, float x, float y, float z) {
   x /= len;
   y /= len;
   z /= len;
-  float ic = 1.0f - c;
+  const float ic = 1.0f - c;
 
   mat4_identity(dest);
   dest[0] = x * x * ic + c;
@@ -99,11 +99,11 @@ void mat4_identity(mat4 dest) {
   dest[0] = dest[5] = dest[10] = dest[15] = 1.0f;
 }
 
-void mat4_perspective(float fov_radians, float aspect, float near, float far,
+void mat4_perspective(const float fov_radians, const float aspect, const float near, const float far,
                       mat4 dest) {
   for (int i = 0; i < 16; i++)
     dest[i] = 0.0f;
-  float tanHalfFovy = tanf(fov_radians / 2.0f);
+  const float tanHalfFovy = tanf(fov_radians / 2.0f);
 
   dest[0] = 1.0f / (aspect * tanHalfFovy);
   dest[5] = 1.0f / tanHalfFovy;
@@ -112,10 +112,10 @@ void mat4_perspective(float fov_radians, float aspect, float near, float far,
   dest[14] = -(2.0f * far * near) / (far - near);
 }
 
-void mat4_lookat(Vec3 eye, Vec3 target, Vec3 up, mat4 dest) {
-  Vec3 f = vec3_normalize(vec3_sub(target, eye));
-  Vec3 s = vec3_normalize(vec3_cross(f, up));
-  Vec3 u = vec3_cross(s, f);
+void mat4_lookat(const Vec3 eye, const Vec3 target, const Vec3 up, mat4 dest) {
+  const Vec3 f = vec3_normalize(vec3_sub(target, eye));
+  const Vec3 s = vec3_normalize(vec3_cross(f, up));
+  const Vec3 u = vec3_cross(s, f);
 
   mat4_identity(dest);
   dest[0] = s.x;
@@ -156,21 +156,21 @@ int world_add_block(World *world, Block block) {
   return 1;
 }
 
-int create_platform(World *world, int blocksPerSide, Vec3 center,
-                    float blockSize, uint32_t seed) {
+int create_platform(World *world, const int blocksPerSide, const Vec3 center,
+                    const float blockSize, const uint32_t seed) {
   if (world == NULL || blocksPerSide <= 0 ||
       blocksPerSide > WORLD_MAX_BLOCKS / blocksPerSide)
     return 0;
 
-  int totalBlocks = blocksPerSide * blocksPerSide;
+  const int totalBlocks = blocksPerSide * blocksPerSide;
   BlockType blockTypes[WORLD_MAX_BLOCKS];
   for (int i = 0; i < totalBlocks; i++)
     blockTypes[i] = (BlockType)(i % BLOCK_TYPE_COUNT);
 
   uint32_t randomState = seed == 0 ? UINT32_C(0x6D2B79F5) : seed;
   for (int i = totalBlocks - 1; i > 0; i--) {
-    int swapIndex = (int)random_bounded(&randomState, (uint32_t)(i + 1));
-    BlockType type = blockTypes[i];
+    const int swapIndex = (int)random_bounded(&randomState, (uint32_t)(i + 1));
+    const BlockType type = blockTypes[i];
     blockTypes[i] = blockTypes[swapIndex];
     blockTypes[swapIndex] = type;
   }
@@ -179,16 +179,16 @@ int create_platform(World *world, int blocksPerSide, Vec3 center,
   int blockIndex = 0;
   for (int x = 0; x < blocksPerSide; x++) {
     for (int z = 0; z < blocksPerSide; z++) {
-      Block block = {
+      const Block block = {
           .position =
               {
                   .x = center.x +
-                       ((float)x - blocksPerSide / 2.0f + 0.5f) * blockSize,
+                       ((float)x - (float)blocksPerSide / 2.0f + 0.5f) * blockSize,
                   .y = center.y - blockSize / 2.0f,
                   .z = center.z +
-                       ((float)z - blocksPerSide / 2.0f + 0.5f) * blockSize,
+                       ((float)z - (float)blocksPerSide / 2.0f + 0.5f) * blockSize,
               },
-          .size = {blockSize, blockSize, blockSize},
+          .size = {.x = blockSize, .y = blockSize, .z = blockSize},
                 .type = blockTypes[blockIndex++],
       };
       if (!world_add_block(world, block))
@@ -199,25 +199,25 @@ int create_platform(World *world, int blocksPerSide, Vec3 center,
 }
 
 static void append_surface_quad(SurfaceVertex *vertices, size_t *cursor,
-                                Vec3 first, Vec3 second, Vec3 third,
-                                Vec3 fourth) {
-  vertices[(*cursor)++] = (SurfaceVertex){first.x, first.y, first.z};
-  vertices[(*cursor)++] = (SurfaceVertex){second.x, second.y, second.z};
-  vertices[(*cursor)++] = (SurfaceVertex){third.x, third.y, third.z};
-  vertices[(*cursor)++] = (SurfaceVertex){first.x, first.y, first.z};
-  vertices[(*cursor)++] = (SurfaceVertex){third.x, third.y, third.z};
-  vertices[(*cursor)++] = (SurfaceVertex){fourth.x, fourth.y, fourth.z};
+                                const Vec3 first, const Vec3 second, const Vec3 third,
+                                const Vec3 fourth) {
+  vertices[(*cursor)++] = (SurfaceVertex){.x = first.x, .y = first.y, .z = first.z};
+  vertices[(*cursor)++] = (SurfaceVertex){.x = second.x, .y = second.y, .z = second.z};
+  vertices[(*cursor)++] = (SurfaceVertex){.x = third.x, .y = third.y, .z = third.z};
+  vertices[(*cursor)++] = (SurfaceVertex){.x = first.x, .y = first.y, .z = first.z};
+  vertices[(*cursor)++] = (SurfaceVertex){.x = third.x, .y = third.y, .z = third.z};
+  vertices[(*cursor)++] = (SurfaceVertex){.x = fourth.x, .y = fourth.y, .z = fourth.z};
 }
 
-int platform_surface_mesh_build(const World *world, int platformBlocksPerSide,
+int platform_surface_mesh_build(const World *world, const int platformBlocksPerSide,
                                 PlatformSurfaceMesh *mesh) {
   if (world == NULL || mesh == NULL || platformBlocksPerSide <= 0)
     return 0;
 
-  size_t side = (size_t)platformBlocksPerSide;
+  const size_t side = (size_t)platformBlocksPerSide;
   if (side > SIZE_MAX / side)
     return 0;
-  size_t expectedBlockCount = side * side;
+  const size_t expectedBlockCount = side * side;
   if (world->blockCount < 0 ||
       (size_t)world->blockCount != expectedBlockCount)
     return 0;
@@ -229,8 +229,8 @@ int platform_surface_mesh_build(const World *world, int platformBlocksPerSide,
       return 0;
 
     quadCounts[block->type]++;
-    size_t x = index / side;
-    size_t z = index % side;
+    const size_t x = index / side;
+    const size_t z = index % side;
     if (x == 0)
       quadCounts[block->type]++;
     if (x + 1 == side)
@@ -264,43 +264,43 @@ int platform_surface_mesh_build(const World *world, int platformBlocksPerSide,
 
   for (size_t index = 0; index < expectedBlockCount; index++) {
     const Block *block = &world->blocks[index];
-    size_t x = index / side;
-    size_t z = index % side;
-    float halfX = block->size.x / 2.0f;
-    float halfY = block->size.y / 2.0f;
-    float halfZ = block->size.z / 2.0f;
-    float left = block->position.x - halfX;
-    float right = block->position.x + halfX;
-    float bottom = block->position.y - halfY;
-    float top = block->position.y + halfY;
-    float back = block->position.z - halfZ;
-    float front = block->position.z + halfZ;
+    const size_t x = index / side;
+    const size_t z = index % side;
+    const float halfX = block->size.x / 2.0f;
+    const float halfY = block->size.y / 2.0f;
+    const float halfZ = block->size.z / 2.0f;
+    const float left = block->position.x - halfX;
+    const float right = block->position.x + halfX;
+    const float bottom = block->position.y - halfY;
+    const float top = block->position.y + halfY;
+    const float back = block->position.z - halfZ;
+    const float front = block->position.z + halfZ;
     size_t *cursor = &cursors[block->type];
 
     append_surface_quad(
-        result.vertices, cursor, (Vec3){left, top, back},
-        (Vec3){left, top, front}, (Vec3){right, top, front},
-        (Vec3){right, top, back});
+        result.vertices, cursor, (Vec3){.x = left, .y = top, .z = back},
+        (Vec3){.x = left, .y = top, .z = front}, (Vec3){.x = right, .y = top, .z = front},
+        (Vec3){.x = right, .y = top, .z = back});
     if (x == 0)
       append_surface_quad(
-          result.vertices, cursor, (Vec3){left, bottom, front},
-          (Vec3){left, top, front}, (Vec3){left, top, back},
-          (Vec3){left, bottom, back});
+          result.vertices, cursor, (Vec3){.x = left, .y = bottom, .z = front},
+          (Vec3){.x = left, .y = top, .z = front}, (Vec3){.x = left, .y = top, .z = back},
+          (Vec3){.x = left, .y = bottom, .z = back});
     if (x + 1 == side)
       append_surface_quad(
-          result.vertices, cursor, (Vec3){right, bottom, back},
-          (Vec3){right, top, back}, (Vec3){right, top, front},
-          (Vec3){right, bottom, front});
+          result.vertices, cursor, (Vec3){.x = right, .y = bottom, .z = back},
+          (Vec3){.x = right, .y = top, .z = back}, (Vec3){.x = right, .y = top, .z = front},
+          (Vec3){.x = right, .y = bottom, .z = front});
     if (z == 0)
       append_surface_quad(
-          result.vertices, cursor, (Vec3){left, bottom, back},
-          (Vec3){left, top, back}, (Vec3){right, top, back},
-          (Vec3){right, bottom, back});
+          result.vertices, cursor, (Vec3){.x = left, .y = bottom, .z = back},
+          (Vec3){.x = left, .y = top, .z = back}, (Vec3){.x = right, .y = top, .z = back},
+          (Vec3){.x = right, .y = bottom, .z = back});
     if (z + 1 == side)
       append_surface_quad(
-          result.vertices, cursor, (Vec3){right, bottom, front},
-          (Vec3){right, top, front}, (Vec3){left, top, front},
-          (Vec3){left, bottom, front});
+          result.vertices, cursor, (Vec3){.x = right, .y = bottom, .z = front},
+          (Vec3){.x = right, .y = top, .z = front}, (Vec3){.x = left, .y = top, .z = front},
+          (Vec3){.x = left, .y = bottom, .z = front});
   }
 
   *mesh = result;
@@ -314,12 +314,12 @@ void platform_surface_mesh_destroy(PlatformSurfaceMesh *mesh) {
   *mesh = (PlatformSurfaceMesh){0};
 }
 
-void update_player(Player *updatedPlayer, PlayerInput input, float deltaTime,
+void update_player(Player *updatedPlayer, const PlayerInput input, const float deltaTime,
                    const World *world) {
   const float moveSpeed = 4.0f;
-  Vec3 frontXZ = vec3_normalize((Vec3){updatedPlayer->camera.front.x, 0.0f,
+  const Vec3 frontXZ = vec3_normalize((Vec3){updatedPlayer->camera.front.x, 0.0f,
                                        updatedPlayer->camera.front.z});
-  Vec3 right = vec3_normalize(vec3_cross(frontXZ, updatedPlayer->camera.up));
+  const Vec3 right = vec3_normalize(vec3_cross(frontXZ, updatedPlayer->camera.up));
   Vec3 movement = vec3_add(vec3_scale(frontXZ, input.forward),
                            vec3_scale(right, input.strafe));
   if (vec3_dot(movement, movement) > 1.0f)
@@ -332,9 +332,9 @@ void update_player(Player *updatedPlayer, PlayerInput input, float deltaTime,
     int hasSupport = 0;
     for (int i = 0; i < world->blockCount; i++) {
       const Block *block = &world->blocks[i];
-      float halfWidth = block->size.x / 2.0f;
-      float halfDepth = block->size.z / 2.0f;
-      float blockTop = block->position.y + block->size.y / 2.0f;
+      const float halfWidth = block->size.x / 2.0f;
+      const float halfDepth = block->size.z / 2.0f;
+      const float blockTop = block->position.y + block->size.y / 2.0f;
       if (updatedPlayer->position.x >= block->position.x - halfWidth &&
           updatedPlayer->position.x <= block->position.x + halfWidth &&
           updatedPlayer->position.z >= block->position.z - halfDepth &&
@@ -355,15 +355,15 @@ void update_player(Player *updatedPlayer, PlayerInput input, float deltaTime,
   if (updatedPlayer->grounded)
     return;
 
-  float previousY = updatedPlayer->position.y;
+  const float previousY = updatedPlayer->position.y;
   updatedPlayer->velocityY -= GRAVITY * deltaTime;
   updatedPlayer->position.y += updatedPlayer->velocityY * deltaTime;
 
   for (int i = 0; i < world->blockCount; i++) {
     const Block *block = &world->blocks[i];
-    float halfWidth = block->size.x / 2.0f;
-    float halfDepth = block->size.z / 2.0f;
-    float blockTop = block->position.y + block->size.y / 2.0f;
+    const float halfWidth = block->size.x / 2.0f;
+    const float halfDepth = block->size.z / 2.0f;
+    const float blockTop = block->position.y + block->size.y / 2.0f;
 
     if (updatedPlayer->position.x >= block->position.x - halfWidth &&
         updatedPlayer->position.x <= block->position.x + halfWidth &&

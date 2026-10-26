@@ -4,7 +4,10 @@
 #include <stddef.h>
 #include <stdlib.h>
 
-static const float GRAVITY = 9.81f;
+/* Keep roughly 1.25 blocks of clearance with a brisk rise and heavier descent. */
+static const float GRAVITY = 20.0f;
+static const float JUMP_SPEED = 7.2f;
+static const float FALL_GRAVITY_MULTIPLIER = 1.5f;
 /* Muted earth tones: olive, warm stone, dusty teal, and ochre. */
 static const Vec3 BLOCK_TYPE_COLORS[BLOCK_TYPE_COUNT] = {
   [BLOCK_TYPE_GRASS] = {.x = 0.46f, .y = 0.52f, .z = 0.38f},
@@ -477,14 +480,16 @@ void update_player(Player *updatedPlayer, const PlayerInput input, const float d
     updatedPlayer->grounded = 0;
 
   if (input.jump && updatedPlayer->grounded) {
-    updatedPlayer->velocityY = 5.0f;
+    updatedPlayer->velocityY = JUMP_SPEED;
     updatedPlayer->grounded = 0;
   }
   if (updatedPlayer->grounded)
     return;
 
   const float previousY = updatedPlayer->position.y;
-  updatedPlayer->velocityY -= GRAVITY * deltaTime;
+  const float gravity = GRAVITY * (updatedPlayer->velocityY <= 0.0f ?
+                                  FALL_GRAVITY_MULTIPLIER : 1.0f);
+  updatedPlayer->velocityY -= gravity * deltaTime;
   updatedPlayer->position.y += updatedPlayer->velocityY * deltaTime;
   if (!isnan(top) && previousY >= top && updatedPlayer->position.y <= top) {
     updatedPlayer->position.y = top;

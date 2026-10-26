@@ -425,15 +425,49 @@ static void test_jump_requires_grounding(void) {
   World world = single_block_world();
   Player grounded = make_player((Vec3){0.0f, 0.0f, 0.0f}, 1);
   Player airborne = make_player((Vec3){0.0f, 2.0f, 0.0f}, 0);
+  Player withoutJump = airborne;
 
   update_player(&grounded, (PlayerInput){.jump = 1}, 0.1f, &world);
   update_player(&airborne, (PlayerInput){.jump = 1}, 0.1f, &world);
+  update_player(&withoutJump, (PlayerInput){0}, 0.1f, &world);
 
   assert(!grounded.grounded);
   assert(grounded.velocityY > 0.0f);
   assert(grounded.position.y > 0.0f);
   assert(!airborne.grounded);
-  assert_near(airborne.velocityY, -9.81f * 0.1f);
+  assert(airborne.velocityY < 0.0f);
+  assert_near(airborne.velocityY, withoutJump.velocityY);
+  assert_near(airborne.position.y, withoutJump.position.y);
+}
+
+static void test_jump_height_and_timing(void) {
+  World world = single_block_world();
+  const int rates[] = {60, 120, 240};
+  for (size_t rate = 0; rate < sizeof(rates) / sizeof(rates[0]); rate++) {
+    Player player = make_player((Vec3){0}, 1);
+    const float dt = 1.0f / rates[rate];
+    float peak = 0.0f;
+    float timeToPeak = 0.0f;
+    int frame = 0;
+    do {
+      update_player(&player, (PlayerInput){.jump = frame == 0}, dt, &world);
+      frame++;
+      if (player.position.y > peak) {
+        peak = player.position.y;
+        timeToPeak = frame * dt;
+      }
+    } while (!player.grounded && frame < rates[rate]);
+
+    const float airtime = frame * dt;
+    /* Preserve one-block clearance without lingering in the air. */
+    assert(peak > 1.15f && peak < 1.35f);
+    assert(timeToPeak > 0.3f && timeToPeak < 0.4f);
+    assert(airtime > 0.6f && airtime < 0.7f);
+    assert(airtime - timeToPeak < timeToPeak);
+    assert(player.grounded);
+    assert_near(player.position.y, 0.0f);
+    assert_near(player.velocityY, 0.0f);
+  }
 }
 
 static void test_random_bounded_output_range(void) {
@@ -583,8 +617,14 @@ static void test_terrain_collision(void) {
   assert(player.grounded);
   assert_near(player.position.y, 1);
   /* Walking down begins falling and lands on the lower neighbor. */
-  update_player(&player, (PlayerInput){.strafe = -1}, 0.25f, &world);
-  assert(!player.grounded);
+  player = make_player((Vec3){1, 1, 0}, 1);
+  int beganFalling = 0;
+  for (int i = 0; i < 25; i++) {
+    update_player(&player, (PlayerInput){.strafe = -1}, 0.01f, &world);
+    if (!player.grounded)
+      beganFalling = 1;
+  }
+  assert(beganFalling);
   for (int i = 0; i < 100; i++)
     update_player(&player, (PlayerInput){0}, 0.01f, &world);
   assert(player.grounded);
@@ -657,6 +697,7 @@ int main(void) {
   test_landing_on_block();
   test_falling_off_platform_edge();
   test_jump_requires_grounding();
+  test_jump_height_and_timing();
   test_random_bounded_output_range();
   puts("All game logic tests passed.");
   return 0;

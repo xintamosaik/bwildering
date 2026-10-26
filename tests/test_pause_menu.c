@@ -172,6 +172,23 @@ static void test_view_distance_settings(int width, int height, int density) {
 }
 
 int main(void) {
+  /* Nearest-rank p95, maximum and mean retain spikes above the simulation cap. */
+  Performance perf = {.enabled = 1};
+  for (int i = 1; i <= 100; i++) {
+    perf.frame.raw = i / 100.0;
+    perf_record(&perf);
+  }
+  perf_finish_window(&perf);
+  assert(fabs(perf.average - 0.505) < 1e-9);
+  assert(perf.p95 == 0.95 && perf.maximum == 1.0);
+  for (int i = 100; i < PERF_SAMPLES + 10; i++) perf_record(&perf);
+  assert(perf.count == PERF_SAMPLES);
+  performance_reset(&perf);
+  assert(!perf.count && !perf.total.raw);
+  perf.enabled = 0;
+  perf_record(&perf);
+  assert(!perf.count);
+
   Application application = {0};
   windowUser = &application;
   assert(create_platform(&application.world, 16, (Vec3){0}, 1, 1));
@@ -200,6 +217,7 @@ int main(void) {
   mouse_callback(application.window, 200, 150);
   pendingClick = GLFW_MOUSE_BUTTON_RIGHT + 1;
   frame(&application, 10);
+  assert(fabs(application.rawFrame - 10) < 1e-9);
   assert(application.world.voxelCount == voxels);
   assert_player_unchanged(&application.player, &frozen);
   /* Click outside the buttons: remain paused and do not place anything. */

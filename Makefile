@@ -9,7 +9,7 @@ TEST_SRC = tests/test_game_logic.c game_logic.c voxel_world.c
 
 all: $(TARGET)
 
-$(TARGET): $(SRC) game_logic.h
+$(TARGET): $(SRC) game_logic.h performance.h
 	$(CC) $(CFLAGS) $(SRC) -o $(TARGET) $(LDFLAGS)
 
 $(TEST_TARGET): $(TEST_SRC) game_logic.h
@@ -18,10 +18,10 @@ $(TEST_TARGET): $(TEST_SRC) game_logic.h
 test_allocation_failures: tests/test_allocation_failures.c game_logic.c voxel_world.c game_logic.h
 	$(CC) $(CFLAGS) tests/test_allocation_failures.c game_logic.c voxel_world.c -o $@ -lm -Wl,--wrap=malloc,--wrap=calloc
 
-test_renderer: tests/test_renderer.c $(SRC) game_logic.h
+test_renderer: tests/test_renderer.c $(SRC) game_logic.h performance.h
 	$(CC) $(CFLAGS) tests/test_renderer.c game_logic.c voxel_world.c -o $@ $(LDFLAGS)
 
-test_pause_menu: tests/test_pause_menu.c $(SRC) game_logic.h
+test_pause_menu: tests/test_pause_menu.c $(SRC) game_logic.h performance.h
 	$(CC) $(CFLAGS) tests/test_pause_menu.c game_logic.c voxel_world.c -o $@ $(LDFLAGS)
 
 test: $(TEST_TARGET) test_allocation_failures test_pause_menu
@@ -42,9 +42,12 @@ test-sanitize:
 	./test_pause_menu_sanitize
 
 clean:
-	rm -f $(TARGET) $(TEST_TARGET) test_allocation_failures test_renderer test_pause_menu test_game_logic_sanitize test_allocation_failures_sanitize test_pause_menu_sanitize
+	rm -f performance_capture $(TARGET) $(TEST_TARGET) test_allocation_failures test_renderer test_pause_menu test_game_logic_sanitize test_allocation_failures_sanitize test_pause_menu_sanitize
 
 run: all
 	./$(TARGET)
 
 .PHONY: all clean run test test-renderer test-sanitize
+
+performance_capture: tests/performance_capture.c $(SRC) game_logic.h performance.h
+	$(CC) $(CFLAGS) tests/performance_capture.c game_logic.c voxel_world.c -o $@ $(LDFLAGS)

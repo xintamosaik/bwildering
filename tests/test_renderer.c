@@ -266,6 +266,62 @@ static void test_streamed_exploration_revisits_edited_terrain(void) {
   world_destroy(&world);
 }
 
+static void test_performance_counters(void) {
+  Application a = {0};
+  a.performance.enabled = 1;
+  assert(renderer_init(&a.renderer));
+  a.renderer.performance = &a.performance;
+  a.renderer.framebufferWidth = 640;
+  a.renderer.framebufferHeight = 480;
+  assert(world_init(&a.world, 16, (Vec3){0}, 1));
+  assert(renderer_sync_world(&a.renderer, &a.world));
+  Player player = {.position = {0, 0, 5}, .eyeHeight = 1,
+      .camera = {.front = {0, 0, -1}, .up = {0, 1, 0}}};
+  render_world(&a.renderer, &player);
+  performance_snapshot(&a);
+  assert(!a.residentChunks && !a.dirtySections && !a.gpuBytes);
+  assert(!a.performance.frame.draws && !a.performance.frame.uploadCalls);
+  assert(world_set_block(&a.world, 0, 0, 0, BLOCK_TYPE_STONE));
+  performance_snapshot(&a);
+  assert(a.residentChunks == 1 && a.dirtySections == 1);
+  assert(renderer_sync_world(&a.renderer, &a.world));
+  render_world(&a.renderer, &player);
+  performance_snapshot(&a);
+  assert(a.performance.frame.rebuilds == 1 && a.performance.frame.uploadCalls == 1);
+  assert(a.performance.frame.uploadBytes == 36 * sizeof(SurfaceVertex));
+  assert(a.performance.frame.peakMeshBytes == 36 * sizeof(SurfaceVertex));
+  assert(a.performance.frame.draws == 1 && a.performance.frame.triangles == 12);
+  assert(a.gpuBytes == 36 * sizeof(SurfaceVertex) && !a.dirtySections);
+  /* Failed requests count as work while committed storage stays unchanged. */
+  assert(world_set_block(&a.world, 0, 0, 0, BLOCK_TYPE_GRASS));
+  performance_reset(&a.performance);
+  real_buffer_upload = __glewBufferData;
+  uploads_before_failure = 0;
+  __glewBufferData = fail_buffer_upload;
+  int uploaded = renderer_sync_world(&a.renderer, &a.world);
+  __glewBufferData = real_buffer_upload;
+  assert(!uploaded);
+  performance_snapshot(&a);
+  assert(a.performance.frame.rebuilds == 1 && a.performance.frame.uploadCalls == 1);
+  assert(a.performance.frame.uploadBytes == 36 * sizeof(SurfaceVertex));
+  assert(a.gpuBytes == 36 * sizeof(SurfaceVertex) && a.dirtySections == 1);
+  performance_reset(&a.performance);
+  assert(renderer_sync_world(&a.renderer, &a.world));
+  performance_snapshot(&a);
+  assert(a.performance.frame.rebuilds == 1 && a.performance.frame.uploadCalls == 1);
+  assert(a.performance.frame.uploadBytes == 36 * sizeof(SurfaceVertex));
+  assert(a.gpuBytes == 36 * sizeof(SurfaceVertex) && !a.dirtySections);
+  assert(world_set_block(&a.world, 0, 0, 0, BLOCK_TYPE_EMPTY));
+  performance_reset(&a.performance);
+  assert(renderer_sync_world(&a.renderer, &a.world));
+  render_world(&a.renderer, &player);
+  performance_snapshot(&a);
+  assert(a.residentChunks == 1 && a.world.sectionCount == 1); /* Retirement marker. */
+  assert(!a.gpuBytes && !a.performance.frame.uploadBytes && !a.performance.frame.draws);
+  renderer_destroy(&a.renderer);
+  world_destroy(&a.world);
+}
+
 int main(void) {
   test_frustum();
   glfwSetErrorCallback(glfw_test_error);
@@ -282,6 +338,7 @@ int main(void) {
   assert(glewInit() == GLEW_OK);
   while (glGetError() != GL_NO_ERROR) {
   }
+  test_performance_counters();
   Renderer renderer = {0};
   World world = {0};
   assert(renderer_init(&renderer));

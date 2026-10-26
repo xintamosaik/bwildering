@@ -136,6 +136,17 @@ int main(void) {
     assert(world_materialize_chunk(&streamed, 0, 0));
     assert(world_get_block(&streamed, 0, column.height - 1, 0) == column.material);
   }
+  /* Sparse out-of-envelope insertion must preserve existing sections on OOM. */
+  for (int y = -161; y <= 416; y += 577) {
+    size_t sections = streamed.sectionCount, voxels = streamed.voxelCount;
+    fail_after = 0;
+    assert(!world_set_block(&streamed, 0, y, 0, BLOCK_TYPE_SNOW));
+    fail_after = -1;
+    assert(streamed.sectionCount == sections && streamed.voxelCount == voxels);
+    assert(world_get_block(&streamed, 0, y, 0) == BLOCK_TYPE_EMPTY);
+    assert(world_set_block(&streamed, 0, y, 0, BLOCK_TYPE_SNOW));
+    assert(world_get_block(&streamed, 0, y, 0) == BLOCK_TYPE_SNOW);
+  }
   world_destroy(&streamed);
   puts("All allocation failure tests passed.");
   return 0;

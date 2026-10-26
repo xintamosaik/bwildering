@@ -464,29 +464,42 @@ static int renderer_upload_section_mesh(SectionGpuMesh *target,
    failure leaves its previous mesh and dirty flag intact, stops this pass, and
    keeps earlier successful replacements. Collision already sees CPU edits.
    Missing/empty sections retire geometry without allocating a VAO/VBO for air.
-   The collection is tied to the first world's bounds and ordered chunk layout.
-   Same-layout regeneration is supported; for changed bounds/layout, explicitly
-   destroy/reinitialize the renderer and mark allocated sections dirty before
-   syncing. Equal mesh counts alone do not establish layout compatibility. */
+   Records are keyed by explicit signed section identity. Residency changes
+   merge the ordered collection and retire departing geometry. */
+static int mesh_identity_compare(const SectionGpuMesh *m, int x, int y, int z) {
+  if (m->chunkX != x) return m->chunkX < x ? -1 : 1;
+  if (m->chunkZ != z) return m->chunkZ < z ? -1 : 1;
+  return (m->sectionY > y) - (m->sectionY < y);
+}
+
+/* Resident records follow chunk X/Z and signed section Y, allowing a linear
+   merge when residency changes. GPU handles move without replacing geometry. */
 static int renderer_prepare_world(Renderer *renderer, const World *world) {
-  const size_t count = world->chunkCount * WORLD_SECTION_COUNT;
-  if (!renderer->meshes && count) {
-    double start = perf_clock(renderer->performance);
-    renderer->meshes = calloc(count, sizeof(*renderer->meshes));
-    if (!renderer->meshes)
-      return 0;
-    renderer->meshCount = count;
-    for (size_t c = 0; c < world->chunkCount; c++)
-      for (int s = 0; s < WORLD_SECTION_COUNT; s++) {
-        SectionGpuMesh *mesh = &renderer->meshes[c * WORLD_SECTION_COUNT + s];
-        mesh->chunkX = world->chunks[c].x;
-        mesh->chunkZ = world->chunks[c].z;
-        mesh->sectionY = WORLD_MIN_SECTION_Y + s;
-      }
-    renderer->metadataSeconds += perf_clock(renderer->performance) - start;
-  }
-  if (renderer->meshCount != count)
-    return 0;
+  size_t i = 0;
+  int same = renderer->meshCount == world->sectionCount;
+  for (size_t c = 0; same && c < world->chunkCount; c++)
+    for (const Subchunk *s = world->chunks[c].sections; s; s = s->next)
+      if (mesh_identity_compare(&renderer->meshes[i++], world->chunks[c].x, s->sectionY, world->chunks[c].z)) { same = 0; break; }
+  if (same) return 1;
+  double start = perf_clock(renderer->performance);
+  SectionGpuMesh *records = world->sectionCount ? calloc(world->sectionCount, sizeof(*records)) : NULL;
+  if (world->sectionCount && !records) return 0;
+  size_t old = 0, n = 0;
+  for (size_t c = 0; c < world->chunkCount; c++)
+    for (const Subchunk *s = world->chunks[c].sections; s; s = s->next) {
+      int x = world->chunks[c].x, z = world->chunks[c].z;
+      while (old < renderer->meshCount && mesh_identity_compare(&renderer->meshes[old], x, s->sectionY, z) < 0)
+        section_gpu_mesh_destroy(&renderer->meshes[old++]);
+      if (old < renderer->meshCount && !mesh_identity_compare(&renderer->meshes[old], x, s->sectionY, z))
+        records[n] = renderer->meshes[old++];
+      else records[n] = (SectionGpuMesh){.chunkX = x, .sectionY = s->sectionY, .chunkZ = z};
+      n++;
+    }
+  while (old < renderer->meshCount) section_gpu_mesh_destroy(&renderer->meshes[old++]);
+  free(renderer->meshes);
+  renderer->meshes = records;
+  renderer->meshCount = n;
+  renderer->metadataSeconds += perf_clock(renderer->performance) - start;
   return 1;
 }
 
@@ -496,9 +509,6 @@ static int renderer_sync_section(const Renderer *renderer, World *world, const s
   if (!section) {
     /* A regenerated world can omit a section that previously had a mesh. */
     section_gpu_mesh_destroy(gpu);
-    gpu->chunkX = world->chunks[i / WORLD_SECTION_COUNT].x;
-    gpu->chunkZ = world->chunks[i / WORLD_SECTION_COUNT].z;
-    gpu->sectionY = WORLD_MIN_SECTION_Y + (int)(i % WORLD_SECTION_COUNT);
     return 1;
   }
   if (!section->dirty)
@@ -541,8 +551,6 @@ static int renderer_sync_world(Renderer *renderer, World *world) {
 static int renderer_sync_view(Renderer *renderer, World *world, const Player *player) {
   if (!world->proceduralTerrain)
     return renderer_sync_world(renderer, world);
-  if (!renderer_prepare_world(renderer, world))
-    return 0;
   const Vec3 eye = player_eye_position(player);
   if (!isfinite(eye.x) || !isfinite(eye.z))
     return 0;
@@ -558,53 +566,40 @@ static int renderer_sync_view(Renderer *renderer, World *world, const Player *pl
   const int maxX = (int)fmaxf((float)world->minChunkX - 1, fminf((float)maxChunkX, hiX));
   const int minZ = (int)fminf((float)maxChunkZ + 1, fmaxf((float)world->minChunkZ, loZ));
   const int maxZ = (int)fmaxf((float)world->minChunkZ - 1, fminf((float)maxChunkZ, hiZ));
-  const size_t needed = minX <= maxX && minZ <= maxZ ?
-      (size_t)(maxX - minX + 1) * (maxZ - minZ + 1) * WORLD_SECTION_COUNT : 0;
-  if (needed > renderer->visibleMeshCapacity) {
-    size_t *indices = malloc(needed * sizeof(*indices));
-    if (!indices)
-      return 0;
-    if (renderer->visibleMeshCount)
-      memcpy(indices, renderer->visibleMeshes, renderer->visibleMeshCount * sizeof(*indices));
+  /* Retire departing columns before collecting current section identities. */
+  for (size_t i = 0; i < renderer->meshCount; i++) {
+    SectionGpuMesh *m = &renderer->meshes[i];
+    if (m->chunkX >= minX && m->chunkX <= maxX && m->chunkZ >= minZ && m->chunkZ <= maxZ) continue;
+    Subchunk *section = world_section_mut(world, m->chunkX, m->sectionY, m->chunkZ);
+    if (section) section->dirty = 1;
+    int x = m->chunkX, y = m->sectionY, z = m->chunkZ;
+    section_gpu_mesh_destroy(m);
+    m->chunkX = x; m->sectionY = y; m->chunkZ = z;
+    world_release_chunk(world, x, z);
+  }
+  for (int cx = minX; cx <= maxX; cx++)
+    for (int cz = minZ; cz <= maxZ; cz++) {
+      double start = perf_clock(renderer->performance);
+      int ready = world_materialize_chunk(world, cx, cz);
+      if (renderer->performance && renderer->performance->enabled)
+        renderer->performance->frame.materialize += perf_clock(renderer->performance) - start;
+      if (!ready) return 0;
+    }
+  if (!renderer_prepare_world(renderer, world)) return 0;
+  if (renderer->meshCount > renderer->visibleMeshCapacity) {
+    size_t *indices = malloc(renderer->meshCount * sizeof(*indices));
+    if (!indices) return 0;
     free(renderer->visibleMeshes);
     renderer->visibleMeshes = indices;
-    renderer->visibleMeshCapacity = needed;
-  }
-  for (size_t n = 0; n < renderer->visibleMeshCount; n++) {
-    const size_t i = renderer->visibleMeshes[n];
-    SectionGpuMesh *gpu = &renderer->meshes[i];
-    const int cx = world->chunks[i / WORLD_SECTION_COUNT].x;
-    const int cz = world->chunks[i / WORLD_SECTION_COUNT].z;
-    if (cx >= minX && cx <= maxX && cz >= minZ && cz <= maxZ)
-      continue;
-    Subchunk *section = world_section_mut(world, cx, WORLD_MIN_SECTION_Y + (int)(i % WORLD_SECTION_COUNT), cz);
-    if (section) section->dirty = 1;
-    section_gpu_mesh_destroy(gpu);
-    gpu->chunkX = cx;
-    gpu->chunkZ = cz;
-    gpu->sectionY = WORLD_MIN_SECTION_Y + (int)(i % WORLD_SECTION_COUNT);
-    if (i % WORLD_SECTION_COUNT == 0)
-      world_release_chunk(world, cx, cz);
+    renderer->visibleMeshCapacity = renderer->meshCount;
   }
   renderer->streamed = 1;
   renderer->visibleMeshCount = 0;
-  for (int cx = minX; cx <= maxX; cx++)
-    for (int cz = minZ; cz <= maxZ; cz++) {
-      size_t chunk = (size_t)(cx - world->minChunkX) * world->chunksPerSide + cz - world->minChunkZ;
-      for (int s = 0; s < WORLD_SECTION_COUNT; s++)
-        renderer->visibleMeshes[renderer->visibleMeshCount++] = chunk * WORLD_SECTION_COUNT + s;
-    }
-  for (size_t n = 0; n < renderer->visibleMeshCount; n += WORLD_SECTION_COUNT) {
-    const size_t i = renderer->visibleMeshes[n];
-    const Chunk *chunk = &world->chunks[i / WORLD_SECTION_COUNT];
-    double start = perf_clock(renderer->performance);
-    int ready = world_materialize_chunk(world, chunk->x, chunk->z);
-    if (renderer->performance && renderer->performance->enabled)
-      renderer->performance->frame.materialize += perf_clock(renderer->performance) - start;
-    if (!ready) return 0;
-    for (int s = 0; s < WORLD_SECTION_COUNT; s++)
-      if (!renderer_sync_section(renderer, world, i + s))
-        return 0;
+  for (size_t i = 0; i < renderer->meshCount; i++) {
+    SectionGpuMesh *m = &renderer->meshes[i];
+    if (m->chunkX < minX || m->chunkX > maxX || m->chunkZ < minZ || m->chunkZ > maxZ) continue;
+    renderer->visibleMeshes[renderer->visibleMeshCount++] = i;
+    if (!renderer_sync_section(renderer, world, i)) return 0;
   }
   return 1;
 }
@@ -1018,8 +1013,7 @@ static void performance_snapshot(Application *a) {
     const Chunk *chunk = &a->world.chunks[c];
     int resident = chunk->terrainReady;
     a->editedChunks += chunk->edited != 0;
-    for (int j = 0; j < WORLD_SECTION_COUNT; j++) {
-      const Subchunk *section = chunk->sections[j];
+    for (const Subchunk *section = chunk->sections; section; section = section->next) {
       resident |= section != NULL;
       a->dirtySections += section && section->dirty;
     }
@@ -1195,6 +1189,21 @@ static int application_init(Application *application) {
     return 0;
   }
   application->worldMetadataSeconds = perf_clock(&application->performance) - worldStart;
+  /* Bounded deterministic search: prefer a grassy lowland near the start. */
+  for (int ring = 0, found = 0; ring <= 64 && !found; ring++)
+    for (int dx = -ring; dx <= ring && !found; dx++)
+      for (int dz = -ring; dz <= ring && !found; dz++) {
+        if (abs(dx) != ring && abs(dz) != ring) continue;
+        int x = (int)floorf((application->player.position.x - application->world.origin.x) / BLOCK_SIZE) + dx * 16;
+        int z = (int)floorf((application->player.position.z - application->world.origin.z) / BLOCK_SIZE) + dz * 16;
+        if (x < application->world.minX || x >= application->world.minX + worldSide ||
+            z < application->world.minZ || z >= application->world.minZ + worldSide) continue;
+        TerrainColumn c = terrain_sample_column(application->world.terrainSeed, x, z);
+        if (c.material != BLOCK_TYPE_GRASS || c.height < 8 || c.height > 80) continue;
+        application->player.position.x = application->world.origin.x + (x + 0.5f) * BLOCK_SIZE;
+        application->player.position.z = application->world.origin.z + (z + 0.5f) * BLOCK_SIZE;
+        found = 1;
+      }
   if (!player_spawn_on_surface(&application->player, &application->world)) {
     fprintf(stderr, "Failed to find safe terrain for spawning\n");
     application_shutdown(application);

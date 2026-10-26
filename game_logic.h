@@ -40,6 +40,10 @@ typedef enum {
   BLOCK_TYPE_STONE,
   BLOCK_TYPE_WATER,
   BLOCK_TYPE_SAND,
+  BLOCK_TYPE_DIRT,
+  BLOCK_TYPE_GRAVEL,
+  BLOCK_TYPE_DARK_STONE,
+  BLOCK_TYPE_SNOW,
   BLOCK_TYPE_COUNT,
   BLOCK_TYPE_EMPTY = UINT8_MAX
 } BlockType;
@@ -62,15 +66,33 @@ enum {
   WORLD_MAX_BLOCKS_PER_SIDE = 6144,
   SECTION_SIZE = 16,
   SECTION_VOLUME = 16 * 16 * 16,
-  WORLD_MIN_SECTION_Y = -2,
-  WORLD_SECTION_COUNT = 8,
-  TERRAIN_BASE_Y = -30,
+  WORLD_MIN_SECTION_Y = -8,
+  WORLD_SECTION_COUNT = 32,
+  TERRAIN_BASE_Y = -128,
+  TERRAIN_SEA_LEVEL = 0,
+  TERRAIN_DEEP_ROCK_Y = -64,
+  TERRAIN_SHORE_MIN = -20, TERRAIN_SHORE_MAX = 5,
+  TERRAIN_STONE_Y = 160, TERRAIN_SNOW_Y = 260,
+  TERRAIN_SOIL_MIN = 3, TERRAIN_SOIL_MAX = 6,
+  TERRAIN_SAND_MIN = 2, TERRAIN_SAND_MAX = 5,
+  TERRAIN_GRAVEL_MIN = 1, TERRAIN_GRAVEL_MAX = 3,
+  TERRAIN_SNOW_MIN = 1, TERRAIN_SNOW_MAX = 3,
+  TERRAIN_SURFACE_MIN = -85, TERRAIN_SURFACE_MAX = 370,
+  /* Horizontal feature widths in blocks; vertical relief is independent. */
+  TERRAIN_RELIEF_SCALE = 256,
+  TERRAIN_MOUNTAIN_REGION_SCALE = 512,
+  TERRAIN_RIDGE_SCALE = 128,
+  TERRAIN_HILL_SCALE = 32,
+  TERRAIN_DETAIL_SCALE = 8,
   /* Bounded storage leaves ample room for section corners and neighbours. */
   WORLD_COORD_MIN = -1048575,
   WORLD_COORD_MAX = 1048575
 };
 
-typedef struct {
+typedef struct Subchunk {
+  int meshCandidate; /* Conservative surface/edge exposure, or an edited section. */
+  int sectionY;
+  struct Subchunk *next;
   uint8_t blocks[SECTION_VOLUME];
   size_t voxelCount;
   int dirty;
@@ -78,7 +100,7 @@ typedef struct {
 
 typedef struct {
   int x, z;
-  Subchunk *sections[WORLD_SECTION_COUNT];
+  Subchunk *sections; /* Sorted by signed sectionY; includes empty edit markers. */
   int terrainReady;
   int edited;
 } Chunk;
@@ -86,7 +108,7 @@ typedef struct {
 /* Owning type: initialize to zero, destroy explicitly, and do not copy by value.
    Missing sections read as air in ordinary worlds; streamed worlds synthesize
    missing chunks from their seed. Horizontal side is 1..WORLD_MAX_BLOCKS_PER_SIDE;
-   voxel Y is [-32,96).
+   generated voxel Y is [-128,384); edits use WORLD_COORD_MIN..MAX.
    Empty allocated sections remain owned retirement markers until destruction;
    sectionCount includes them. Renderer sync must retire their GPU geometry.
    Voxel coordinates are signed; render positions use origin + voxel * blockSize. */
@@ -164,18 +186,19 @@ int create_platform(World *world, int blocksPerSide, Vec3 center,
                     float blockSize, uint32_t seed);
 typedef struct {
   int height; /* Filled voxels are TERRAIN_BASE_Y through height-1. */
-  BlockType material; /* Surface material; deeper layers are stone. */
+  BlockType material; /* Highest occupied block. */
+  int deepRockY, soilDepth, sandDepth, gravelDepth, snowDepth;
 } TerrainColumn;
 
 /* Pure signed voxel sampling, independent of bounds and render transform.
-   Sampler accepts every int X/Z. Noise supports powers of two from 8 to 512. */
+   Sampler accepts every int X/Z. Noise supports powers of two from 8 to 2048. */
 float terrain_noise(int worldX, int worldZ, int scale, uint32_t seed);
 TerrainColumn terrain_sample_column(uint32_t seed, int worldX, int worldZ);
 BlockType terrain_column_block(TerrainColumn column, int y);
 /* Transactional bounded region generation; bounds/transform as world_init_region. */
 int create_terrain_region(World *world, int minX, int minZ, int side,
                           Vec3 origin, float blockSize, uint32_t seed);
-/* Seeded, smooth terraced hills with elevation-dependent surface materials. */
+/* Seeded heightfield with signed basins, mountain regions and shallow layers. */
 int create_terrain(World *world, int blocksPerSide, Vec3 center,
                    float blockSize, uint32_t seed);
 /* Same terrain and bounds, generated on demand rather than all at startup. */

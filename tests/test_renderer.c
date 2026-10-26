@@ -397,6 +397,33 @@ static void test_performance_counters(void) {
   world_destroy(&a.world);
 }
 
+static void test_sparse_vertical_renderer(void) {
+  World world = {0};
+  Renderer r = {0};
+  assert(world_init(&world, 6144, (Vec3){0}, 1));
+  assert(renderer_init(&r));
+  assert(renderer_sync_world(&r, &world));
+  assert(r.meshCount == 0); /* No metadata for all possible world sections. */
+  const int ys[] = {-161, 416};
+  for (int i = 0; i < 2; i++) {
+    int y = ys[i];
+    assert(world_set_block(&world, 0, y, 0, BLOCK_TYPE_SNOW));
+    assert(renderer_sync_world(&r, &world));
+    SectionGpuMesh *m = gpu_section(&r, 0, voxel_section_coord(y), 0);
+    assert(m && m->vertexCount[BLOCK_TYPE_SNOW] == 36 && m->vao && m->vbo);
+    assert(m->boundsMin.y == y && m->boundsMax.y == y + 1);
+    assert(r.meshCount == world.sectionCount && r.meshCount == (size_t)i + 1);
+    assert(world_set_block(&world, 0, y, 0, BLOCK_TYPE_EMPTY));
+    assert(renderer_sync_world(&r, &world));
+    assert(!m->vao && !m->vbo && vertex_count(m) == 0);
+  }
+  assert(world_init(&world, 6144, (Vec3){0}, 1));
+  assert(renderer_sync_world(&r, &world));
+  assert(!r.meshes && !r.meshCount);
+  renderer_destroy(&r);
+  world_destroy(&world);
+}
+
 int main(void) {
   test_frustum();
   glfwSetErrorCallback(glfw_test_error);
@@ -414,6 +441,7 @@ int main(void) {
   while (glGetError() != GL_NO_ERROR) {
   }
   test_performance_counters();
+  test_sparse_vertical_renderer();
   Renderer renderer = {0};
   World world = {0};
   assert(renderer_init(&renderer));
@@ -497,8 +525,8 @@ int main(void) {
   /* Regeneration may replace allocated sections with missing sections. */
   assert(world_init(&world, 32, (Vec3){0}, 1));
   assert(renderer_sync_world(&renderer, &world));
-  assert(vertex_count(left) == 0 && vertex_count(right) == 0);
-  assert(left->vao == 0 && right->vao == 0);
+  assert(!gpu_section(&renderer, -1, 0, 0) && !gpu_section(&renderer, 0, 0, 0));
+  assert(renderer.meshCount == 0);
   assert_empty_gpu_world(&renderer);
   renderer_destroy(&renderer);
   world_destroy(&world);
@@ -513,6 +541,7 @@ int main(void) {
   Player player = {.position = {0, 24, 32},
                    .eyeHeight = 1,
                    .camera = {.front = {0, -0.4472136f, -0.8944272f}, .up = {0, 1, 0}}};
+  player.position.y = world_surface_height(&world, player.position.x, player.position.z) + 24;
   mat4 projection, view, mvp;
   mat4_perspective(75.0f * (3.14159f / 180), 640.0f / 480, 0.05f, 100, projection);
   Vec3 eye = player.position;

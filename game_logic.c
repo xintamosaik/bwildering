@@ -14,6 +14,10 @@ static const Vec3 BLOCK_TYPE_COLORS[BLOCK_TYPE_COUNT] = {
   [BLOCK_TYPE_GRASS] = {.x = 0.46f, .y = 0.52f, .z = 0.38f},
   [BLOCK_TYPE_STONE] = {.x = 0.53f, .y = 0.51f, .z = 0.48f},
   [BLOCK_TYPE_WATER] = {.x = 0.36f, .y = 0.50f, .z = 0.52f},
+  [BLOCK_TYPE_DIRT] = {0.40f, 0.28f, 0.18f},
+  [BLOCK_TYPE_GRAVEL] = {0.43f, 0.46f, 0.49f},
+  [BLOCK_TYPE_DARK_STONE] = {0.24f, 0.25f, 0.28f},
+  [BLOCK_TYPE_SNOW] = {0.92f, 0.94f, 0.96f},
   [BLOCK_TYPE_SAND] = {.x = 0.68f, .y = 0.60f, .z = 0.44f},
 };
 
@@ -168,7 +172,7 @@ static float terrain_lattice(const int x, const int z, const uint32_t seed) {
 
 float terrain_noise(const int x, const int z, const int scale,
                            const uint32_t seed) {
-  if (scale < 8 || scale > 512 || (scale & (scale - 1)) != 0)
+  if (scale < 8 || scale > 2048 || (scale & (scale - 1)) != 0)
     return NAN;
   const int gx = voxel_floor_div(x, scale);
   const int gz = voxel_floor_div(z, scale);
@@ -183,21 +187,56 @@ float terrain_noise(const int x, const int z, const int scale,
   return (a + (b - a) * tx) * (1.0f - tz) + (c + (d - c) * tx) * tz;
 }
 
-TerrainColumn terrain_sample_column(uint32_t seed, int x, int z) {
-  int height = (int)(4.0f + 40.0f * terrain_noise(x, z, 256, seed) +
-                     18.0f * terrain_noise(x, z, 64, seed ^ UINT32_C(0xA341316C)) +
-                     5.0f * terrain_noise(x, z, 16, seed ^ UINT32_C(0xC8013EA4)) +
-                     3.0f * terrain_noise(x, z, 8, seed ^ UINT32_C(0x7F4A7C15)));
-  BlockType type = height <= 16    ? BLOCK_TYPE_SAND
-                   : height >= 48 ? BLOCK_TYPE_STONE
-                                  : BLOCK_TYPE_GRASS;
-  return (TerrainColumn){height, type};
+static int layer_thickness(float n, int lo, int hi) {
+  int v = lo + (int)(n * (hi - lo + 1));
+  return v > hi ? hi : v;
 }
 
-BlockType terrain_column_block(TerrainColumn column, int y) {
-  if (y < TERRAIN_BASE_Y || y >= column.height)
-    return BLOCK_TYPE_EMPTY;
-  return y < column.height - 4 ? BLOCK_TYPE_STONE : column.material;
+TerrainColumn terrain_sample_column(uint32_t seed, int x, int z) {
+  /* Compact relief: the main shapes are four times narrower than the initial
+     tuning, giving the same height changes much steeper sides. */
+  float broad = terrain_noise(x, z, TERRAIN_RELIEF_SCALE, seed);
+  float region = terrain_noise(x, z, TERRAIN_MOUNTAIN_REGION_SCALE, seed ^ UINT32_C(0xA341316C));
+  float mask = fmaxf(0, fminf(1, (region - 0.45f) / 0.35f));
+  mask = mask * mask * (3 - 2 * mask);
+  float ridge = 1 - fabsf(2 * terrain_noise(x, z, TERRAIN_RIDGE_SCALE, seed ^ UINT32_C(0xC8013EA4)) - 1);
+  float hills = terrain_noise(x, z, TERRAIN_HILL_SCALE, seed ^ UINT32_C(0x7F4A7C15));
+  float detail = terrain_noise(x, z, TERRAIN_DETAIL_SCALE, seed ^ UINT32_C(0x912AC318));
+  int height = (int)floorf(TERRAIN_SURFACE_MIN + 175 * broad + 285 * mask * ridge + 18 * hills + 4 * detail);
+  if (height > TERRAIN_SURFACE_MAX) height = TERRAIN_SURFACE_MAX;
+  float local = terrain_noise(x, z, 64, seed ^ UINT32_C(0xFE321AB7));
+  float deposit = terrain_noise(x, z, 128, seed ^ UINT32_C(0xBC219841));
+  int offset = (int)floorf(12 * local - 6);
+  TerrainColumn c = {.height = height, .material = BLOCK_TYPE_STONE,
+                    .deepRockY = TERRAIN_DEEP_ROCK_Y + offset};
+  if (height - 1 >= TERRAIN_SNOW_Y + offset) {
+    c.snowDepth = layer_thickness(local, TERRAIN_SNOW_MIN, TERRAIN_SNOW_MAX);
+    c.material = BLOCK_TYPE_SNOW;
+  } else if (height - 1 < TERRAIN_STONE_Y + offset) {
+    if (height - 1 >= TERRAIN_SHORE_MIN + offset / 3 &&
+        height - 1 <= TERRAIN_SHORE_MAX + offset / 3 && deposit > 0.35f) {
+      c.gravelDepth = layer_thickness(local, TERRAIN_GRAVEL_MIN, TERRAIN_GRAVEL_MAX);
+      if (deposit > 0.55f) c.sandDepth = layer_thickness(local, TERRAIN_SAND_MIN, TERRAIN_SAND_MAX);
+      c.material = c.sandDepth ? BLOCK_TYPE_SAND : BLOCK_TYPE_GRAVEL;
+    } else if (height - 1 > TERRAIN_SEA_LEVEL + 5) {
+      c.soilDepth = layer_thickness(local, TERRAIN_SOIL_MIN, TERRAIN_SOIL_MAX);
+      c.material = BLOCK_TYPE_GRASS;
+    }
+  }
+  if (height - 1 < c.deepRockY) c.material = BLOCK_TYPE_DARK_STONE;
+  return c;
+}
+
+BlockType terrain_column_block(TerrainColumn c, int y) {
+  if (y < TERRAIN_BASE_Y || y >= c.height) return BLOCK_TYPE_EMPTY;
+  if (y < c.deepRockY) return BLOCK_TYPE_DARK_STONE;
+  int depth = c.height - 1 - y;
+  if (depth < c.snowDepth) return BLOCK_TYPE_SNOW;
+  if (depth < c.sandDepth) return BLOCK_TYPE_SAND;
+  if (depth < c.sandDepth + c.gravelDepth) return BLOCK_TYPE_GRAVEL;
+  if (c.soilDepth && depth == 0) return BLOCK_TYPE_GRASS;
+  if (c.soilDepth && depth <= c.soilDepth) return BLOCK_TYPE_DIRT;
+  return BLOCK_TYPE_STONE;
 }
 
 /* The flat platform retains its global shuffle fixture. */
@@ -244,15 +283,15 @@ int create_terrain_region(World *world, int minX, int minZ, int side,
   World result = {0};
   if (!world || !world_init_region(&result, minX, minZ, side, origin, size))
     return 0;
-  for (int x = minX; x < minX + side; x++)
-    for (int z = minZ; z < minZ + side; z++) {
-      TerrainColumn column = terrain_sample_column(seed, x, z);
-      for (int y = TERRAIN_BASE_Y; y < column.height; y++)
-        if (!world_set_block(&result, x, y, z, terrain_column_block(column, y))) {
-          world_destroy(&result);
-          return 0;
-        }
-    }
+  result.proceduralTerrain = 1;
+  result.terrainSeed = seed;
+  for (int x = 0; x < result.chunksPerSide; x++)
+    for (int z = 0; z < result.chunksPerSide; z++)
+      if (!world_materialize_chunk(&result, result.minChunkX + x, result.minChunkZ + z)) {
+        world_destroy(&result);
+        return 0;
+      }
+  result.proceduralTerrain = 0;
   world_destroy(world);
   *world = result;
   return 1;
@@ -369,9 +408,9 @@ static int player_intersects(const World *world, Vec3 p) {
   float hi[3] = {(p.x + PLAYER_RADIUS - world->origin.x) / size,
                  (p.y + PLAYER_HEIGHT - epsilon - world->origin.y) / size,
                  (p.z + PLAYER_RADIUS - world->origin.z) / size};
-  int lower[3] = {world->minX, WORLD_MIN_SECTION_Y * SECTION_SIZE, world->minZ};
+  int lower[3] = {world->minX, WORLD_COORD_MIN, world->minZ};
   int upper[3] = {world->minX + world->blocksPerSide,
-                  (WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT) * SECTION_SIZE,
+                  WORLD_COORD_MAX + 1,
                   world->minZ + world->blocksPerSide};
   int first[3], last[3];
   for (int i = 0; i < 3; i++) {
@@ -444,18 +483,15 @@ int player_spawn_on_surface(Player *player, const World *world) {
   int lastX = (int)ceilf(fminf(hiX, world->minX + world->blocksPerSide)) - 1;
   int firstZ = (int)floorf(fmaxf(loZ, world->minZ));
   int lastZ = (int)ceilf(fminf(hiZ, world->minZ + world->blocksPerSide)) - 1;
-  int height = WORLD_MIN_SECTION_Y * SECTION_SIZE;
+  float height = -INFINITY;
   for (int x = firstX; x <= lastX; x++)
-    for (int z = firstZ; z <= lastZ; z++)
-      for (int y = (WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT) * SECTION_SIZE - 1;
-           y >= height; y--)
-        if (block_is_solid(world_get_block(world, x, y, z))) {
-          height = y + 1;
-          break;
-        }
-  if (height == WORLD_MIN_SECTION_Y * SECTION_SIZE)
-    return 0;
-  player->position.y = world->origin.y + height * world->blockSize;
+    for (int z = firstZ; z <= lastZ; z++) {
+      float top = world_surface_height(world, world->origin.x + (x + 0.5f) * world->blockSize,
+                                       world->origin.z + (z + 0.5f) * world->blockSize);
+      if (isfinite(top)) height = fmaxf(height, top);
+    }
+  if (!isfinite(height)) return 0;
+  player->position.y = height;
   player->velocityY = 0;
   player->grounded = 1;
   return 1;

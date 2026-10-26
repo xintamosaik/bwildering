@@ -42,7 +42,7 @@ test-sanitize:
 	./test_pause_menu_sanitize
 
 clean:
-	rm -f visibility_capture performance_capture $(TARGET) $(TEST_TARGET) test_allocation_failures test_renderer test_pause_menu test_game_logic_sanitize test_allocation_failures_sanitize test_pause_menu_sanitize
+	rm -f terrain_capture visibility_capture performance_capture $(TARGET) $(TEST_TARGET) test_allocation_failures test_renderer test_pause_menu test_game_logic_sanitize test_allocation_failures_sanitize test_pause_menu_sanitize
 
 run: all
 	./$(TARGET)
@@ -54,3 +54,6 @@ performance_capture: tests/performance_capture.c $(SRC) game_logic.h performance
 
 visibility_capture: tests/visibility_capture.c $(SRC) game_logic.h performance.h
 	$(CC) $(CFLAGS) tests/visibility_capture.c game_logic.c voxel_world.c -o $@ $(LDFLAGS)
+
+terrain_capture: tests/terrain_capture.c $(SRC) game_logic.h performance.h
+	$(CC) $(CFLAGS) tests/terrain_capture.c game_logic.c voxel_world.c -o $@ $(LDFLAGS)

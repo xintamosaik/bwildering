@@ -1487,6 +1487,89 @@ static void test_layered_generation_and_sparse_edits(void) {
   }
 }
 
+/* CPU meshing borrows world data: it neither clears dirty flags nor owns
+   sections. Only successful renderer upload may mark a section clean. */
+static void assert_lifecycle_geometry(const World *actual, const World *expected) {
+  for (int cx = -1; cx <= 0; cx++)
+    for (int sy = WORLD_MIN_SECTION_Y; sy <= 26; sy++) {
+      SectionMesh a = {0}, b = {0};
+      const Subchunk *section = world_section(actual, cx, sy, 0);
+      int dirty = section ? section->dirty : 0;
+      assert(section_mesh_build(actual, cx, sy, 0, &a));
+      assert(section_mesh_build(expected, cx, sy, 0, &b));
+      assert(a.vertexCount == b.vertexCount);
+      for (int t = 0; t < BLOCK_TYPE_COUNT; t++) {
+        assert(a.firstVertex[t] == b.firstVertex[t]);
+        assert(a.typeVertexCount[t] == b.typeVertexCount[t]);
+      }
+      for (size_t v = 0; v < a.vertexCount; v++) {
+        assert(a.vertices[v].x == b.vertices[v].x);
+        assert(a.vertices[v].y == b.vertices[v].y);
+        assert(a.vertices[v].z == b.vertices[v].z);
+      }
+      assert(world_section(actual, cx, sy, 0) == section);
+      if (section) assert(section->dirty == dirty);
+      section_mesh_destroy(&a);
+      section_mesh_destroy(&b);
+    }
+}
+
+static void test_chunk_lifecycle_invariants(void) {
+  World world = {0}, expected = {0};
+  const uint32_t seed = 42;
+  assert(create_terrain_streamed(&world, 33, (Vec3){12, -3, 8}, 0.5f, seed));
+  assert(create_terrain(&expected, 33, (Vec3){12, -3, 8}, 0.5f, seed));
+  assert(world_materialize_chunk(&world, -1, 0));
+  assert(world_materialize_chunk(&world, 0, 0));
+  compare_region(&expected, &world);
+  assert_lifecycle_geometry(&world, &expected);
+
+  int top = terrain_sample_column(seed, -1, 0).height - 1;
+  World *worlds[] = {&world, &expected};
+  for (size_t i = 0; i < 2; i++) {
+    assert(world_set_block(worlds[i], -1, top, 0, BLOCK_TYPE_EMPTY));
+    assert(world_set_block(worlds[i], -1, 400, 0, BLOCK_TYPE_SNOW));
+    /* An empty edit marker must also remain owned on departure. */
+    assert(world_set_block(worlds[i], -1, 416, 0, BLOCK_TYPE_STONE));
+    assert(world_set_block(worlds[i], -1, 416, 0, BLOCK_TYPE_EMPTY));
+  }
+  const Subchunk *edited = world_section(&world, -1, voxel_section_coord(top), 0);
+  const Subchunk *marker = world_section(&world, -1, 26, 0);
+  assert(edited && edited->dirty && edited->meshCandidate);
+  assert(marker && marker->dirty && !marker->voxelCount);
+  assert_lifecycle_geometry(&world, &expected);
+
+  for (int visit = 0; visit < 2; visit++) {
+    /* An empty residency neighbourhood releases only the unedited column. */
+    assert(world_release_chunks_outside(&world, 1, 0, 1, 0) == 1);
+    assert(!world_section(&world, 0, WORLD_MIN_SECTION_Y, 0));
+    assert(world_section(&world, -1, voxel_section_coord(top), 0) == edited);
+    assert(world_section(&world, -1, 26, 0) == marker);
+    assert(world_get_block(&world, -1, top, 0) == BLOCK_TYPE_EMPTY);
+    assert(world_get_block(&world, -1, 400, 0) == BLOCK_TYPE_SNOW);
+    assert(world_get_block(&world, -1, 416, 0) == BLOCK_TYPE_EMPTY);
+    compare_region(&expected, &world); /* Includes procedural reads after eviction. */
+    assert_lifecycle_geometry(&world, &expected);
+    assert(world_materialize_chunk(&world, -1, 0));
+    assert(world_materialize_chunk(&world, 0, 0));
+    compare_region(&expected, &world);
+    assert_lifecycle_geometry(&world, &expected);
+    size_t sections = 0, voxels = 0;
+    for (size_t c = 0; c < world.chunkCount; c++)
+      for (const Subchunk *s = world.chunks[c].sections; s; s = s->next) {
+        sections++;
+        size_t occupied = 0;
+        for (size_t b = 0; b < SECTION_VOLUME; b++)
+          occupied += s->blocks[b] != BLOCK_TYPE_EMPTY;
+        assert(s->voxelCount == occupied);
+        voxels += occupied;
+      }
+    assert(world.sectionCount == sections && world.voxelCount == voxels);
+  }
+  world_destroy(&world);
+  world_destroy(&expected);
+}
+
 static void test_residency_departing_strips(void) {
   World world = {0};
   assert(create_terrain_streamed(&world, 128, (Vec3){0}, 1, 1));
@@ -1550,6 +1633,7 @@ int main(void) {
   test_layered_generation_and_sparse_edits();
   test_streamed_terrain_matches_eager_and_preserves_edits();
   test_residency_departing_strips();
+  test_chunk_lifecycle_invariants();
   test_place_block_on_viewed_face();
   test_placement_reach_misses_and_player_overlap();
   test_placement_oblique_view_and_reach_boundary();

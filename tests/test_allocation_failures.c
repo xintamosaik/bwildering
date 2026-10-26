@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 /* Linker wrappers allow deterministic failure at every allocation without
    shipping allocator hooks in the world or renderer. */
@@ -47,7 +48,102 @@ static void assert_world_equal(const World *actual, const World *expected) {
         assert(world_get_block(actual, x, y, z) == world_get_block(expected, x, y, z));
 }
 
+static void prepare_edited_stream(World *world) {
+  assert(create_terrain_streamed(world, 33, (Vec3){0}, 1, 1));
+  /* Existing data in both the partially generated chunk and its neighbour. */
+  int top = terrain_sample_column(1, 0, 0).height - 1;
+  assert(world_set_block(world, 0, top, 0, BLOCK_TYPE_EMPTY));
+  assert(world_set_block(world, 0, 400, 0, BLOCK_TYPE_SNOW));
+  assert(world_materialize_chunk(world, -1, 0));
+}
+
+static void test_materialization_preserves_existing_ownership(void) {
+  World reference = {0};
+  prepare_edited_stream(&reference);
+  size_t before = allocation_calls;
+  assert(world_materialize_chunk(&reference, 0, 0));
+  size_t allocations = allocation_calls - before;
+  assert(allocations > 0);
+  for (size_t failure = 0; failure < allocations; failure++) {
+    World world = {0};
+    prepare_edited_stream(&world);
+    World original = world; /* Borrowed snapshot, never destroyed. */
+    Chunk *chunks = malloc(world.chunkCount * sizeof(*chunks));
+    Subchunk *sections = malloc(world.sectionCount * sizeof(*sections));
+    assert(chunks && sections);
+    memcpy(chunks, world.chunks, world.chunkCount * sizeof(*chunks));
+    size_t n = 0;
+    for (size_t c = 0; c < world.chunkCount; c++)
+      for (const Subchunk *s = world.chunks[c].sections; s; s = s->next)
+        sections[n++] = *s;
+    fail_after = (int)failure;
+    assert(!world_materialize_chunk(&world, 0, 0));
+    fail_after = -1;
+    assert(world.chunks == original.chunks);
+    assert(world.sectionCount == original.sectionCount && world.voxelCount == original.voxelCount);
+    assert(world.hasMaterializedBounds == original.hasMaterializedBounds);
+    assert(world.minMaterializedChunkX == original.minMaterializedChunkX);
+    assert(world.maxMaterializedChunkX == original.maxMaterializedChunkX);
+    assert(world.minMaterializedChunkZ == original.minMaterializedChunkZ);
+    assert(world.maxMaterializedChunkZ == original.maxMaterializedChunkZ);
+    n = 0;
+    for (size_t c = 0; c < world.chunkCount; c++) {
+      assert(world.chunks[c].sections == chunks[c].sections);
+      assert(world.chunks[c].terrainReady == chunks[c].terrainReady);
+      assert(world.chunks[c].edited == chunks[c].edited);
+      for (const Subchunk *s = world.chunks[c].sections; s; s = s->next) {
+        const Subchunk *saved = &sections[n++];
+        assert(s->next == saved->next && s->sectionY == saved->sectionY);
+        assert(s->dirty == saved->dirty && s->meshCandidate == saved->meshCandidate);
+        assert(s->voxelCount == saved->voxelCount);
+        assert(!memcmp(s->blocks, saved->blocks, sizeof(s->blocks)));
+      }
+    }
+    assert_world_equal(&world, &reference);
+    assert(world_materialize_chunk(&world, 0, 0));
+    assert_world_equal(&world, &reference);
+    free(chunks);
+    free(sections);
+    world_destroy(&world);
+  }
+  world_destroy(&reference);
+}
+
+static void test_regenerated_mesh_failure_retry(void) {
+  World world = {0};
+  assert(create_terrain_streamed(&world, 33, (Vec3){0}, 1, 1));
+  int sy = voxel_section_coord(terrain_sample_column(1, 0, 0).height - 1);
+  SectionMesh expected = {0}, mesh = {0};
+  size_t before = allocation_calls;
+  assert(section_mesh_build(&world, 0, sy, 0, &expected));
+  size_t allocations = allocation_calls - before;
+  assert(expected.vertexCount && allocations >= 2); /* Temporary section + vertices. */
+  assert(world_materialize_chunk(&world, 0, 0));
+  assert(section_mesh_build(&world, 0, sy, 0, &mesh));
+  world_release_chunk(&world, 0, 0);
+  for (size_t failure = 0; failure < allocations; failure++) {
+    SurfaceVertex *owned = mesh.vertices;
+    fail_after = (int)failure;
+    assert(!section_mesh_build(&world, 0, sy, 0, &mesh));
+    fail_after = -1;
+    assert(mesh.vertices == owned && mesh.vertexCount == expected.vertexCount);
+    assert(!memcmp(mesh.firstVertex, expected.firstVertex, sizeof(mesh.firstVertex)));
+    assert(!memcmp(mesh.typeVertexCount, expected.typeVertexCount, sizeof(mesh.typeVertexCount)));
+    assert(!memcmp(mesh.vertices, expected.vertices, mesh.vertexCount * sizeof(*mesh.vertices)));
+    assert(!world.sectionCount && !world.voxelCount);
+    assert(!world_section(&world, 0, sy, 0));
+    assert(section_mesh_build(&world, 0, sy, 0, &mesh));
+    assert(mesh.vertexCount == expected.vertexCount);
+    assert(!memcmp(mesh.vertices, expected.vertices, mesh.vertexCount * sizeof(*mesh.vertices)));
+  }
+  section_mesh_destroy(&mesh);
+  section_mesh_destroy(&expected);
+  world_destroy(&world);
+}
+
 int main(void) {
+  test_materialization_preserves_existing_ownership();
+  test_regenerated_mesh_failure_retry();
   World world = {0};
   assert(world_init(&world, 32, (Vec3){0}, 1));
   fail_after = 0;

@@ -13,6 +13,13 @@ static void *metadata_test_calloc(size_t count, size_t bytes) {
   if (metadata_allocations_before_failure > 0) metadata_allocations_before_failure--;
   return calloc(count, bytes);
 }
+static int visible_allocations_before_failure = -1;
+static void *visible_test_malloc(size_t bytes) {
+  if (visible_allocations_before_failure == 0) return NULL;
+  if (visible_allocations_before_failure > 0) visible_allocations_before_failure--;
+  return malloc(bytes);
+}
+#define malloc visible_test_malloc
 #define calloc metadata_test_calloc
 #define realloc draw_test_realloc
 #define main bwildering_application_main
@@ -20,6 +27,7 @@ static void *metadata_test_calloc(size_t count, size_t bytes) {
 #undef main
 #undef realloc
 #undef calloc
+#undef malloc
 #include <assert.h>
 
 static PFNGLBUFFERDATAPROC real_buffer_upload;
@@ -47,6 +55,37 @@ static int vertex_count(const SectionGpuMesh *mesh) {
   for (int t = 0; t < BLOCK_TYPE_COUNT; t++)
     n += mesh->vertexCount[t];
   return n;
+}
+
+/* Compare actual driver-owned bytes and draw ranges, not just vertex totals.
+   CPU snapshots are independently owned and survive GPU retirement. */
+static void assert_gpu_geometry(const SectionGpuMesh *gpu, const SectionMesh *cpu) {
+  assert(gpu && (size_t)vertex_count(gpu) == cpu->vertexCount);
+  for (int t = 0; t < BLOCK_TYPE_COUNT; t++) {
+    assert((size_t)gpu->firstVertex[t] == cpu->firstVertex[t]);
+    assert((size_t)gpu->vertexCount[t] == cpu->typeVertexCount[t]);
+  }
+  if (cpu->vertexCount) {
+    assert(glIsBuffer(gpu->vbo) && glIsVertexArray(gpu->vao));
+    size_t bytes = cpu->vertexCount * sizeof(*cpu->vertices);
+    SurfaceVertex *vertices = malloc(bytes);
+    assert(vertices);
+    glBindBuffer(GL_ARRAY_BUFFER, gpu->vbo);
+    GLint size = 0;
+    glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE, &size);
+    assert((size_t)size == bytes);
+    glGetBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr)bytes, vertices);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    for (size_t v = 0; v < cpu->vertexCount; v++) {
+      assert(vertices[v].x == cpu->vertices[v].x);
+      assert(vertices[v].y == cpu->vertices[v].y);
+      assert(vertices[v].z == cpu->vertices[v].z);
+    }
+    free(vertices);
+  } else {
+    assert(!gpu->vao && !gpu->vbo);
+  }
+  assert(glGetError() == GL_NO_ERROR);
 }
 
 static void assert_empty_gpu_world(Renderer *renderer) {
@@ -364,6 +403,54 @@ static void test_streamed_retirement_after_failed_sync(void) {
   SectionGpuMesh *gpu = gpu_section(&renderer, 0, 25, 0);
   assert(gpu && vertex_count(gpu) == 36);
   GLuint vao = gpu->vao, vbo = gpu->vbo;
+  const Subchunk *retained = world_section(&world, 0, 25, 0);
+  assert(retained && !retained->dirty);
+  SectionMesh oldMesh = {0}, baseline = {0};
+  assert(section_mesh_build(&world, 0, 25, 0, &oldMesh));
+  int baselineY = voxel_section_coord(terrain_sample_column(WORLD_SEED, 16, 0).height - 1);
+  assert(section_mesh_build(&world, 1, baselineY, 0, &baseline));
+  assert(baseline.vertexCount);
+  assert_gpu_geometry(gpu, &oldMesh);
+  assert_gpu_geometry(gpu_section(&renderer, 1, baselineY, 0), &baseline);
+
+  /* Metadata growth is transactional even when old GPU resources are live. */
+  assert(world_set_block(&world, 0, 416, 0, BLOCK_TYPE_GRAVEL));
+  SectionGpuMesh *records = renderer.meshes;
+  size_t recordCount = renderer.meshCount;
+  metadata_allocations_before_failure = 0;
+  assert(!renderer_sync_view(&renderer, &world, &player));
+  metadata_allocations_before_failure = -1;
+  assert(renderer.meshes == records && renderer.meshCount == recordCount);
+  assert(world_section(&world, 0, 26, 0)->dirty);
+  assert(world_get_block(&world, 0, 416, 0) == BLOCK_TYPE_GRAVEL);
+  assert_gpu_geometry(gpu_section(&renderer, 0, 25, 0), &oldMesh);
+  /* Metadata may commit before visible-index growth fails. Existing handles
+     and index storage remain owned; no stale indices may be submitted. */
+  size_t *visible = renderer.visibleMeshes;
+  size_t capacity = renderer.visibleMeshCapacity;
+  visible_allocations_before_failure = 0;
+  assert(!renderer_sync_view(&renderer, &world, &player));
+  visible_allocations_before_failure = -1;
+  assert(renderer.visibleMeshes == visible && renderer.visibleMeshCapacity == capacity);
+  assert(!renderer.visibleMeshCount && !renderer.drawMeshCount);
+  assert(world_section(&world, 0, 26, 0)->dirty);
+  gpu = gpu_section(&renderer, 0, 25, 0);
+  assert(gpu->vbo == vbo && gpu->vao == vao);
+  assert_gpu_geometry(gpu, &oldMesh);
+  assert(renderer_sync_view(&renderer, &world, &player));
+  assert(!world_section(&world, 0, 26, 0)->dirty);
+  assert(world_set_block(&world, 0, 416, 0, BLOCK_TYPE_EMPTY));
+  assert(renderer_sync_view(&renderer, &world, &player));
+  gpu = gpu_section(&renderer, 0, 26, 0);
+  assert(gpu && !gpu->vbo && !gpu->vao && !vertex_count(gpu));
+  const Subchunk *marker = world_section(&world, 0, 26, 0);
+  assert(marker && !marker->dirty && !marker->voxelCount);
+  /* Removing the adjacent marker also rebuilds section 25. Capture its
+     current ownership before testing transactional upload failure. */
+  gpu = gpu_section(&renderer, 0, 25, 0);
+  vao = gpu->vao;
+  vbo = gpu->vbo;
+  assert_gpu_geometry(gpu, &oldMesh);
   assert(world_set_block(&world, 0, 400, 0, BLOCK_TYPE_SNOW));
   real_buffer_upload = __glewBufferData;
   uploads_before_failure = 0;
@@ -371,7 +458,10 @@ static void test_streamed_retirement_after_failed_sync(void) {
   assert(!renderer_sync_view(&renderer, &world, &player));
   __glewBufferData = real_buffer_upload;
   assert(world_section(&world, 0, 25, 0)->dirty);
-  assert(glIsBuffer(vbo));
+  gpu = gpu_section(&renderer, 0, 25, 0);
+  assert(gpu->vbo == vbo && gpu->vao == vao);
+  assert_gpu_geometry(gpu, &oldMesh);
+  assert(world_get_block(&world, 0, 400, 0) == BLOCK_TYPE_SNOW);
   /* Leave the whole world: no new uploads can reuse the deleted GL names. */
   player.position.x = 2000;
   assert(renderer_sync_view(&renderer, &world, &player));
@@ -383,12 +473,29 @@ static void test_streamed_retirement_after_failed_sync(void) {
     if (!chunk->edited) assert(!chunk->sections && !chunk->terrainReady);
   }
   assert(world_get_block(&world, 0, 400, 0) == BLOCK_TYPE_SNOW);
+  assert(world_section(&world, 0, 25, 0) == retained && retained->dirty);
+  assert(world_section(&world, 0, 26, 0) == marker && marker->dirty);
   assert_empty_gpu_world(&renderer);
   player.position.x = 0.5f;
   assert(renderer_sync_view(&renderer, &world, &player));
   gpu = gpu_section(&renderer, 0, 25, 0);
   assert(gpu && gpu->vertexCount[BLOCK_TYPE_SNOW] == 36);
-  assert(!world_section(&world, 0, 25, 0)->dirty);
+  assert(world_section(&world, 0, 25, 0) == retained && !retained->dirty);
+  SectionMesh rebuilt = {0};
+  assert(section_mesh_build(&world, 0, 25, 0, &rebuilt));
+  assert(rebuilt.vertexCount == oldMesh.vertexCount);
+  for (size_t v = 0; v < rebuilt.vertexCount; v++) {
+    assert(rebuilt.vertices[v].x == oldMesh.vertices[v].x);
+    assert(rebuilt.vertices[v].y == oldMesh.vertices[v].y);
+    assert(rebuilt.vertices[v].z == oldMesh.vertices[v].z);
+  }
+  assert_gpu_geometry(gpu, &rebuilt);
+  assert_gpu_geometry(gpu_section(&renderer, 1, baselineY, 0), &baseline);
+  assert(world_section(&world, 0, 26, 0) == marker && !marker->dirty);
+  assert(world_get_block(&world, 0, 416, 0) == BLOCK_TYPE_EMPTY);
+  section_mesh_destroy(&rebuilt);
+  section_mesh_destroy(&oldMesh);
+  section_mesh_destroy(&baseline);
   /* Every regenerated cell in an unedited column matches the seeded baseline. */
   for (int x = 16; x < 32; x++)
     for (int z = 0; z < 16; z++) {

@@ -3,6 +3,8 @@
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
+#include <limits.h>
 
 static void assert_near(float actual, float expected) {
   assert(fabsf(actual - expected) < 0.0001f);
@@ -99,32 +101,29 @@ static void test_platform_generates_seeded_block_types(void) {
   assert(create_platform(&zeroSeed, 8, center, 1.0f, 0));
   assert(create_platform(&sameZeroSeed, 8, center, 1.0f, 0));
   assert(first.blockCount == 64);
-  assert_near(first.blocks[0].position.x, -3.5f);
-  assert_near(first.blocks[0].position.y, -0.5f);
-  assert_near(first.blocks[0].position.z, -3.5f);
+  assert_near(world_cell_to_position(&first, 0, 0).x, -3.5f);
+  assert_near(world_cell_to_position(&first, 0, 0).y, -0.5f);
+  assert_near(world_cell_to_position(&first, 0, 0).z, -3.5f);
 
   int typeCounts[BLOCK_TYPE_COUNT] = {0};
   int matchingNeighbors = 0;
   int differsFromOtherSeed = 0;
   for (int i = 0; i < first.blockCount; i++) {
-    assert(first.blocks[i].type == sameSeed.blocks[i].type);
-    assert(zeroSeed.blocks[i].type == sameZeroSeed.blocks[i].type);
-    assert(first.blocks[i].position.x == sameSeed.blocks[i].position.x);
-    assert(first.blocks[i].position.y == sameSeed.blocks[i].position.y);
-    assert(first.blocks[i].position.z == sameSeed.blocks[i].position.z);
-    if (first.blocks[i].type != differentSeed.blocks[i].type)
+    assert(first.tiles[i] == sameSeed.tiles[i]);
+    assert(zeroSeed.tiles[i] == sameZeroSeed.tiles[i]);
+    if (first.tiles[i] != differentSeed.tiles[i])
       differsFromOtherSeed = 1;
-    assert(first.blocks[i].type >= BLOCK_TYPE_GRASS);
-    assert(first.blocks[i].type < BLOCK_TYPE_COUNT);
-    typeCounts[first.blocks[i].type]++;
+    assert(first.tiles[i] >= BLOCK_TYPE_GRASS);
+    assert(first.tiles[i] < BLOCK_TYPE_COUNT);
+    typeCounts[first.tiles[i]]++;
 
     const int x = i / 8;
     const int z = i % 8;
     if (x + 1 < 8 &&
-        first.blocks[i].type == first.blocks[i + 8].type)
+        first.tiles[i] == first.tiles[i + 8])
       matchingNeighbors++;
     if (z + 1 < 8 &&
-        first.blocks[i].type == first.blocks[i + 1].type)
+        first.tiles[i] == first.tiles[i + 1])
       matchingNeighbors++;
   }
   assert(differsFromOtherSeed);
@@ -140,7 +139,7 @@ static void test_platform_balances_non_divisible_type_counts(void) {
 
   int typeCounts[BLOCK_TYPE_COUNT] = {0};
   for (int i = 0; i < world.blockCount; i++)
-    typeCounts[world.blocks[i].type]++;
+    typeCounts[world.tiles[i]]++;
 
   int minimum = typeCounts[0];
   int maximum = typeCounts[0];
@@ -167,26 +166,25 @@ static void test_configured_platform_geometry_and_seed(void) {
   assert(create_platform(&repeated, side, center, blockSize,
                          UINT32_C(0x4B1D2A37)));
   assert(world.blockCount == totalBlocks);
+  PlatformSurfaceMesh mesh = {0};
+  assert(platform_surface_mesh_build(&world, side, &mesh));
+  assert(mesh.vertexCount == (size_t)(totalBlocks + 4 * side) * 6);
+  platform_surface_mesh_destroy(&mesh);
 
   int typeCounts[BLOCK_TYPE_COUNT] = {0};
   for (int x = 0; x < side; x++) {
     for (int z = 0; z < side; z++) {
       int index = x * side + z;
-      const Block *block = &world.blocks[index];
-      const Block *sameSeedBlock = &repeated.blocks[index];
+      const Vec3 position = world_cell_to_position(&world, x, z);
       float expectedX = center.x + ((float)x - side / 2.0f + 0.5f) * blockSize;
       float expectedZ = center.z + ((float)z - side / 2.0f + 0.5f) * blockSize;
-
-      assert_near(block->position.x, expectedX);
-      assert_near(block->position.y, center.y - blockSize / 2.0f);
-      assert_near(block->position.z, expectedZ);
-      assert_near(block->size.x, blockSize);
-      assert_near(block->size.y, blockSize);
-      assert_near(block->size.z, blockSize);
-      assert(block->type >= BLOCK_TYPE_GRASS);
-      assert(block->type < BLOCK_TYPE_COUNT);
-      assert(block->type == sameSeedBlock->type);
-      typeCounts[block->type]++;
+      assert(world_index(x, z, side) == index);
+      assert_near(position.x, expectedX);
+      assert_near(position.y, center.y - blockSize / 2.0f);
+      assert_near(position.z, expectedZ);
+      assert(world_is_solid(&world, x, z));
+      assert(world_block_at(&world, x, z) == repeated.tiles[index]);
+      typeCounts[world.tiles[index]]++;
     }
   }
 
@@ -201,7 +199,7 @@ static void test_platform_surface_mesh(void) {
   assert(platform_surface_mesh_build(&single, 1, &singleMesh));
   assert(singleMesh.vertexCount == 30);
   for (int type = 0; type < BLOCK_TYPE_COUNT; type++) {
-    if ((BlockType)type == single.blocks[0].type)
+    if ((BlockType)type == single.tiles[0])
       assert(singleMesh.typeVertexCount[type] == 30);
     else
       assert(singleMesh.typeVertexCount[type] == 0);
@@ -265,9 +263,9 @@ static void test_platform_surface_mesh(void) {
   size_t expectedTypeVertices[BLOCK_TYPE_COUNT] = {0};
   for (int x = 0; x < 2; x++) {
     for (int z = 0; z < 2; z++) {
-      const Block *block = &world.blocks[x * 2 + z];
+      const BlockType type = world_block_at(&world, x, z);
       size_t faces = 1 + (x == 0) + (x == 1) + (z == 0) + (z == 1);
-      expectedTypeVertices[block->type] += faces * 6;
+      expectedTypeVertices[type] += faces * 6;
     }
   }
   for (int type = 0; type < BLOCK_TYPE_COUNT; type++) {
@@ -286,30 +284,100 @@ static void test_platform_surface_mesh(void) {
 
 static void test_platform_rejects_invalid_requests_without_mutation(void) {
   World world = {0};
-  Block original = {
-      .position = {1.0f, 2.0f, 3.0f},
-      .size = {4.0f, 5.0f, 6.0f},
-      .type = BLOCK_TYPE_STONE,
-  };
-  assert(world_add_block(&world, original));
+  assert(create_platform(&world, 2, (Vec3){1.0f, 2.0f, 3.0f}, 4.0f, 9));
+  const World original = world;
 
   assert(!create_platform(&world, 0, (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 1));
   assert(!create_platform(&world, -1, (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 1));
   assert(!create_platform(&world, PLATFORM_BLOCKS_PER_SIDE + 1,
                           (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 1));
   assert(!create_platform(NULL, 1, (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 1));
-  assert(world.blockCount == 1);
-  assert(world.blocks[0].position.x == original.position.x);
-  assert(world.blocks[0].position.y == original.position.y);
-  assert(world.blocks[0].position.z == original.position.z);
-  assert(world.blocks[0].type == original.type);
+  assert(!create_platform(&world, INT_MAX, (Vec3){0}, 1.0f, 1));
+  assert(!create_platform(&world, 1, (Vec3){0}, 0.0f, 1));
+  assert(!create_platform(&world, 1, (Vec3){0}, -1.0f, 1));
+  assert(!create_platform(&world, 1, (Vec3){0}, NAN, 1));
+  assert(!create_platform(&world, 1, (Vec3){INFINITY, 0, 0}, 1.0f, 1));
+  assert(memcmp(&world, &original, sizeof(world)) == 0);
 }
 
 static void test_world_rejects_invalid_block_type(void) {
+  World world = single_block_world();
+  assert(!world_set_block(&world, 0, 0, (BlockType)-1));
+  assert(!world_set_block(&world, 0, 0, BLOCK_TYPE_COUNT));
+  assert(!world_set_block(&world, -1, 0, BLOCK_TYPE_STONE));
+  assert(!world_set_block(NULL, 0, 0, BLOCK_TYPE_STONE));
+  assert(world.blockCount == 1);
+  assert(world_index(INT_MAX, 0, INT_MAX) == -1);
+  assert(world_index(0, -1, 1) == -1);
+  assert(world_index(1, 0, 1) == -1);
+  assert(world_block_at(&world, -1, 0) == BLOCK_TYPE_EMPTY);
+  assert(!world_is_solid(NULL, 0, 0));
+}
+
+static void test_grid_holes_and_empty_mesh(void) {
   World world = {0};
-  Block block = {.type = (BlockType)-1};
-  assert(!world_add_block(&world, block));
+  PlatformSurfaceMesh mesh = {0};
+  assert(create_platform(&world, 3, (Vec3){10, 4, -6}, 2.0f, 3));
+  assert(world_set_block(&world, 1, 1, BLOCK_TYPE_EMPTY));
+  assert(world.blockCount == 8);
+  assert(!world_is_solid(&world, 1, 1));
+  assert(world_set_block(&world, 1, 1, BLOCK_TYPE_EMPTY));
+  assert(world.blockCount == 8);
+  assert(platform_surface_mesh_build(&world, 3, &mesh));
+  assert(mesh.vertexCount == (8 + 12 + 4) * 6);
+  int holeFaces = 0;
+  for (size_t i = 0; i < mesh.vertexCount; i += 6) {
+    const SurfaceVertex *v = &mesh.vertices[i];
+    int onHole = 1;
+    for (int j = 0; j < 6; j++) {
+      assert(v[j].x >= 7 && v[j].x <= 13);
+      assert(v[j].y >= 2 && v[j].y <= 4);
+      assert(v[j].z >= -9 && v[j].z <= -3);
+      if (v[j].x < 9 || v[j].x > 11 || v[j].z < -7 || v[j].z > -5)
+        onHole = 0;
+    }
+    if (onHole) {
+      const Vec3 a = {v[1].x-v[0].x, v[1].y-v[0].y, v[1].z-v[0].z};
+      const Vec3 b = {v[2].x-v[0].x, v[2].y-v[0].y, v[2].z-v[0].z};
+      const Vec3 normal = vec3_cross(a, b);
+      const Vec3 toHole = {10-v[0].x, 0, -6-v[0].z};
+      assert(vec3_dot(normal, toHole) > 0);
+      holeFaces++;
+    }
+  }
+  assert(holeFaces == 4);
+  platform_surface_mesh_destroy(&mesh);
+
+  Player player = make_player((Vec3){10, 4, -6}, 1);
+  update_player(&player, (PlayerInput){0}, 0.1f, &world);
+  assert(!player.grounded && player.position.y < 4);
+  assert(world_set_block(&world, 1, 1, BLOCK_TYPE_STONE));
+  assert(world.blockCount == 9);
+  player = make_player((Vec3){10, 4.1f, -6}, 0);
+  player.velocityY = -1;
+  update_player(&player, (PlayerInput){0}, 0.1f, &world);
+  assert(player.grounded);
+  assert_near(player.position.y, 4);
+
+  for (int x = 0; x < 3; x++)
+    for (int z = 0; z < 3; z++)
+      assert(world_set_block(&world, x, z, BLOCK_TYPE_EMPTY));
   assert(world.blockCount == 0);
+  assert(platform_surface_mesh_build(&world, 3, &mesh));
+  assert(mesh.vertexCount == 0 && mesh.vertices == NULL);
+  platform_surface_mesh_destroy(&mesh);
+  assert(world_set_block(&world, 0, 0, BLOCK_TYPE_GRASS));
+  assert(world_set_block(&world, 2, 2, BLOCK_TYPE_STONE));
+  assert(platform_surface_mesh_build(&world, 3, &mesh));
+  assert(mesh.vertexCount == 60);
+  assert(mesh.typeVertexCount[BLOCK_TYPE_GRASS] == 30);
+  assert(mesh.typeVertexCount[BLOCK_TYPE_STONE] == 30);
+  platform_surface_mesh_destroy(&mesh);
+  world.tiles[0] = BLOCK_TYPE_COUNT;
+  assert(!platform_surface_mesh_build(&world, 3, &mesh));
+  world.tiles[0] = BLOCK_TYPE_GRASS;
+  world.blockCount++;
+  assert(!platform_surface_mesh_build(&world, 3, &mesh));
 }
 
 static void test_diagonal_movement_is_normalized(void) {
@@ -398,6 +466,7 @@ int main(void) {
   test_platform_surface_mesh();
   test_platform_rejects_invalid_requests_without_mutation();
   test_world_rejects_invalid_block_type();
+  test_grid_holes_and_empty_mesh();
   test_diagonal_movement_is_normalized();
   test_landing_on_block();
   test_falling_off_platform_edge();

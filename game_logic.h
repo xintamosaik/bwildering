@@ -36,14 +36,9 @@ typedef enum {
   BLOCK_TYPE_STONE,
   BLOCK_TYPE_WATER,
   BLOCK_TYPE_SAND,
-  BLOCK_TYPE_COUNT
+  BLOCK_TYPE_COUNT,
+  BLOCK_TYPE_EMPTY = UINT8_MAX
 } BlockType;
-
-typedef struct {
-  Vec3 position;
-  Vec3 size;
-  BlockType type;
-} Block;
 
 typedef struct {
   float x;
@@ -64,8 +59,11 @@ enum {
 };
 
 typedef struct {
-  Block blocks[WORLD_MAX_BLOCKS];
-  int blockCount;
+  uint8_t tiles[WORLD_MAX_BLOCKS];
+  int blockCount; /* Occupied cells, not the grid capacity. */
+  int blocksPerSide;
+  Vec3 center; /* Center of the grid at its top surface. */
+  float blockSize;
 } World;
 
 typedef float mat4[16];
@@ -82,14 +80,22 @@ void mat4_perspective(float fov_radians, float aspect, float near, float far,
 void mat4_lookat(Vec3 eye, Vec3 target, Vec3 up, mat4 dest);
 void mat4_rotate(mat4 dest, float angle, float x, float y, float z);
 void mat4_multiply(const mat4 a, const mat4 b, mat4 dest);
-int world_add_block(World *world, Block block);
+/* Grid storage is x-major/z-minor. Invalid coordinates map to -1/EMPTY.
+   Geometry uses a single horizontal layer of uniform cubes. */
+int world_index(int x, int z, int side);
+/* Requires a valid world and in-range coordinates; returns the cube center. */
+Vec3 world_cell_to_position(const World *world, int x, int z);
+BlockType world_block_at(const World *world, int x, int z);
+int world_is_solid(const World *world, int x, int z);
+/* Use this setter to keep blockCount consistent when editing occupancy. */
+int world_set_block(World *world, int x, int z, BlockType type);
 uint32_t random_bounded(uint32_t *state, uint32_t upperBound);
 int block_type_color(BlockType type, Vec3 *color);
 int create_platform(World *world, int blocksPerSide, Vec3 center,
                     float blockSize, uint32_t seed);
-/* Builds the top and perimeter faces of a complete, regularly ordered
-  platform from create_platform(); this is not a general voxel-world mesher.
-  Blocks must be stored x-major/z-minor and total blocksPerSide squared. */
+/* Builds exposed tops and sides, including sides around empty cells; no bottoms.
+   platformBlocksPerSide must match the world's grid size.
+   Pass an empty/destroyed mesh; failure leaves it unchanged. */
 int platform_surface_mesh_build(const World *world, int platformBlocksPerSide,
                                 PlatformSurfaceMesh *mesh);
 void platform_surface_mesh_destroy(PlatformSurfaceMesh *mesh);

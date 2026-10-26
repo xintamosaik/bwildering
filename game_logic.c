@@ -259,8 +259,9 @@ int create_terrain(World *world, int side, Vec3 center, float size, uint32_t see
 static const float PLAYER_RADIUS = 0.25f;
 static const float PLAYER_HEIGHT = 1.5f;
 
-int player_place_block(World *world, const Player *player, BlockType type, float reach) {
-  if (!world || !world->chunks || !player || !block_is_solid(type) ||
+static int player_view_block(const World *world, const Player *player, float reach,
+                             int hit[3], int adjacent[3]) {
+  if (!world || !world->chunks || !player ||
       !isfinite(reach) || reach <= 0)
     return 0;
   Vec3 eye = player_eye_position(player);
@@ -304,18 +305,36 @@ int player_place_block(World *world, const Player *player, BlockType type, float
     next[axis] += interval[axis];
     if (!block_is_solid(world_get_block(world, cell[0], cell[1], cell[2])))
       continue;
-    double low[3] = {world->origin.x + (double)previous[0] * world->blockSize,
-                     world->origin.y + (double)previous[1] * world->blockSize,
-                     world->origin.z + (double)previous[2] * world->blockSize};
-    if (low[0] < player->position.x + PLAYER_RADIUS &&
-        low[0] + world->blockSize > player->position.x - PLAYER_RADIUS &&
-        low[1] < player->position.y + PLAYER_HEIGHT &&
-        low[1] + world->blockSize > player->position.y &&
-        low[2] < player->position.z + PLAYER_RADIUS &&
-        low[2] + world->blockSize > player->position.z - PLAYER_RADIUS)
-      return 0;
-    return world_set_block(world, previous[0], previous[1], previous[2], type);
+    for (int i = 0; i < 3; i++) {
+      hit[i] = cell[i];
+      adjacent[i] = previous[i];
+    }
+    return 1;
   }
+}
+
+int player_place_block(World *world, const Player *player, BlockType type, float reach) {
+  int hit[3], adjacent[3];
+  if (!block_is_solid(type) || !player_view_block(world, player, reach, hit, adjacent))
+    return 0;
+  double low[3] = {world->origin.x + (double)adjacent[0] * world->blockSize,
+                   world->origin.y + (double)adjacent[1] * world->blockSize,
+                   world->origin.z + (double)adjacent[2] * world->blockSize};
+  if (low[0] < player->position.x + PLAYER_RADIUS &&
+      low[0] + world->blockSize > player->position.x - PLAYER_RADIUS &&
+      low[1] < player->position.y + PLAYER_HEIGHT &&
+      low[1] + world->blockSize > player->position.y &&
+      low[2] < player->position.z + PLAYER_RADIUS &&
+      low[2] + world->blockSize > player->position.z - PLAYER_RADIUS)
+    return 0;
+  return world_set_block(world, adjacent[0], adjacent[1], adjacent[2], type);
+}
+
+int player_remove_block(World *world, const Player *player, float reach) {
+  int hit[3], adjacent[3];
+  if (!player_view_block(world, player, reach, hit, adjacent))
+    return 0;
+  return world_set_block(world, hit[0], hit[1], hit[2], BLOCK_TYPE_EMPTY);
 }
 
 static int player_intersects(const World *world, Vec3 p) {

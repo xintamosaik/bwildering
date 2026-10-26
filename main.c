@@ -52,6 +52,7 @@ typedef struct {
   int jumpWasDown;
   int jumpQueued;
   int placeQueued;
+  int removeQueued;
   int escapeWasDown;
   int glfwInitialized;
   int rendererInitialized;
@@ -71,12 +72,16 @@ static const int FPS_TEXT_MAX_CHARS = 16;
 #pragma region Input
 static void mouse_button_callback(GLFWwindow *window, int button, int action, int mods) {
   (void)mods;
-  if (button != GLFW_MOUSE_BUTTON_LEFT || action != GLFW_PRESS ||
+  if (action != GLFW_PRESS ||
       glfwGetInputMode(window, GLFW_CURSOR) != GLFW_CURSOR_DISABLED)
     return;
   Application *application = glfwGetWindowUserPointer(window);
-  if (application)
-    application->placeQueued = 1;
+  if (application) {
+    if (button == GLFW_MOUSE_BUTTON_LEFT)
+      application->placeQueued = 1;
+    else if (button == GLFW_MOUSE_BUTTON_RIGHT)
+      application->removeQueued = 1;
+  }
 }
 
 static void mouse_callback(GLFWwindow *window, const double position_x, const double position_y) {
@@ -734,6 +739,11 @@ static void application_update(Application *application) {
     if (glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED)
       player_place_block(&application->world, &application->player, BLOCK_TYPE_STONE, 6.0f);
     application->placeQueued = 0;
+  }
+  if (application->removeQueued) {
+    if (glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED)
+      player_remove_block(&application->world, &application->player, 6.0f);
+    application->removeQueued = 0;
   }
 }
 

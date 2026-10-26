@@ -173,5 +173,7 @@ Vec3 player_eye_position(const Player *player);
 /* Place against the first block along the view ray, within reach in world units.
    Rejects misses, occupied eyes, invalid materials, and overlap with the player. */
 int player_place_block(World *world, const Player *player, BlockType type, float reach);
+/* Remove the first block along the view ray; misses leave the world unchanged. */
+int player_remove_block(World *world, const Player *player, float reach);
 
 #endif

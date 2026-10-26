@@ -976,6 +976,71 @@ static void test_placement_oblique_view_and_reach_boundary(void) {
   world_destroy(&world);
 }
 
+static void test_remove_nearest_block_and_update_mesh(void) {
+  const float sizes[] = {0.5f, 1, 2};
+  const int directions[6][3] = {{-1, 0, 0}, {1, 0, 0}, {0, -1, 0},
+                                {0, 1, 0}, {0, 0, -1}, {0, 0, 1}};
+  for (int s = 0; s < 3; s++)
+    for (int d = 0; d < 6; d++) {
+      World world = {0};
+      float size = sizes[s];
+      Vec3 origin = {12, -3, 8};
+      int x = -16, y = 0, z = 0;
+      Vec3 direction = {directions[d][0], directions[d][1], directions[d][2]};
+      assert(world_init_region(&world, -24, -8, 16, origin, size));
+      assert(world_set_block(&world, x, y, z, BLOCK_TYPE_STONE));
+      assert(world_set_block(&world, x + directions[d][0], y + directions[d][1],
+                             z + directions[d][2], BLOCK_TYPE_GRASS));
+      Vec3 center = {origin.x + (x + 0.5f) * size, origin.y + 0.5f * size,
+                     origin.z + 0.5f * size};
+      Vec3 eye = vec3_sub(center, vec3_scale(direction, 2 * size));
+      Player player = make_player(vec3_sub(eye, (Vec3){0, 1, 0}), 0);
+      player.eyeHeight = 1;
+      player.camera.front = direction;
+      size_t draws, sections;
+      assert(mesh_world(&world, &draws, &sections) == 60);
+      assert(player_remove_block(&world, &player, 6));
+      assert(world_get_block(&world, x, y, z) == BLOCK_TYPE_EMPTY);
+      assert(world_get_block(&world, x + directions[d][0], y + directions[d][1],
+                             z + directions[d][2]) == BLOCK_TYPE_GRASS);
+      assert(mesh_world(&world, &draws, &sections) == 36);
+      assert(player_remove_block(&world, &player, 6));
+      assert(mesh_world(&world, &draws, &sections) == 0);
+      assert(!player_remove_block(&world, &player, 6));
+      world_destroy(&world);
+    }
+}
+
+static void test_removal_reach_crouched_aim_and_collision(void) {
+  World world = {0};
+  assert(world_init(&world, 16, (Vec3){0}, 1));
+  Player player = make_player((Vec3){0.5f, 0, 0.5f}, 0);
+  player.eyeHeight = 1;
+  player.camera.front = (Vec3){1, 0, 0};
+  assert(world_set_block(&world, 7, 1, 0, BLOCK_TYPE_STONE));
+  assert(!player_remove_block(&world, &player, 6));
+  assert(world_get_block(&world, 7, 1, 0) == BLOCK_TYPE_STONE);
+  assert(world_set_block(&world, 3, 1, 0, BLOCK_TYPE_GRASS));
+  assert(!player_remove_block(&world, &player, 2.49f));
+  assert(!player_remove_block(&world, &player, NAN));
+  assert(player_remove_block(&world, &player, 2.5f));
+  assert(world_get_block(&world, 3, 1, 0) == BLOCK_TYPE_EMPTY);
+  assert(world_set_block(&world, 3, 0, 0, BLOCK_TYPE_SAND));
+  update_player(&player, (PlayerInput){.crouch = 1}, 0.001f, &world);
+  assert(player_remove_block(&world, &player, 6));
+  assert(world_get_block(&world, 3, 0, 0) == BLOCK_TYPE_EMPTY);
+  assert(world_get_block(&world, 7, 1, 0) == BLOCK_TYPE_STONE);
+  world_destroy(&world);
+  world = single_block_world();
+  player = make_player((Vec3){0}, 1);
+  player.eyeHeight = 1;
+  player.camera.front = (Vec3){0, -1, 0};
+  assert(player_remove_block(&world, &player, 6));
+  update_player(&player, (PlayerInput){0}, 0.1f, &world);
+  assert(!player.grounded && player.position.y < 0);
+  world_destroy(&world);
+}
+
 static void test_generated_terrain_spawn(void) {
   const float sizes[] = {0.5f, 1, 2};
   for (int s = 0; s < 3; s++) {
@@ -1027,6 +1092,8 @@ int main(void) {
   test_place_block_on_viewed_face();
   test_placement_reach_misses_and_player_overlap();
   test_placement_oblique_view_and_reach_boundary();
+  test_remove_nearest_block_and_update_mesh();
+  test_removal_reach_crouched_aim_and_collision();
   puts("All game logic tests passed.");
   return 0;
 }

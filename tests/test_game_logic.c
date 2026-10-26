@@ -901,6 +901,165 @@ static void test_dirty_neighbors(void) {
   world_destroy(&world);
 }
 
+/* Independent visibility oracle: read every voxel and its six neighbours,
+   without consulting section occupancy, candidate flags or edited chunks.
+   A face is identified by its owning voxel, outward direction and material. */
+static size_t assert_reference_section_faces(const World *world, int cx, int sy, int cz) {
+  const int step[6][3] = {{-1,0,0}, {1,0,0}, {0,-1,0},
+                         {0,1,0}, {0,0,-1}, {0,0,1}};
+  uint8_t expected[SECTION_VOLUME][6];
+  memset(expected, BLOCK_TYPE_EMPTY, sizeof(expected));
+  size_t remaining = 0;
+  for (int x = 0; x < SECTION_SIZE; x++)
+    for (int y = 0; y < SECTION_SIZE; y++)
+      for (int z = 0; z < SECTION_SIZE; z++) {
+        int wx = cx * SECTION_SIZE + x, wy = sy * SECTION_SIZE + y,
+            wz = cz * SECTION_SIZE + z;
+        BlockType type = world_get_block(world, wx, wy, wz);
+        if (type == BLOCK_TYPE_EMPTY) continue;
+        assert(type >= BLOCK_TYPE_GRASS && type < BLOCK_TYPE_COUNT);
+        for (int d = 0; d < 6; d++)
+          if (world_get_block(world, wx + step[d][0], wy + step[d][1],
+                              wz + step[d][2]) == BLOCK_TYPE_EMPTY) {
+            expected[(x * SECTION_SIZE + y) * SECTION_SIZE + z][d] = type;
+            remaining++;
+          }
+      }
+  size_t faceCount = remaining;
+  SectionMesh mesh = {0};
+  assert(section_mesh_build(world, cx, sy, cz, &mesh));
+  assert(mesh.vertexCount == faceCount * 6);
+  size_t cursor = 0;
+  for (int t = 0; t < BLOCK_TYPE_COUNT; t++) {
+    assert(mesh.firstVertex[t] == cursor);
+    assert(mesh.typeVertexCount[t] % 6 == 0);
+    assert(mesh.typeVertexCount[t] <= mesh.vertexCount - cursor);
+    for (size_t i = cursor; i < cursor + mesh.typeVertexCount[t]; i += 6) {
+      /* Recover the unit square from geometry, rather than relying on face
+         emission order or copying the mesher's corner/triangle tables. */
+      Vec3 p[6];
+      int low[3] = {INT_MAX, INT_MAX, INT_MAX};
+      int high[3] = {INT_MIN, INT_MIN, INT_MIN};
+      for (int v = 0; v < 6; v++) {
+        SurfaceVertex vertex = mesh.vertices[i + v];
+        float coords[3] = {(vertex.x - world->origin.x) / world->blockSize,
+                           (vertex.y - world->origin.y) / world->blockSize,
+                           (vertex.z - world->origin.z) / world->blockSize};
+        for (int a = 0; a < 3; a++) {
+          int c = (int)roundf(coords[a]);
+          assert_near(coords[a], c);
+          if (c < low[a]) low[a] = c;
+          if (c > high[a]) high[a] = c;
+        }
+        p[v] = (Vec3){coords[0], coords[1], coords[2]};
+      }
+      Vec3 normal = vec3_cross(vec3_sub(p[1], p[0]), vec3_sub(p[2], p[0]));
+      Vec3 second = vec3_cross(vec3_sub(p[4], p[3]), vec3_sub(p[5], p[3]));
+      int direction = -1;
+      for (int d = 0; d < 6; d++)
+        if (normal.x == step[d][0] && normal.y == step[d][1] && normal.z == step[d][2])
+          direction = d;
+      assert(direction >= 0);
+      assert(second.x == normal.x && second.y == normal.y && second.z == normal.z);
+      for (int a = 0; a < 3; a++)
+        assert(high[a] - low[a] == (a == direction / 2 ? 0 : 1));
+      if (direction % 2) low[direction / 2]--;
+      int x = low[0] - cx * SECTION_SIZE, y = low[1] - sy * SECTION_SIZE,
+          z = low[2] - cz * SECTION_SIZE;
+      assert(x >= 0 && x < SECTION_SIZE && y >= 0 && y < SECTION_SIZE &&
+             z >= 0 && z < SECTION_SIZE);
+      uint8_t *face = &expected[(x * SECTION_SIZE + y) * SECTION_SIZE + z][direction];
+      assert(*face == t); /* Also rejects duplicate, reversed or misplaced faces. */
+      *face = BLOCK_TYPE_EMPTY;
+      assert(remaining > 0);
+      remaining--;
+    }
+    cursor += mesh.typeVertexCount[t];
+  }
+  assert(cursor == mesh.vertexCount && remaining == 0);
+  section_mesh_destroy(&mesh);
+  return faceCount;
+}
+
+static void test_hidden_section_neighbor_edits(void) {
+  const int step[6][3] = {{-1,0,0}, {1,0,0}, {0,-1,0},
+                         {0,1,0}, {0,0,-1}, {0,0,1}};
+  const int heights[] = {-6, -1, 0};
+  /* Eager; fully resident streamed; only target resident; edit before target
+     materialization. The last two exercise procedural neighbouring reads and
+     candidate classification in the presence of pre-existing edits. */
+  for (int mode = 0; mode < 4; mode++)
+    for (size_t h = 0; h < sizeof(heights) / sizeof(heights[0]); h++)
+      for (int d = 0; d < 6; d++) {
+        World world = {0};
+        Vec3 origin = {10, -3, 7};
+        if (mode == 0)
+          assert(create_terrain(&world, 96, origin, 0.5f, 1));
+        else {
+          assert(create_terrain_streamed(&world, 96, origin, 0.5f, 1));
+          if (mode == 1)
+            for (int x = -3; x <= 2; x++)
+              for (int z = -3; z <= 2; z++)
+                assert(world_materialize_chunk(&world, x, z));
+          if (mode == 2) assert(world_materialize_chunk(&world, -1, -1));
+        }
+        int target[3] = {-1, heights[h], -1};
+        int cell[3] = {-9, heights[h] * SECTION_SIZE + 7, -9};
+        int axis = d / 2;
+        cell[axis] = (target[axis] + (d % 2)) * SECTION_SIZE;
+        if (!(d % 2)) cell[axis]--;
+        int edited[3] = {voxel_section_coord(cell[0]), voxel_section_coord(cell[1]),
+                          voxel_section_coord(cell[2])};
+        const Subchunk *section = world_section(&world, target[0], target[1], target[2]);
+        if (section) assert(!section->meshCandidate);
+        assert(assert_reference_section_faces(&world, target[0], target[1], target[2]) == 0);
+        /* Compare the edited section and all face neighbours, using procedural
+           reads for sections that have not been materialized. */
+        for (int n = -1; n < 6; n++)
+          assert_reference_section_faces(&world, edited[0] + (n < 0 ? 0 : step[n][0]),
+                                          edited[1] + (n < 0 ? 0 : step[n][1]),
+                                          edited[2] + (n < 0 ? 0 : step[n][2]));
+        BlockType old = world_get_block(&world, cell[0], cell[1], cell[2]);
+        assert(old != BLOCK_TYPE_EMPTY);
+        clear_dirty(&world);
+        assert(world_set_block(&world, cell[0], cell[1], cell[2], BLOCK_TYPE_EMPTY));
+        int affected[2][3] = {{edited[0], edited[1], edited[2]},
+                              {target[0], target[1], target[2]}};
+        assert_dirty_sections(&world, affected, section ? 2 : 1);
+        if (section) assert(section->meshCandidate);
+        if (mode == 3) {
+          assert(world_materialize_chunk(&world, target[0], target[2]));
+          section = world_section(&world, target[0], target[1], target[2]);
+          assert(section && section->dirty);
+          /* No resident neighbour existed at edit time to promote this flag.
+             The edited-chunk fallback must still expose the missing face. */
+          assert(!section->meshCandidate);
+        }
+        assert(assert_reference_section_faces(&world, target[0], target[1], target[2]) == 1);
+        for (int n = -1; n < 6; n++)
+          assert_reference_section_faces(&world, edited[0] + (n < 0 ? 0 : step[n][0]),
+                                          edited[1] + (n < 0 ? 0 : step[n][1]),
+                                          edited[2] + (n < 0 ? 0 : step[n][2]));
+        /* Change the exposed face through every material, including opaque
+           water; counts alone would miss a wrong material or draw range. */
+        int exposed[3] = {cell[0] - step[d][0], cell[1] - step[d][1], cell[2] - step[d][2]};
+        BlockType original = world_get_block(&world, exposed[0], exposed[1], exposed[2]);
+        for (int t = 0; t < BLOCK_TYPE_COUNT; t++) {
+          assert(world_set_block(&world, exposed[0], exposed[1], exposed[2], (BlockType)t));
+          assert(assert_reference_section_faces(&world, target[0], target[1], target[2]) == 1);
+        }
+        assert(world_set_block(&world, exposed[0], exposed[1], exposed[2], original));
+        clear_dirty(&world);
+        assert(world_set_block(&world, cell[0], cell[1], cell[2], old));
+        assert_dirty_sections(&world, affected, 2);
+        for (int n = -1; n < 6; n++)
+          assert_reference_section_faces(&world, edited[0] + (n < 0 ? 0 : step[n][0]),
+                                          edited[1] + (n < 0 ? 0 : step[n][1]),
+                                          edited[2] + (n < 0 ? 0 : step[n][2]));
+        world_destroy(&world);
+      }
+}
+
 static void test_cave_and_ceiling_collision(void) {
   World world = {0};
   assert(world_init(&world, 32, (Vec3){0}, 1));
@@ -1692,6 +1851,7 @@ int main(void) {
   test_section_access();
   test_section_faces_and_replacement();
   test_dirty_neighbors();
+  test_hidden_section_neighbor_edits();
   test_cave_and_ceiling_collision();
   test_thin_walls_at_section_boundaries();
   test_vertical_contacts_at_section_boundaries();

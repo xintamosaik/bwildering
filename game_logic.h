@@ -59,7 +59,10 @@ enum {
   SECTION_SIZE = 16,
   SECTION_VOLUME = 16 * 16 * 16,
   WORLD_MIN_SECTION_Y = -2,
-  WORLD_SECTION_COUNT = 4
+  WORLD_SECTION_COUNT = 4,
+  /* Bounded storage leaves ample room for section corners and neighbours. */
+  WORLD_COORD_MIN = -1048575,
+  WORLD_COORD_MAX = 1048575
 };
 
 typedef struct {
@@ -103,6 +106,9 @@ void mat4_perspective(float fov_radians, float aspect, float near, float far,
 void mat4_lookat(Vec3 eye, Vec3 target, Vec3 up, mat4 dest);
 void mat4_rotate(mat4 dest, float angle, float x, float y, float z);
 void mat4_multiply(const mat4 a, const mat4 b, mat4 dest);
+/* Positive divisor required; valid for every int coordinate. */
+int voxel_floor_div(int coordinate, int divisor);
+int voxel_floor_mod(int coordinate, int divisor);
 int voxel_section_coord(int coordinate);
 int voxel_local_coord(int coordinate);
 int block_is_solid(BlockType type);
@@ -112,6 +118,12 @@ int block_face_visible(BlockType type, BlockType neighbor);
    individual cells must be representable by floats throughout the world.
    center.x/z center the footprint; center.y is the voxel Y=0 reference plane. */
 int world_init(World *world, int side, Vec3 center, float blockSize);
+/* Explicit square voxel bounds [minX,minX+side), [minZ,minZ+side).
+   Every stored X/Z must be within WORLD_COORD_MIN..WORLD_COORD_MAX.
+   origin is the render/physics position of voxel (0,0,0), not the region center.
+   Same ownership, size and float representability rules as world_init. */
+int world_init_region(World *world, int minX, int minZ, int side,
+                      Vec3 origin, float blockSize);
 void world_destroy(World *world);
 Subchunk *world_section(const World *world, int chunkX, int sectionY, int chunkZ);
 BlockType world_get_block(const World *world, int x, int y, int z);
@@ -125,6 +137,18 @@ uint32_t random_bounded(uint32_t *state, uint32_t upperBound);
 int block_type_color(BlockType type, Vec3 *color);
 int create_platform(World *world, int blocksPerSide, Vec3 center,
                     float blockSize, uint32_t seed);
+typedef struct {
+  int height; /* Filled voxels are Y=-1 through height-1. */
+  BlockType material;
+} TerrainColumn;
+
+/* Pure signed voxel sampling, independent of bounds and render transform.
+   Sampler accepts every int X/Z. Noise supports scales 8,16,32 (else NAN). */
+float terrain_noise(int worldX, int worldZ, int scale, uint32_t seed);
+TerrainColumn terrain_sample_column(uint32_t seed, int worldX, int worldZ);
+/* Transactional bounded region generation; bounds/transform as world_init_region. */
+int create_terrain_region(World *world, int minX, int minZ, int side,
+                          Vec3 origin, float blockSize, uint32_t seed);
 /* Seeded, smooth terraced hills with elevation-dependent surface materials. */
 int create_terrain(World *world, int blocksPerSide, Vec3 center,
                    float blockSize, uint32_t seed);

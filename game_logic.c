@@ -162,12 +162,14 @@ static float terrain_lattice(const int x, const int z, const uint32_t seed) {
   return (float)(hash & UINT32_C(0xFFFF)) / 65535.0f;
 }
 
-static float terrain_noise(const int x, const int z, const int scale,
+float terrain_noise(const int x, const int z, const int scale,
                            const uint32_t seed) {
-  const int gx = x / scale;
-  const int gz = z / scale;
-  float tx = (float)(x % scale) / scale;
-  float tz = (float)(z % scale) / scale;
+  if (scale != 8 && scale != 16 && scale != 32)
+    return NAN;
+  const int gx = voxel_floor_div(x, scale);
+  const int gz = voxel_floor_div(z, scale);
+  float tx = (float)voxel_floor_mod(x, scale) / scale;
+  float tz = (float)voxel_floor_mod(z, scale) / scale;
   tx = tx * tx * (3.0f - 2.0f * tx);
   tz = tz * tz * (3.0f - 2.0f * tz);
   const float a = terrain_lattice(gx, gz, seed);
@@ -177,9 +179,18 @@ static float terrain_noise(const int x, const int z, const int scale,
   return (a + (b - a) * tx) * (1.0f - tz) + (c + (d - c) * tx) * tz;
 }
 
-/* Generators fill full voxel columns, preserving the old global grid sampling. */
-static int generate_world(World *world, int side, Vec3 center, float size,
-                          uint32_t seed, int terrain) {
+TerrainColumn terrain_sample_column(uint32_t seed, int x, int z) {
+  int height = (int)(10.0f * terrain_noise(x, z, 32, seed) +
+                     4.0f * terrain_noise(x, z, 16, seed ^ UINT32_C(0xA341316C)) +
+                     1.5f * terrain_noise(x, z, 8, seed ^ UINT32_C(0xC8013EA4)));
+  BlockType type = height <= 4    ? BLOCK_TYPE_SAND
+                   : height >= 10 ? BLOCK_TYPE_STONE
+                                  : BLOCK_TYPE_GRASS;
+  return (TerrainColumn){height, type};
+}
+
+/* The flat platform retains its global shuffle fixture. */
+int create_platform(World *world, int side, Vec3 center, float size, uint32_t seed) {
   World result = {0};
   if (world == NULL || !world_init(&result, side, center, size))
     return 0;
@@ -202,14 +213,6 @@ static int generate_world(World *world, int side, Vec3 center, float size,
     for (int z = 0; z < side; z++) {
       int height = 0;
       BlockType type = (BlockType)tiles[x * side + z];
-      if (terrain) {
-        height = (int)(10.0f * terrain_noise(x, z, 32, seed) +
-                       4.0f * terrain_noise(x, z, 16, seed ^ UINT32_C(0xA341316C)) +
-                       1.5f * terrain_noise(x, z, 8, seed ^ UINT32_C(0xC8013EA4)));
-        type = height <= 4    ? BLOCK_TYPE_SAND
-               : height >= 10 ? BLOCK_TYPE_STONE
-                              : BLOCK_TYPE_GRASS;
-      }
       for (int y = -1; y < height; y++) {
         if (!world_set_block(&result, result.minX + x, y, result.minZ + z, type)) {
           free(tiles);
@@ -225,12 +228,30 @@ static int generate_world(World *world, int side, Vec3 center, float size,
   return 1;
 }
 
-int create_platform(World *world, int side, Vec3 center, float size, uint32_t seed) {
-  return generate_world(world, side, center, size, seed, 0);
+int create_terrain_region(World *world, int minX, int minZ, int side,
+                          Vec3 origin, float size, uint32_t seed) {
+  World result = {0};
+  if (!world || !world_init_region(&result, minX, minZ, side, origin, size))
+    return 0;
+  for (int x = minX; x < minX + side; x++)
+    for (int z = minZ; z < minZ + side; z++) {
+      TerrainColumn column = terrain_sample_column(seed, x, z);
+      for (int y = -1; y < column.height; y++)
+        if (!world_set_block(&result, x, y, z, column.material)) {
+          world_destroy(&result);
+          return 0;
+        }
+    }
+  world_destroy(world);
+  *world = result;
+  return 1;
 }
 
 int create_terrain(World *world, int side, Vec3 center, float size, uint32_t seed) {
-  return generate_world(world, side, center, size, seed, 1);
+  Vec3 origin = center;
+  origin.x -= (side % 2) * size * 0.5f;
+  origin.z -= (side % 2) * size * 0.5f;
+  return create_terrain_region(world, -(side / 2), -(side / 2), side, origin, size, seed);
 }
 
 /* The body is independent of camera eye height. */

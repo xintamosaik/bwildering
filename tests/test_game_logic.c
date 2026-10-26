@@ -391,6 +391,115 @@ static uint64_t hash_bytes(const uint8_t *values, size_t count) {
   return hash;
 }
 
+/* Independent floor/double reference, without production coordinate helpers. */
+static double reference_lattice(int x, int z, uint32_t seed) {
+  uint32_t h = seed ^ (uint32_t)x * UINT32_C(0x9E3779B9) ^
+                      (uint32_t)z * UINT32_C(0x85EBCA6B);
+  h = (h ^ (h >> 16)) * UINT32_C(0x7FEB352D);
+  h = (h ^ (h >> 15)) * UINT32_C(0x846CA68B);
+  h ^= h >> 16;
+  return (h & 65535u) / 65535.0;
+}
+
+static double reference_noise(int x, int z, int scale, uint32_t seed) {
+  int gx = (int)floor((double)x / scale), gz = (int)floor((double)z / scale);
+  double tx = ((double)x - (double)gx * scale) / scale;
+  double tz = ((double)z - (double)gz * scale) / scale;
+  tx = tx * tx * (3 - 2 * tx);
+  tz = tz * tz * (3 - 2 * tz);
+  double a = reference_lattice(gx, gz, seed), b = reference_lattice(gx + 1, gz, seed);
+  double c = reference_lattice(gx, gz + 1, seed), d = reference_lattice(gx + 1, gz + 1, seed);
+  return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
+}
+
+static void test_signed_terrain_sampling(void) {
+  for (int scale = 8; scale <= 32; scale *= 2) {
+    int values[] = {INT_MIN, WORLD_COORD_MIN, -scale - 1, -scale, -1, 0,
+                    scale - 1, scale, scale + 1, WORLD_COORD_MAX, INT_MAX};
+    for (size_t i = 0; i < sizeof(values) / sizeof(*values); i++) {
+      int x = values[i], q = voxel_floor_div(x, scale), r = voxel_floor_mod(x, scale);
+      assert((int64_t)q * scale + r == x && r >= 0 && r < scale);
+      float fraction = (float)r / scale;
+      assert(fraction >= 0 && fraction < 1);
+      for (size_t j = 0; j < sizeof(values) / sizeof(*values); j++)
+        for (uint32_t seed = 0; seed < 3; seed++) {
+          float actual = terrain_noise(x, values[j], scale, seed);
+          assert(actual >= 0 && actual <= 1);
+          assert(fabs(actual - reference_noise(x, values[j], scale, seed)) < 0.000001);
+        }
+    }
+    /* Adjacent unquantized samples have bounded slopes, including lattice seams. */
+    for (int x = -65; x <= 65; x++)
+      for (int z = -65; z <= 65; z++) {
+        float n = terrain_noise(x, z, scale, 123);
+        assert(fabsf(n - terrain_noise(x + 1, z, scale, 123)) <= 1.5f / scale);
+        assert(fabsf(n - terrain_noise(x, z + 1, scale, 123)) <= 1.5f / scale);
+      }
+  }
+  assert(isnan(terrain_noise(0, 0, 0, 1)));
+  assert(isnan(terrain_noise(0, 0, 1, 1)));
+}
+
+static void compare_region(const World *a, const World *b) {
+  for (int x = b->minX; x < b->minX + b->blocksPerSide; x++)
+    for (int z = b->minZ; z < b->minZ + b->blocksPerSide; z++)
+      for (int y = -32; y < 32; y++)
+        assert(world_get_block(a, x, y, z) == world_get_block(b, x, y, z));
+}
+
+static void test_terrain_regions(void) {
+  World whole = {0}, part = {0}, overlap = {0};
+  uint32_t seed = UINT32_C(0x4B1D2A37);
+  assert(create_terrain_region(&whole, -16, -16, 32, (Vec3){0}, 1, seed));
+  const int orders[2][4] = {{0, 1, 2, 3}, {3, 1, 0, 2}};
+  for (int order = 0; order < 2; order++)
+    for (int i = 0; i < 4; i++) {
+      int tile = orders[order][i];
+      assert(create_terrain_region(&part, -16 + (tile / 2) * 16,
+                                    -16 + (tile % 2) * 16, 16,
+                                    (Vec3){12, -3, 8}, 2, seed));
+      compare_region(&whole, &part);
+    }
+  /* Unequal X/Z section alignment and different world size/transform. */
+  assert(create_terrain_region(&overlap, -19, -21, 40, (Vec3){-2, 4, 7}, 0.5f, seed));
+  compare_region(&overlap, &whole);
+  assert(create_terrain(&part, 17, (Vec3){23, -7, 9}, 0.25f, seed));
+  compare_region(&whole, &part);
+  size_t changed = 0;
+  for (int x = -16; x < 16; x++)
+    for (int z = -16; z < 16; z++) {
+      TerrainColumn a = terrain_sample_column(seed, x, z);
+      TerrainColumn b = terrain_sample_column(seed + 1, x, z);
+      changed += a.height != b.height || a.material != b.material;
+      for (int y = -32; y < 32; y++)
+        assert(world_get_block(&whole, x, y, z) ==
+               (y >= -1 && y < a.height ? a.material : BLOCK_TYPE_EMPTY));
+    }
+  assert(changed > 0);
+  Chunk *original = whole.chunks;
+  const int invalid[] = {INT_MIN, WORLD_COORD_MIN - 1, WORLD_COORD_MAX, INT_MAX};
+  for (size_t i = 0; i < sizeof(invalid) / sizeof(*invalid); i++) {
+    assert(!create_terrain_region(&whole, invalid[i], 0, 2, (Vec3){0}, 1, seed));
+    assert(!create_terrain_region(&whole, 0, invalid[i], 2, (Vec3){0}, 1, seed));
+    assert(whole.chunks == original);
+  }
+  /* Exercise meshing, neighbour reads and float surface queries at both limits. */
+  const int edges[] = {WORLD_COORD_MIN, WORLD_COORD_MAX - 16};
+  for (int i = 0; i < 2; i++) {
+    int edge = edges[i];
+    assert(create_terrain_region(&part, edge, edge, 17, (Vec3){0}, 1, seed));
+    size_t draws, sections;
+    assert(mesh_world(&part, &draws, &sections) > 0);
+    for (int x = edge; x < edge + 17; x++) {
+      TerrainColumn column = terrain_sample_column(seed, x, edge);
+      assert_near(world_surface_height(&part, x + 0.5f, edge + 0.5f), column.height);
+    }
+  }
+  world_destroy(&whole);
+  world_destroy(&part);
+  world_destroy(&overlap);
+}
+
 static void test_generator_regressions(void) {
   World world = {0};
   const Vec3 center = {12, -3, 8};
@@ -416,10 +525,11 @@ static void test_generator_regressions(void) {
         assert(world_get_block(&world, x - 96, height, z - 96) == BLOCK_TYPE_EMPTY);
         voxels += (size_t)height + 1;
       }
+    /* Signed voxel terrain revision; old hashes archived in feedback 02. */
     assert(hash_bytes(materials, sizeof(materials)) ==
-           (terrain ? UINT64_C(10456764649290648415) : UINT64_C(9772508476359371607)));
+           (terrain ? UINT64_C(3413989901263375960) : UINT64_C(9772508476359371607)));
     assert(hash_bytes(heights, sizeof(heights)) ==
-           (terrain ? UINT64_C(1177817274686891020) : UINT64_C(13722806926226842405)));
+           (terrain ? UINT64_C(11712522251593887156) : UINT64_C(13722806926226842405)));
     assert(world.voxelCount == voxels);
     const int dx[] = {-1, 1, 0, 0}, dz[] = {0, 0, -1, 1};
     for (int x = 0; x < 192; x++)
@@ -645,6 +755,8 @@ int main(void) {
   test_camera_stays_clear_of_walls();
   test_player_footprint_at_corners_and_ledges();
   test_coordinates_and_storage();
+  test_signed_terrain_sampling();
+  test_terrain_regions();
   test_generator_regressions();
   test_section_faces_and_replacement();
   test_dirty_neighbors();

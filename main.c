@@ -472,9 +472,9 @@ static int renderer_prepare_world(Renderer *renderer, const World *world) {
   return 1;
 }
 
-static int renderer_sync_section(const Renderer *renderer, const World *world, const size_t i) {
+static int renderer_sync_section(const Renderer *renderer, World *world, const size_t i) {
   SectionGpuMesh *gpu = &renderer->meshes[i];
-  Subchunk *section = world_section(world, gpu->chunkX, gpu->sectionY, gpu->chunkZ);
+  Subchunk *section = world_section_mut(world, gpu->chunkX, gpu->sectionY, gpu->chunkZ);
   if (!section) {
     /* A regenerated world can omit a section that previously had a mesh. */
     section_gpu_mesh_destroy(gpu);
@@ -496,7 +496,7 @@ static int renderer_sync_section(const Renderer *renderer, const World *world, c
   return 1;
 }
 
-static int renderer_sync_world(Renderer *renderer, const World *world) {
+static int renderer_sync_world(Renderer *renderer, World *world) {
   if (!renderer_prepare_world(renderer, world))
     return 0;
   for (size_t i = 0; i < renderer->meshCount; i++)
@@ -546,7 +546,7 @@ static int renderer_sync_view(Renderer *renderer, World *world, const Player *pl
     const int cz = world->chunks[i / WORLD_SECTION_COUNT].z;
     if (cx >= minX && cx <= maxX && cz >= minZ && cz <= maxZ)
       continue;
-    Subchunk *section = world_section(world, cx, WORLD_MIN_SECTION_Y + (int)(i % WORLD_SECTION_COUNT), cz);
+    Subchunk *section = world_section_mut(world, cx, WORLD_MIN_SECTION_Y + (int)(i % WORLD_SECTION_COUNT), cz);
     if (section) section->dirty = 1;
     section_gpu_mesh_destroy(gpu);
     gpu->chunkX = cx;

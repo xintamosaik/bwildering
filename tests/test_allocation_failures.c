@@ -64,7 +64,7 @@ int main(void) {
   SurfaceVertex *saved = malloc(originalCount * sizeof(*saved));
   assert(saved);
   for (size_t i = 0; i < originalCount; i++) saved[i] = mesh.vertices[i];
-  Subchunk *section = world_section(&world, -1, 0, 0);
+  const Subchunk *section = world_section(&world, -1, 0, 0);
   fail_after = 0;
   assert(!section_mesh_build(&world, -1, 0, 0, &mesh));
   assert(mesh.vertices == original && mesh.vertexCount == originalCount && section->dirty);
@@ -95,7 +95,7 @@ int main(void) {
       assert(world_init(&world, 32, (Vec3){0}, 1));
       assert(world_set_block(&world, -1, 0, 0, BLOCK_TYPE_GRASS));
       Chunk *chunks = world.chunks;
-      Subchunk *originalSection = world_section(&world, -1, 0, 0);
+      const Subchunk *originalSection = world_section(&world, -1, 0, 0);
       fail_after = (int)i;
       int success = generate_world(generator, &world);
       fail_after = -1;

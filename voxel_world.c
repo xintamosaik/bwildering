@@ -94,17 +94,34 @@ int world_init_region(World *world, int minX, int minZ, int side, Vec3 origin,
   return 1;
 }
 
-static Chunk *find_chunk(const World *world, int x, int z) {
+static int find_chunk_index(const World *world, int x, int z, size_t *index) {
   if (!world || !world->chunks || x < world->minChunkX || z < world->minChunkZ ||
       x >= world->minChunkX + world->chunksPerSide ||
       z >= world->minChunkZ + world->chunksPerSide)
-    return NULL;
-  return &world->chunks[(x - world->minChunkX) * world->chunksPerSide + z -
-                        world->minChunkZ];
+    return 0;
+  *index = (size_t)(x - world->minChunkX) * world->chunksPerSide + z - world->minChunkZ;
+  return 1;
 }
 
-Subchunk *world_section(const World *world, int x, int y, int z) {
-  Chunk *chunk = find_chunk(world, x, z);
+static const Chunk *find_chunk(const World *world, int x, int z) {
+  size_t index;
+  return find_chunk_index(world, x, z, &index) ? &world->chunks[index] : NULL;
+}
+
+static Chunk *find_chunk_mut(World *world, int x, int z) {
+  size_t index;
+  return find_chunk_index(world, x, z, &index) ? &world->chunks[index] : NULL;
+}
+
+const Subchunk *world_section(const World *world, int x, int y, int z) {
+  const Chunk *chunk = find_chunk(world, x, z);
+  if (!chunk || y < WORLD_MIN_SECTION_Y || y >= WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT)
+    return NULL;
+  return chunk->sections[y - WORLD_MIN_SECTION_Y];
+}
+
+Subchunk *world_section_mut(World *world, int x, int y, int z) {
+  Chunk *chunk = find_chunk_mut(world, x, z);
   if (!chunk || y < WORLD_MIN_SECTION_Y || y >= WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT)
     return NULL;
   return chunk->sections[y - WORLD_MIN_SECTION_Y];
@@ -126,11 +143,11 @@ static int block_index(int x, int y, int z) {
 BlockType world_get_block(const World *world, int x, int y, int z) {
   if (!in_bounds(world, x, y, z))
     return BLOCK_TYPE_EMPTY;
-  Subchunk *section = world_section(world, voxel_section_coord(x), voxel_section_coord(y),
+  const Subchunk *section = world_section(world, voxel_section_coord(x), voxel_section_coord(y),
                                     voxel_section_coord(z));
   if (section)
     return (BlockType)section->blocks[block_index(x, y, z)];
-  Chunk *chunk = find_chunk(world, voxel_section_coord(x), voxel_section_coord(z));
+  const Chunk *chunk = find_chunk(world, voxel_section_coord(x), voxel_section_coord(z));
   if (world->proceduralTerrain && !chunk->terrainReady)
     return terrain_column_block(terrain_sample_column(world->terrainSeed, x, z), y);
   return BLOCK_TYPE_EMPTY;
@@ -162,7 +179,7 @@ static Subchunk *terrain_section(const World *world, int cx, int sy, int cz,
 }
 
 int world_materialize_chunk(World *world, int cx, int cz) {
-  Chunk *chunk = find_chunk(world, cx, cz);
+  Chunk *chunk = find_chunk_mut(world, cx, cz);
   if (!chunk || !world->proceduralTerrain)
     return 0;
   if (chunk->terrainReady)
@@ -203,7 +220,7 @@ int world_materialize_chunk(World *world, int cx, int cz) {
 }
 
 void world_release_chunk(World *world, int cx, int cz) {
-  Chunk *chunk = find_chunk(world, cx, cz);
+  Chunk *chunk = find_chunk_mut(world, cx, cz);
   if (!chunk || !world->proceduralTerrain || chunk->edited)
     return;
   for (int s = 0; s < WORLD_SECTION_COUNT; s++)
@@ -221,7 +238,7 @@ int world_set_block(World *world, int x, int y, int z, BlockType type) {
     return 0;
   int cx = voxel_section_coord(x), sy = voxel_section_coord(y),
       cz = voxel_section_coord(z);
-  Chunk *chunk = find_chunk(world, cx, cz);
+  Chunk *chunk = find_chunk_mut(world, cx, cz);
   Subchunk **slot = &chunk->sections[sy - WORLD_MIN_SECTION_Y];
   if (!*slot) {
     if (world_get_block(world, x, y, z) == type)
@@ -266,7 +283,7 @@ int world_set_block(World *world, int x, int y, int z, BlockType type) {
         (d == 2 && local[1] != 0) || (d == 3 && local[1] != 15) ||
         (d == 4 && local[2] != 0) || (d == 5 && local[2] != 15))
       continue;
-    Subchunk *neighbor = world_section(world, cx + dx[d], sy + dy[d], cz + dz[d]);
+    Subchunk *neighbor = world_section_mut(world, cx + dx[d], sy + dy[d], cz + dz[d]);
     if (neighbor)
       neighbor->dirty = 1;
   }
@@ -302,12 +319,12 @@ void section_mesh_destroy(SectionMesh *mesh) {
 }
 
 int section_mesh_build(const World *world, int cx, int sy, int cz, SectionMesh *mesh) {
-  Chunk *chunk = find_chunk(world, cx, cz);
+  const Chunk *chunk = find_chunk(world, cx, cz);
   if (!mesh || !chunk || sy < WORLD_MIN_SECTION_Y ||
       sy >= WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT)
     return 0;
   SectionMesh result = {0};
-  Subchunk *section = world_section(world, cx, sy, cz);
+  const Subchunk *section = world_section(world, cx, sy, cz);
   Subchunk *temporary = NULL;
   if (!section && world->proceduralTerrain && !chunk->terrainReady) {
     temporary = terrain_section(world, cx, sy, cz, NULL);

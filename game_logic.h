@@ -138,7 +138,9 @@ int world_init(World *world, int side, Vec3 center, float blockSize);
 int world_init_region(World *world, int minX, int minZ, int side,
                       Vec3 origin, float blockSize);
 void world_destroy(World *world);
-Subchunk *world_section(const World *world, int chunkX, int sectionY, int chunkZ);
+/* Borrowed section access; both return NULL for missing or out-of-range sections. */
+const Subchunk *world_section(const World *world, int chunkX, int sectionY, int chunkZ);
+Subchunk *world_section_mut(World *world, int chunkX, int sectionY, int chunkZ);
 BlockType world_get_block(const World *world, int x, int y, int z);
 /* Returns success, including identical writes; rejects invalid types/bounds.
    Writes allocate missing sections lazily, initialized to air or seeded terrain.

@@ -742,6 +742,53 @@ static void test_generator_behaviour(void) {
   world_destroy(&repeated);
 }
 
+static void assert_missing_section(World *world, int x, int y, int z) {
+  const World *readWorld = world;
+  assert(world_section(readWorld, x, y, z) == NULL);
+  assert(world_section_mut(world, x, y, z) == NULL);
+}
+
+static void test_section_access(void) {
+  World world = {0};
+  const World *readWorld = &world;
+  assert_missing_section(NULL, 0, 0, 0);
+  assert_missing_section(&world, 0, 0, 0);
+  assert(world_init(&world, 32, (Vec3){0}, 1));
+  assert_missing_section(&world, -1, 0, -1);
+  /* Exercise both horizontal grid edges and the vertical section limits. */
+  const int ys[] = {WORLD_MIN_SECTION_Y, 0,
+                    WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT - 1};
+  for (int x = -1; x <= 0; x++)
+    for (int z = -1; z <= 0; z++)
+      for (size_t i = 0; i < sizeof(ys) / sizeof(ys[0]); i++) {
+        int y = ys[i];
+        assert(world_set_block(&world, x * SECTION_SIZE, y * SECTION_SIZE,
+                               z * SECTION_SIZE, BLOCK_TYPE_STONE));
+        const Subchunk *section = world_section(readWorld, x, y, z);
+        Subchunk *mutableSection = world_section_mut(&world, x, y, z);
+        assert(section && section == mutableSection);
+        assert(section->dirty);
+        mutableSection->dirty = 0;
+        assert(!world_section(readWorld, x, y, z)->dirty);
+        assert(world_set_block(&world, x * SECTION_SIZE, y * SECTION_SIZE,
+                               z * SECTION_SIZE, BLOCK_TYPE_GRASS));
+        assert(section->dirty && section->blocks[0] == BLOCK_TYPE_GRASS);
+        assert(world_section(readWorld, x, y, z) == mutableSection);
+      }
+  assert_missing_section(&world, 0, 1, 0);
+  const int outside[][3] = {
+      {-2, 0, 0}, {1, 0, 0}, {0, 0, -2}, {0, 0, 1},
+      {0, WORLD_MIN_SECTION_Y - 1, 0},
+      {0, WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT, 0},
+      {INT_MIN, 0, 0}, {INT_MAX, 0, 0},
+      {0, INT_MIN, 0}, {0, INT_MAX, 0},
+      {0, 0, INT_MIN}, {0, 0, INT_MAX}};
+  for (size_t i = 0; i < sizeof(outside) / sizeof(outside[0]); i++)
+    assert_missing_section(&world, outside[i][0], outside[i][1], outside[i][2]);
+  world_destroy(&world);
+  assert_missing_section(&world, 0, 0, 0);
+}
+
 static void test_section_faces_and_replacement(void) {
   World world = {0};
   assert(world_init(&world, 48, (Vec3){10, 4, -6}, 2));
@@ -787,7 +834,7 @@ static void test_section_faces_and_replacement(void) {
     assert(world_set_block(&world, a[0], a[1], a[2], BLOCK_TYPE_EMPTY));
     assert(world_set_block(&world, b[0], b[1], b[2], BLOCK_TYPE_EMPTY));
     /* Retain the empty CPU section so synchronization can retire its GPU mesh. */
-    Subchunk *retired = world_section(&world, voxel_section_coord(a[0]),
+    const Subchunk *retired = world_section(&world, voxel_section_coord(a[0]),
                                       voxel_section_coord(a[1]),
                                       voxel_section_coord(a[2]));
     assert(retired && retired->voxelCount == 0 && retired->dirty);
@@ -1337,6 +1384,7 @@ int main(void) {
   test_signed_terrain_sampling();
   test_terrain_regions();
   test_generator_behaviour();
+  test_section_access();
   test_section_faces_and_replacement();
   test_dirty_neighbors();
   test_cave_and_ceiling_collision();

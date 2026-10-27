@@ -47,6 +47,8 @@ static void test_poll_events(void);
 #define main bwildering_application_main
 #include "../main.c"
 #undef main
+/* Compile the UI with the same GLFW stubs and inspect its shared layout. */
+#include "../ui.c"
 
 static void test_poll_events(void) {
   if (pendingClick) {
@@ -89,8 +91,8 @@ static void assert_player_unchanged(const Player *actual, const Player *expected
 /* Find the actual displayed control by label; layout changes must not rewrite scenarios. */
 static void click_button(Application *application, const char *label) {
   MenuButton buttons[3];
-  int count = menu_buttons(application, buttons);
-  float scale = fminf(windowWidth / 640.0f, windowHeight / 480.0f);
+  const int count = menu_buttons(application, buttons);
+  const float scale = fminf((float)windowWidth / 640.0f, (float)windowHeight / 480.0f);
   for (int i = 0; i < count; i++)
     if (strcmp(buttons[i].label, label) == 0) {
       click(application, windowWidth * 0.5 + buttons[i].centerX * scale,

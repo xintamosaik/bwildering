@@ -121,7 +121,7 @@ typedef struct {
 
 /* Logical offsets from the menu centre; drawing, hit testing and automation
    all use these controls rather than maintaining separate layouts. */
-static int menu_buttons(const Application *const application, MenuButton buttons[3]) {
+static int menu_buttons(const Application *const application, MenuButton buttons[const 3]) {
   if (application->settingsOpen) {
     buttons[0] = (MenuButton){MENU_DISTANCE_DOWN, "-", -116, -24, 48,
         application->renderer.viewDistance > MIN_VIEW_DISTANCE};
@@ -263,7 +263,7 @@ static void update_camera(Camera *const camera, MouseInput *const input) {
 #pragma endregion
 
 #pragma region Rendering
-static GLuint compile_shader(const GLenum type, const char *source) {
+static GLuint compile_shader(const GLenum type, const char *const source) {
   const GLuint shader = glCreateShader(type);
   if (shader == 0) {
     fprintf(stderr, "Failed to create shader\n");
@@ -624,7 +624,7 @@ static int renderer_sync_view(Renderer *const renderer, World *const world, cons
   renderer->streamed = 1;
   renderer->visibleMeshCount = 0;
   for (size_t i = 0; i < renderer->meshCount; i++) {
-    SectionGpuMesh *const m = &renderer->meshes[i];
+    const SectionGpuMesh *const m = &renderer->meshes[i];
     if (m->chunkX < minX || m->chunkX > maxX || m->chunkZ < minZ || m->chunkZ > maxZ) continue;
     renderer->visibleMeshes[renderer->visibleMeshCount++] = i;
     if (!renderer_sync_section(renderer, world, i)) return 0;
@@ -913,7 +913,7 @@ static void render_pause_menu(const Application *const application) {
 
 /* Test the most positive AABB vertex against each homogeneous clip plane.
    No normalization is needed, and boxes crossing a plane remain visible. */
-static int section_in_frustum(const SectionGpuMesh *const mesh, const mat4 mvp) {
+static int section_in_frustum(const SectionGpuMesh *const mesh, const float mvp[const 16]) {
   for(int axis=0;axis<3;axis++) for(int sign=-1;sign<=1;sign+=2) {
     const float a=mvp[3]+(float)sign*mvp[axis];
     const float b=mvp[7]+(float)sign*mvp[4+axis];
@@ -938,7 +938,7 @@ static int section_within_view_distance(const SectionGpuMesh *const mesh, const 
 /* Allocation failure leaves storage owned and reusable. The caller falls back
    to direct visibility checks for this frame, never a stale/partial draw list. */
 static int renderer_collect_draw_meshes(Renderer *const renderer, const Vec3 eye,
-                                        const float distance, const mat4 mvp) {
+                                        const float distance, const float mvp[const 16]) {
   renderer->drawMeshCount = 0;
   const size_t count = renderer->streamed ? renderer->visibleMeshCount : renderer->meshCount;
   Performance *const p = renderer->performance;
@@ -1216,7 +1216,7 @@ static int application_init(Application *const application) {
         const int z = (int)floorf((application->player.position.z - application->world.origin.z) / BLOCK_SIZE) + dz * 16;
         if (x < application->world.minX || x >= application->world.minX + worldSide ||
             z < application->world.minZ || z >= application->world.minZ + worldSide) continue;
-        TerrainColumn c = terrain_sample_column(application->world.terrainSeed, x, z);
+        const TerrainColumn c = terrain_sample_column(application->world.terrainSeed, x, z);
         if (c.material != BLOCK_TYPE_GRASS || c.height < 8 || c.height > 80) continue;
         application->player.position.x = application->world.origin.x + ((float)x + 0.5f) * BLOCK_SIZE;
         application->player.position.z = application->world.origin.z + ((float)z + 0.5f) * BLOCK_SIZE;

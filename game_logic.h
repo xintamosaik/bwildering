@@ -104,7 +104,7 @@ typedef struct Subchunk {
 } Subchunk;
 
 /* index must be in [0, SECTION_VOLUME). Missing sections read as air. */
-static inline BlockType section_block(const Subchunk *section, size_t index) {
+static inline BlockType section_block(const Subchunk *const section, const size_t index) {
   return !section || section->storage == SECTION_EMPTY ? BLOCK_TYPE_EMPTY :
       (BlockType)(section->storage == SECTION_UNIFORM ? section->material : section->blocks[index]);
 }

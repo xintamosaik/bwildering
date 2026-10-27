@@ -94,7 +94,7 @@ int world_init(World *const world, const int side, const Vec3 center, const floa
   return world_init_region(world, -(side / 2), -(side / 2), side, origin, size);
 }
 
-int world_init_region(World *const world, const int minX, const int minZ, const int side, Vec3 origin,
+int world_init_region(World *const world, const int minX, const int minZ, const int side, const Vec3 origin,
                        const float size) {
   /* Validate in wide arithmetic before endpoint, chunk or neighbour arithmetic. */
   if (!world || side <= 0 || side > WORLD_MAX_BLOCKS_PER_SIDE ||
@@ -214,7 +214,7 @@ BlockType world_get_block(const World *const world, const int x, const int y, co
 }
 
 static Subchunk *terrain_section(const World *const world, const int cx, const int sy, const int cz,
-                                 const TerrainColumn columns[SECTION_SIZE][SECTION_SIZE]) {
+                                 const TerrainColumn columns[const SECTION_SIZE][SECTION_SIZE]) {
   Subchunk *const section = malloc(sizeof(*section));
   if (!section)
     return NULL;
@@ -361,7 +361,7 @@ size_t world_release_chunks_outside(World *const world, const int minX, const in
         z = maxZ < oldMaxZ ? maxZ : oldMaxZ;
         continue;
       }
-      Chunk *const chunk = find_chunk_mut(world, x, z);
+      const Chunk *const chunk = find_chunk(world, x, z);
       if (chunk && !chunk->edited && (chunk->terrainReady || chunk->sections)) {
         world_release_chunk(world, x, z);
         released++;
@@ -434,7 +434,7 @@ int world_set_block(World *const world, const int x, const int y, const int z, c
      tombstones so the renderer can retire their previous GPU meshes. */
   const int dx[6] = {-1, 1, 0, 0, 0, 0}, dy[6] = {0, 0, -1, 1, 0, 0},
             dz[6] = {0, 0, 0, 0, -1, 1};
-  int local[3] = {voxel_local_coord(x), voxel_local_coord(y), voxel_local_coord(z)};
+  const int local[3] = {voxel_local_coord(x), voxel_local_coord(y), voxel_local_coord(z)};
   for (int d = 0; d < 6; d++) {
     if ((d == 0 && local[0] != 0) || (d == 1 && local[0] != 15) ||
         (d == 2 && local[1] != 0) || (d == 3 && local[1] != 15) ||
@@ -469,7 +469,7 @@ float world_surface_height(const World *const world, const float x, const float 
 
   /* Start with the generated surface, accounting for explicit removals. */
   if (world->proceduralTerrain && !chunk->terrainReady) {
-    TerrainColumn column = terrain_sample_column(world->terrainSeed, ix, iz);
+    const TerrainColumn column = terrain_sample_column(world->terrainSeed, ix, iz);
     int y = column.height - 1;
     while (y >= TERRAIN_BASE_Y) {
       const Subchunk *const section = world_section(world, voxel_section_coord(ix), voxel_section_coord(y), voxel_section_coord(iz));

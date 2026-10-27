@@ -81,7 +81,7 @@ int block_type_color(const BlockType type, Vec3 *const color) {
   return 1;
 }
 
-void mat4_rotate(mat4 dest, const float angle, float x, float y, float z) {
+void mat4_rotate(float dest[const 16], const float angle, float x, float y, float z) {
   const float c = cosf(angle);
   const float s = sinf(angle);
   const float len = sqrtf(x * x + y * y + z * z);
@@ -107,14 +107,14 @@ void mat4_rotate(mat4 dest, const float angle, float x, float y, float z) {
   dest[10] = z * z * ic + c;
 }
 
-void mat4_identity(mat4 dest) {
+void mat4_identity(float dest[const 16]) {
   for (int i = 0; i < 16; i++)
     dest[i] = 0.0f;
   dest[0] = dest[5] = dest[10] = dest[15] = 1.0f;
 }
 
 void mat4_perspective(const float fov_radians, const float aspect, const float near, const float far,
-                      mat4 dest) {
+                      float dest[const 16]) {
   for (int i = 0; i < 16; i++)
     dest[i] = 0.0f;
   const float tanHalfFovy = tanf(fov_radians / 2.0f);
@@ -126,7 +126,7 @@ void mat4_perspective(const float fov_radians, const float aspect, const float n
   dest[14] = -(2.0f * far * near) / (far - near);
 }
 
-void mat4_lookat(const Vec3 eye, const Vec3 target, const Vec3 up, mat4 dest) {
+void mat4_lookat(const Vec3 eye, const Vec3 target, const Vec3 up, float dest[const 16]) {
   const Vec3 f = vec3_normalize(vec3_sub(target, eye));
   const Vec3 s = vec3_normalize(vec3_cross(f, up));
   const Vec3 u = vec3_cross(s, f);
@@ -147,7 +147,7 @@ void mat4_lookat(const Vec3 eye, const Vec3 target, const Vec3 up, mat4 dest) {
   dest[14] = vec3_dot(f, eye);
 }
 
-void mat4_multiply(const mat4 a, const mat4 b, mat4 dest) {
+void mat4_multiply(const float a[const 16], const float b[const 16], float dest[const 16]) {
   mat4 res;
   for (int i = 0; i < 4; i++) {
     for (int j = 0; j < 4; j++) {
@@ -235,7 +235,7 @@ TerrainColumn terrain_sample_column(const uint32_t seed, const int x, const int 
   return c;
 }
 
-BlockType terrain_column_block(TerrainColumn c, const int y) {
+BlockType terrain_column_block(const TerrainColumn c, const int y) {
   if (y < TERRAIN_BASE_Y || y >= c.height) return BLOCK_TYPE_EMPTY;
   if (y < c.deepRockY) return BLOCK_TYPE_DARK_STONE;
   const int depth = c.height - 1 - y;
@@ -333,14 +333,14 @@ static const float PLAYER_RADIUS = 0.25f;
 static const float PLAYER_HEIGHT = 1.5f;
 
 static int player_view_block(const World *const world, const Player *const player, const float reach,
-                             int hit[3], int adjacent[3]) {
+                             int hit[const 3], int adjacent[const 3]) {
   if (!world || !world->chunks || !player ||
       !isfinite(reach) || reach <= 0)
     return 0;
 
   /* Normalize the ray so face-crossing distances use world units. */
-  Vec3 eye = player_eye_position(player);
-  Vec3 front = player->camera.front;
+  const Vec3 eye = player_eye_position(player);
+  const Vec3 front = player->camera.front;
   const double length = sqrt((double)front.x * front.x + (double)front.y * front.y +
                        (double)front.z * front.z);
   if (!isfinite(length) || length == 0)
@@ -349,7 +349,7 @@ static int player_view_block(const World *const world, const Player *const playe
   double origin[3] = {(double)eye.x - world->origin.x,
                       (double)eye.y - world->origin.y,
                       (double)eye.z - world->origin.z};
-  double direction[3] = {front.x / length, front.y / length, front.z / length};
+  const double direction[3] = {front.x / length, front.y / length, front.z / length};
   double next[3], interval[3];
   int cell[3], previous[3], step[3];
   for (int axis = 0; axis < 3; axis++) {
@@ -396,9 +396,9 @@ int player_place_block(World *const world, const Player *const player, const Blo
     return 0;
 
   /* Reject placement if the new block would overlap the player body. */
-  double low[3] = {world->origin.x + (double)adjacent[0] * world->blockSize,
-                   world->origin.y + (double)adjacent[1] * world->blockSize,
-                   world->origin.z + (double)adjacent[2] * world->blockSize};
+  const double low[3] = {world->origin.x + (double)adjacent[0] * world->blockSize,
+                         world->origin.y + (double)adjacent[1] * world->blockSize,
+                         world->origin.z + (double)adjacent[2] * world->blockSize};
   if (low[0] < player->position.x + PLAYER_RADIUS &&
       low[0] + world->blockSize > player->position.x - PLAYER_RADIUS &&
       low[1] < player->position.y + PLAYER_HEIGHT &&
@@ -416,21 +416,21 @@ int player_remove_block(World *const world, const Player *const player, const fl
   return world_set_block(world, hit[0], hit[1], hit[2], BLOCK_TYPE_EMPTY);
 }
 
-static int player_intersects(const World *const world, Vec3 p) {
+static int player_intersects(const World *const world, const Vec3 p) {
   if (world == NULL || world->chunks == NULL)
     return 0;
   const float size = world->blockSize;
   const float epsilon = 0.00001f;
-  float lo[3] = {(p.x - PLAYER_RADIUS - world->origin.x) / size,
-                 (p.y + epsilon - world->origin.y) / size,
-                 (p.z - PLAYER_RADIUS - world->origin.z) / size};
-  float hi[3] = {(p.x + PLAYER_RADIUS - world->origin.x) / size,
-                 (p.y + PLAYER_HEIGHT - epsilon - world->origin.y) / size,
-                 (p.z + PLAYER_RADIUS - world->origin.z) / size};
-  int lower[3] = {world->minX, WORLD_COORD_MIN, world->minZ};
-  int upper[3] = {world->minX + world->blocksPerSide,
-                  WORLD_COORD_MAX + 1,
-                  world->minZ + world->blocksPerSide};
+  const float lo[3] = {(p.x - PLAYER_RADIUS - world->origin.x) / size,
+                       (p.y + epsilon - world->origin.y) / size,
+                       (p.z - PLAYER_RADIUS - world->origin.z) / size};
+  const float hi[3] = {(p.x + PLAYER_RADIUS - world->origin.x) / size,
+                       (p.y + PLAYER_HEIGHT - epsilon - world->origin.y) / size,
+                       (p.z + PLAYER_RADIUS - world->origin.z) / size};
+  const int lower[3] = {world->minX, WORLD_COORD_MIN, world->minZ};
+  const int upper[3] = {world->minX + world->blocksPerSide,
+                        WORLD_COORD_MAX + 1,
+                        world->minZ + world->blocksPerSide};
 
   /* Clip the body bounds to the world before visiting overlapping cells. */
   int first[3], last[3];
@@ -525,7 +525,7 @@ int player_spawn_on_surface(Player *const player, const World *const world) {
   return 1;
 }
 
-void update_player(Player *const player, PlayerInput input, const float dt, const World *const world) {
+void update_player(Player *const player, const PlayerInput input, const float dt, const World *const world) {
   if (!player || !isfinite(dt) || dt <= 0 || dt > 10)
     return;
 

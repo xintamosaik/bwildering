@@ -6,6 +6,23 @@
 void __real_glDrawArrays(GLenum mode, GLint first, GLsizei count);
 #include "../storage.h"
 void __wrap_glDrawArrays(GLenum mode, GLint first, GLsizei count);
+/* Guard the active-frame path against synchronous window-system size queries. */
+static int windowSizeQueries, framebufferSizeQueries, viewportUpdates;
+void __real_glfwGetWindowSize(GLFWwindow *window, int *width, int *height);
+void __real_glfwGetFramebufferSize(GLFWwindow *window, int *width, int *height);
+void __real_glViewport(GLint x, GLint y, GLsizei width, GLsizei height);
+void __wrap_glfwGetWindowSize(GLFWwindow *const window, int *const width, int *const height) {
+  windowSizeQueries++;
+  __real_glfwGetWindowSize(window, width, height);
+}
+void __wrap_glfwGetFramebufferSize(GLFWwindow *const window, int *const width, int *const height) {
+  framebufferSizeQueries++;
+  __real_glfwGetFramebufferSize(window, width, height);
+}
+void __wrap_glViewport(const GLint x, const GLint y, const GLsizei width, const GLsizei height) {
+  viewportUpdates++;
+  __real_glViewport(x, y, width, height);
+}
 static int scratch_reservations_before_failure = -1;
 static int draw_allocations_before_failure = -1;
 static int metadata_allocations_before_failure = -1;
@@ -1265,9 +1282,24 @@ int main(void) {
   update_player(&application.player, (PlayerInput){.jump = 1}, 1.0f / 60, &application.world);
   assert(!application.player.grounded && application.player.position.y > spawnY);
   printf("Application spawn surface: %.1f; grounded and jump checks passed.\n", spawnY);
+  /* A pending resize is applied exactly once, without polling window sizes. */
+  const GLFWframebuffersizefun resize = glfwSetFramebufferSizeCallback(application.window, NULL);
+  assert(resize);
+  glfwSetFramebufferSizeCallback(application.window, resize);
+  resize(application.window, 640, 480);
+  assert(application.input.framebufferResized);
+  windowSizeQueries = framebufferSizeQueries = viewportUpdates = 0;
+  application_render(&application);
+  GLint viewport[4];
+  glGetIntegerv(GL_VIEWPORT, viewport);
+  assert(viewport[2] == 640 && viewport[3] == 480);
+  assert(viewportUpdates == 1 && !application.input.framebufferResized);
+  assert(!windowSizeQueries && !framebufferSizeQueries);
   for (int frame = 0; frame < 3; frame++) {
     application_update(&application);
+    windowSizeQueries = framebufferSizeQueries = viewportUpdates = 0;
     application_render(&application);
+    assert(!windowSizeQueries && !framebufferSizeQueries && !viewportUpdates);
     assert(glGetError() == GL_NO_ERROR);
   }
   application_shutdown(&application);

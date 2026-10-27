@@ -7,8 +7,8 @@ COMMON_SRC = game_logic.c voxel_world.c storage.c performance.c ui.c input.c ren
 SRC = main.c application.c $(COMMON_SRC)
 APP_HEADERS = application.h application_internal.h renderer.h renderer_internal.h ui_draw.h view_settings.h ui.h input.h performance.h storage.h game_logic.h
 FIXTURE_FLAGS = -DBW_RENDERER_TEST
-# Pause fixture keeps UI layout/callback access local; application links normally.
-PAUSE_WRAP = -Wl,--wrap=glfwGetKey -Wl,--wrap=glfwGetMouseButton -Wl,--wrap=glfwGetInputMode -Wl,--wrap=glfwSetInputMode -Wl,--wrap=glfwGetTime -Wl,--wrap=glfwGetWindowUserPointer -Wl,--wrap=glfwGetCursorPos -Wl,--wrap=glfwGetWindowSize -Wl,--wrap=glfwGetFramebufferSize -Wl,--wrap=glfwSetWindowShouldClose -Wl,--wrap=glfwPollEvents
+# Headless routing fixture links production modules and captures registered callbacks.
+PAUSE_WRAP = -Wl,--wrap=glfwSetFramebufferSizeCallback -Wl,--wrap=glfwSetWindowUserPointer -Wl,--wrap=glfwSetMouseButtonCallback -Wl,--wrap=glfwSetCursorPosCallback -Wl,--wrap=glfwSetKeyCallback -Wl,--wrap=glfwGetKey -Wl,--wrap=glfwGetMouseButton -Wl,--wrap=glfwGetInputMode -Wl,--wrap=glfwSetInputMode -Wl,--wrap=glfwGetTime -Wl,--wrap=glfwGetWindowUserPointer -Wl,--wrap=glfwGetCursorPos -Wl,--wrap=glfwGetWindowSize -Wl,--wrap=glfwGetFramebufferSize -Wl,--wrap=glfwSetWindowShouldClose -Wl,--wrap=glfwPollEvents
 TEST_TARGET = test_game_logic
 TEST_SRC = tests/test_game_logic.c game_logic.c voxel_world.c storage.c
 
@@ -24,10 +24,10 @@ test_allocation_failures: tests/test_allocation_failures.c game_logic.c voxel_wo
 	$(CC) $(CFLAGS) tests/test_allocation_failures.c game_logic.c voxel_world.c storage.c -o $@ -lm
 
 test_renderer: tests/test_renderer.c $(SRC) $(APP_HEADERS) tests/renderer_test.h
-	$(CC) $(CFLAGS) tests/test_renderer.c application.c $(COMMON_SRC) $(FIXTURE_FLAGS) -Wl,--wrap=glDrawArrays -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) tests/test_renderer.c application.c $(COMMON_SRC) $(FIXTURE_FLAGS) -Wl,--wrap=glDrawArrays -Wl,--wrap=glfwGetWindowSize -Wl,--wrap=glfwGetFramebufferSize -Wl,--wrap=glViewport -o $@ $(LDFLAGS)
 
 test_pause_menu: tests/test_pause_menu.c $(SRC) $(APP_HEADERS) tests/renderer_test.h
-	$(CC) $(CFLAGS) tests/test_pause_menu.c application.c game_logic.c voxel_world.c storage.c performance.c renderer.c $(FIXTURE_FLAGS) $(PAUSE_WRAP) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) tests/test_pause_menu.c application.c $(COMMON_SRC) $(FIXTURE_FLAGS) $(PAUSE_WRAP) -o $@ $(LDFLAGS)
 
 test: $(TEST_TARGET) test_allocation_failures test_pause_menu test_storage
 	./$(TEST_TARGET)
@@ -46,7 +46,7 @@ test-sanitize:
 	./test_game_logic_sanitize
 	$(CC) -Wall -Wextra -O1 -g -std=c99 -fsanitize=address,undefined -fno-omit-frame-pointer tests/test_allocation_failures.c game_logic.c voxel_world.c storage.c -o test_allocation_failures_sanitize -lm
 	./test_allocation_failures_sanitize
-	$(CC) -Wall -Wextra -O1 -g -std=c99 -fsanitize=address,undefined -fno-omit-frame-pointer tests/test_pause_menu.c application.c game_logic.c voxel_world.c storage.c performance.c renderer.c $(FIXTURE_FLAGS) $(PAUSE_WRAP) -o test_pause_menu_sanitize $(LDFLAGS)
+	$(CC) -Wall -Wextra -O1 -g -std=c99 -fsanitize=address,undefined -fno-omit-frame-pointer tests/test_pause_menu.c application.c $(COMMON_SRC) $(FIXTURE_FLAGS) $(PAUSE_WRAP) -o test_pause_menu_sanitize $(LDFLAGS)
 	./test_pause_menu_sanitize
 
 clean:

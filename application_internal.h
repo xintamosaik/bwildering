@@ -5,6 +5,7 @@
 #include <GLFW/glfw3.h>
 #include "application.h"
 #include "input.h"
+#include "ui.h"
 #include "performance.h"
 #include "renderer_internal.h"
 
@@ -31,7 +32,7 @@ struct Application {
   int placeQueued;
   int removeQueued;
   int paused;
-  int settingsOpen;
+  UiState ui;
   int glfwInitialized;
   int rendererInitialized;
 };

@@ -33,6 +33,9 @@ identity checks. See [issue 004](../issues/004-mesh-candidate-correctness.md).
 
 `make test` runs logic, reservation-failure, reusable-storage, and headless menu interaction tests.
 `make test-renderer` additionally requires an X11 display and OpenGL 3.3 context.
+Its application checks also guard against window/framebuffer size queries and
+redundant viewport updates on gameplay draws, and verify one viewport update
+for a captured resize.
 The [renderer audit](../renderer-audit.md) records the verified GL device,
 reproduction commands, handle/buffer ownership and real-context depth/submission
 checks. New fixtures cover unculled reference parity for transformed negative
@@ -52,7 +55,12 @@ actions and `pressed` tracks new presses for each frame. Binding persistence and
 a controls settings screen are not implemented.
 
 The headless menu suite substitutes window input and time, but calls the real
-application update and callbacks. It does not verify GLFW's delivery of physical
+application update and registered callbacks, with input and UI linked as separate
+translation units. It also verifies passive capture, click-time positions,
+ordered menu actions, pause priority, shared pause/gameplay bindings and bounded
+click overflow. The first 32 left clicks per frame are retained; newer clicks
+are dropped while gameplay/action bits continue to coalesce. UI owns the shared
+layout used to locate displayed controls. It does not verify GLFW's delivery of physical
 keyboard/mouse events or the visual appearance of menu text.
 
 `make performance_capture` builds the opt-in scripted performance runner. See

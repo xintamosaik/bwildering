@@ -26,22 +26,33 @@ typedef struct {
   int firstMouse;
 } MouseInput;
 
+/* Ordered menu clicks only: retain the first 32 per frame, drop newest on
+   overflow. Gameplay presses coalesce into bits independently of this queue. */
+enum { INPUT_CLICK_CAPACITY = 32 };
+typedef struct { double x, y; } InputClick;
+
 typedef struct {
   /* Indexed by GLFW key/button. Zero unbinds; multiple sources may share an action.
      Change these after input_init, e.g. keyBindings[GLFW_KEY_UP] = INPUT_FORWARD. */
   uint32_t keyBindings[GLFW_KEY_LAST + 1];
   uint32_t mouseBindings[GLFW_MOUSE_BUTTON_LAST + 1];
   uint32_t held;
-  uint32_t pressed; /* Newly held actions and buffered mouse clicks; cleared by poll/discard. */
+  uint32_t pressed; /* New action edges and buffered presses; replaced by poll, cleared by discard. */
   uint32_t pendingMousePresses;
+  uint32_t pendingKeyPresses;
+  InputClick clicks[INPUT_CLICK_CAPACITY];
+  int clickCount;
+  /* Resize capture is independent of gameplay discard; applied before drawing. */
+  int framebufferWidth, framebufferHeight, framebufferResized;
   MouseInput mouse;
 } InputState;
 
 /* Installs the existing default controls using only inline, bounded storage. */
 void input_init(InputState *input);
-/* Window user pointer must point to its Application before attaching callbacks. */
-void input_attach(GLFWwindow *window);
-/* Call once after glfwPollEvents, including while paused. */
+/* Owns the window user pointer; input must outlive the attached window. */
+void input_attach(InputState *input, GLFWwindow *window);
+/* Call once after glfwPollEvents, including while paused. The application must
+   consume/reset clickCount after routing; polling replaces only the pressed bits. */
 void input_poll(InputState *input, GLFWwindow *window);
 /* Discard transient gameplay input at pause/resume, retaining held actions. */
 void input_discard(InputState *input);

@@ -1,5 +1,4 @@
 #include "ui.h"
-#include "application_internal.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -10,53 +9,34 @@ enum MenuAction {
   MENU_DISTANCE_DOWN, MENU_DISTANCE_UP
 };
 
-static void application_set_paused(Application *const application, const int paused) {
-  application->paused = paused;
-  application->settingsOpen = 0;
-  application->simulationAccumulator = 0;
-  application->jumpQueued = 0;
-  application->placeQueued = 0;
-  application->removeQueued = 0;
-  input_discard(&application->input);
-  glfwSetInputMode(application->window, GLFW_CURSOR,
-                   paused ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_DISABLED);
-}
-
-typedef struct {
-  int action;
-  const char *label;
-  float centerX, top, width;
-  int enabled;
-} MenuButton;
-
 /* Logical offsets from the menu centre; drawing, hit testing and automation
    all use these controls rather than maintaining separate layouts. */
-static int menu_buttons(const Application *const application, MenuButton buttons[const 3]) {
-  if (application->settingsOpen) {
-    buttons[0] = (MenuButton){.action = MENU_DISTANCE_DOWN, .label = "-", .centerX = -116, .top = -24, .width = 48,
-        .enabled = renderer_view_distance(&application->renderer) > MIN_VIEW_DISTANCE};
-    buttons[1] = (MenuButton){.action = MENU_DISTANCE_UP, .label = "+", .centerX = 116, .top = -24, .width = 48,
-        .enabled = renderer_view_distance(&application->renderer) < MAX_VIEW_DISTANCE};
-    buttons[2] = (MenuButton){.action = MENU_BACK, .label = "BACK", .centerX = 0, .top = 40, .width = 280, .enabled = 1};
+int ui_menu_buttons(const UiState *const ui, const float viewDistance, UiButton buttons[const UI_BUTTON_CAPACITY]) {
+  if (ui->settingsOpen) {
+    buttons[0] = (UiButton){.action = MENU_DISTANCE_DOWN, .label = "-", .centerX = -116, .top = -24, .width = 48,
+        .enabled = viewDistance > MIN_VIEW_DISTANCE};
+    buttons[1] = (UiButton){.action = MENU_DISTANCE_UP, .label = "+", .centerX = 116, .top = -24, .width = 48,
+        .enabled = viewDistance < MAX_VIEW_DISTANCE};
+    buttons[2] = (UiButton){.action = MENU_BACK, .label = "BACK", .centerX = 0, .top = 40, .width = 280, .enabled = 1};
   } else {
-    buttons[0] = (MenuButton){.action = MENU_RESUME, .label = "RESUME", .centerX = 0, .top = -88, .width = 280, .enabled = 1};
-    buttons[1] = (MenuButton){.action = MENU_SETTINGS, .label = "SETTINGS", .centerX = 0, .top = -24, .width = 280, .enabled = 1};
-    buttons[2] = (MenuButton){.action = MENU_QUIT, .label = "QUIT", .centerX = 0, .top = 40, .width = 280, .enabled = 1};
+    buttons[0] = (UiButton){.action = MENU_RESUME, .label = "RESUME", .centerX = 0, .top = -88, .width = 280, .enabled = 1};
+    buttons[1] = (UiButton){.action = MENU_SETTINGS, .label = "SETTINGS", .centerX = 0, .top = -24, .width = 280, .enabled = 1};
+    buttons[2] = (UiButton){.action = MENU_QUIT, .label = "QUIT", .centerX = 0, .top = 40, .width = 280, .enabled = 1};
   }
-  return 3;
+  return UI_BUTTON_CAPACITY;
 }
 
-static int pause_menu_button(const Application *const application, const double x, const double y,
+static int pause_menu_button(const UiState *const ui, const float viewDistance, const double x, const double y,
                               const int width, const int height) {
   const float scale = fminf((float)width / 640.0f, (float)height / 480.0f);
   if (scale <= 0)
     return MENU_NONE;
   const double offset = (y - height * 0.5) / scale;
   const double horizontal = (x - width * 0.5) / scale;
-  MenuButton buttons[3];
-  const int count = menu_buttons(application, buttons);
+  UiButton buttons[UI_BUTTON_CAPACITY];
+  const int count = ui_menu_buttons(ui, viewDistance, buttons);
   for (int i = 0; i < count; i++) {
-    const MenuButton *const button = &buttons[i];
+    const UiButton *const button = &buttons[i];
     if (button->enabled && fabs(horizontal - button->centerX) <= button->width / 2 &&
         offset >= button->top && offset <= button->top + 48)
       return button->action;
@@ -64,41 +44,40 @@ static int pause_menu_button(const Application *const application, const double 
   return MENU_NONE;
 }
 
-void ui_click(Application *const application) {
-  double x, y;
-  int width, height, framebufferWidth, framebufferHeight;
-  glfwGetCursorPos(application->window, &x, &y);
-  glfwGetWindowSize(application->window, &width, &height);
-  glfwGetFramebufferSize(application->window, &framebufferWidth, &framebufferHeight);
-  if (width <= 0 || height <= 0)
-    return;
-  const int selected = pause_menu_button(application, x * framebufferWidth / width,
-                                   y * framebufferHeight / height,
-                                   framebufferWidth, framebufferHeight);
-  if (selected == MENU_RESUME)
-    application_set_paused(application, 0);
-  else if (selected == MENU_QUIT)
-    glfwSetWindowShouldClose(application->window, GLFW_TRUE);
-  else if (selected == MENU_SETTINGS)
-    application->settingsOpen = 1;
-  else if (selected == MENU_BACK)
-    application->settingsOpen = 0;
-  else if (selected == MENU_DISTANCE_DOWN || selected == MENU_DISTANCE_UP) {
-    float distance = renderer_view_distance(&application->renderer);
-    distance += selected == MENU_DISTANCE_UP ? VIEW_DISTANCE_STEP : -VIEW_DISTANCE_STEP;
-    renderer_set_view_distance(&application->renderer, fmaxf(MIN_VIEW_DISTANCE,
-                                               fminf(MAX_VIEW_DISTANCE, distance)));
-  }
+static int pointer_button(const UiState *const ui, const float viewDistance, const UiPointer pointer) {
+  if (pointer.windowWidth <= 0 || pointer.windowHeight <= 0)
+    return MENU_NONE;
+  return pause_menu_button(ui, viewDistance,
+      pointer.x * pointer.framebufferWidth / pointer.windowWidth,
+      pointer.y * pointer.framebufferHeight / pointer.windowHeight,
+      pointer.framebufferWidth, pointer.framebufferHeight);
 }
 
-int ui_handle_pause(Application *const application) {
-  if (!(application->input.pressed & INPUT_PAUSE))
-    return 0;
-  if (application->paused && application->settingsOpen)
-    application->settingsOpen = 0;
-  else
-    application_set_paused(application, !application->paused);
-  return 1;
+UiAction ui_click(UiState *const ui, const float viewDistance, const UiPointer pointer) {
+  const int selected = pointer_button(ui, viewDistance, pointer);
+  if (selected == MENU_RESUME)
+    return (UiAction){.type = UI_RESUME};
+  if (selected == MENU_QUIT)
+    return (UiAction){.type = UI_QUIT};
+  if (selected == MENU_SETTINGS)
+    ui->settingsOpen = 1;
+  else if (selected == MENU_BACK)
+    ui->settingsOpen = 0;
+  else if (selected == MENU_DISTANCE_DOWN || selected == MENU_DISTANCE_UP) {
+    const float distance = viewDistance +
+        (selected == MENU_DISTANCE_UP ? VIEW_DISTANCE_STEP : -VIEW_DISTANCE_STEP);
+    return (UiAction){.type = UI_VIEW_DISTANCE,
+        .viewDistance = fmaxf(MIN_VIEW_DISTANCE, fminf(MAX_VIEW_DISTANCE, distance))};
+  }
+  return (UiAction){0};
+}
+
+UiAction ui_handle_pause(UiState *const ui) {
+  if (ui->settingsOpen) {
+    ui->settingsOpen = 0;
+    return (UiAction){0};
+  }
+  return (UiAction){.type = UI_RESUME};
 }
 
 static const unsigned char *font_glyph(const char character) {
@@ -282,15 +261,15 @@ static void draw_menu_text(const UiDrawContext *const draw, const char *const te
   draw_menu_vertices(draw, vertices, count, color);
 }
 
-static void render_performance(const Application *const a, const UiDrawContext *const draw) {
-  const Performance *const p = &a->performance;
+static void render_performance(const UiFrame *const a, const UiDrawContext *const draw) {
+  const Performance *const p = a->performance;
   if (!p->overlay) return;
   char lines[5][96];
   snprintf(lines[0], 96, "FRAME US AVG %.0f P95 %.0f MAX %.0f", p->average*1e6, p->p95*1e6, p->maximum*1e6);
-  snprintf(lines[1], 96, "CHUNKS %zu SECTIONS %zu EDITED %zu DIRTY %zu", a->residentChunks, a->world.sectionCount, a->editedChunks, a->dirtySections);
+  snprintf(lines[1], 96, "CHUNKS %zu SECTIONS %zu EDITED %zu DIRTY %zu", a->residentChunks, a->sections, a->editedChunks, a->dirtySections);
   snprintf(lines[2], 96, "REBUILDS %zu UPLOAD BYTES %zu", p->total.rebuilds, p->total.uploadBytes);
   snprintf(lines[3], 96, "DRAWS %zu TRIANGLES %zu", p->frame.draws, p->frame.triangles);
-  snprintf(lines[4], 96, "NEIGHBORHOOD SLOTS %zu GPU REQUESTED BYTES %zu", renderer_neighborhood_slots(&a->renderer), a->gpuBytes);
+  snprintf(lines[4], 96, "NEIGHBORHOOD SLOTS %zu GPU REQUESTED BYTES %zu", a->neighborhoodSlots, a->gpuBytes);
   const UiDrawState state = ui_draw_begin(draw, UI_DRAW_OVERLAY);
   for (int i = 0; i < 5; i++)
     draw_menu_text(draw, lines[i], (float)draw->framebufferWidth * 0.5f,
@@ -309,7 +288,7 @@ static void draw_menu_button(const UiDrawContext *const draw, const char *const 
                    enabled ? (Vec3){.x = 0.95f, .y = 0.98f, .z = 0.92f} : (Vec3){.x = 0.4f, .y = 0.45f, .z = 0.4f});
 }
 
-static void render_pause_menu(const Application *const application, const UiDrawContext *const draw) {
+static void render_pause_menu(const UiState *const ui, const UiFrame *const frame, const UiDrawContext *const draw) {
   const int width = draw->framebufferWidth;
   const int height = draw->framebufferHeight;
   if (width <= 0 || height <= 0)
@@ -317,44 +296,39 @@ static void render_pause_menu(const Application *const application, const UiDraw
   const float scale = fminf((float)width / 640.0f, (float)height / 480.0f);
   const float centerX = (float)width * 0.5f;
   const float centerY = (float)height * 0.5f;
-  double cursorX, cursorY;
-  int windowWidth, windowHeight;
-  glfwGetCursorPos(application->window, &cursorX, &cursorY);
-  glfwGetWindowSize(application->window, &windowWidth, &windowHeight);
-  const int hovered = windowWidth > 0 && windowHeight > 0 ?
-      pause_menu_button(application, cursorX * width / windowWidth, cursorY * height / windowHeight,
-                         width, height) : 0;
+  const float viewDistance = frame->viewDistance;
+  const int hovered = pointer_button(ui, viewDistance, frame->pointer);
   const UiDrawState state = ui_draw_begin(draw, UI_DRAW_MENU);
   draw_menu_rectangle(draw, centerX - 180 * scale, centerY - 160 * scale,
                        360 * scale, 300 * scale, (Vec3){.x = 0.09f, .y = 0.12f, .z = 0.10f});
-  draw_menu_text(draw, application->settingsOpen ? "SETTINGS" : "PAUSED",
+  draw_menu_text(draw, ui->settingsOpen ? "SETTINGS" : "PAUSED",
                  centerX, centerY - 130 * scale, scale * 1.2f,
                  (Vec3){.x = 0.95f, .y = 0.98f, .z = 0.92f});
-  if (application->settingsOpen) {
+  if (ui->settingsOpen) {
     char value[16];
-    snprintf(value, sizeof(value), "%.0f UNITS", renderer_view_distance(&application->renderer));
+    snprintf(value, sizeof(value), "%.0f UNITS", viewDistance);
     draw_menu_text(draw, "VIEW DISTANCE", centerX, centerY - 65 * scale,
                    scale, (Vec3){.x = 0.95f, .y = 0.98f, .z = 0.92f});
     draw_menu_text(draw, value, centerX, centerY - 9 * scale,
                    scale * 0.85f, (Vec3){.x = 0.95f, .y = 0.98f, .z = 0.92f});
   }
-  MenuButton buttons[3];
-  const int count = menu_buttons(application, buttons);
+  UiButton buttons[UI_BUTTON_CAPACITY];
+  const int count = ui_menu_buttons(ui, viewDistance, buttons);
   for (int i = 0; i < count; i++) {
-    const MenuButton *const button = &buttons[i];
+    const UiButton *const button = &buttons[i];
     draw_menu_button(draw, button->label, centerX + button->centerX * scale,
                        centerY + button->top * scale, button->width, scale,
                        hovered == button->action, button->enabled);
   }
-  draw_menu_text(draw, application->settingsOpen ? "ESC TO PAUSE" : "ESC TO RESUME",
+  draw_menu_text(draw, ui->settingsOpen ? "ESC TO PAUSE" : "ESC TO RESUME",
                  centerX, centerY + 110 * scale,
                  scale * 0.7f, (Vec3){.x = 0.65f, .y = 0.73f, .z = 0.62f});
   ui_draw_end(state);
 }
 
-void ui_render(const Application *const application, const UiDrawContext *const draw) {
-  render_fps(draw, application->fps);
-  render_performance(application, draw);
-  if (application->paused)
-    render_pause_menu(application, draw);
+void ui_render(const UiState *const ui, const UiFrame *const frame, const UiDrawContext *const draw) {
+  render_fps(draw, frame->fps);
+  render_performance(frame, draw);
+  if (frame->paused)
+    render_pause_menu(ui, frame, draw);
 }

@@ -39,27 +39,33 @@ void __wrap_glfwSetWindowShouldClose(GLFWwindow *window, int value) {
 }
 void __wrap_glfwPollEvents(void);
 
-#define glfwGetKey __wrap_glfwGetKey
-#define glfwGetMouseButton __wrap_glfwGetMouseButton
-#define glfwGetInputMode __wrap_glfwGetInputMode
-#define glfwSetInputMode __wrap_glfwSetInputMode
-#define glfwGetTime __wrap_glfwGetTime
-#define glfwGetWindowUserPointer __wrap_glfwGetWindowUserPointer
-#define glfwGetCursorPos __wrap_glfwGetCursorPos
-#define glfwGetWindowSize __wrap_glfwGetWindowSize
-#define glfwGetFramebufferSize __wrap_glfwGetFramebufferSize
-#define glfwSetWindowShouldClose __wrap_glfwSetWindowShouldClose
-#define glfwPollEvents __wrap_glfwPollEvents
 #include "renderer_test.h"
-/* Compile the UI with the same GLFW stubs and inspect its shared layout. */
-#include "../ui.c"
-#include "../input.c"
+static GLFWmousebuttonfun buttonCallback;
+static GLFWcursorposfun cursorCallback;
+static GLFWkeyfun keyCallback;
+static GLFWframebuffersizefun framebufferCallback;
+GLFWframebuffersizefun __wrap_glfwSetFramebufferSizeCallback(
+    GLFWwindow *const window, GLFWframebuffersizefun const callback) {
+  (void)window; framebufferCallback = callback; return NULL;
+}
+void __wrap_glfwSetWindowUserPointer(GLFWwindow *const window, void *const pointer) {
+  (void)window; windowUser = pointer;
+}
+GLFWmousebuttonfun __wrap_glfwSetMouseButtonCallback(GLFWwindow *const window, GLFWmousebuttonfun const callback) {
+  (void)window; buttonCallback = callback; return NULL;
+}
+GLFWcursorposfun __wrap_glfwSetCursorPosCallback(GLFWwindow *const window, GLFWcursorposfun const callback) {
+  (void)window; cursorCallback = callback; return NULL;
+}
+GLFWkeyfun __wrap_glfwSetKeyCallback(GLFWwindow *const window, GLFWkeyfun const callback) {
+  (void)window; keyCallback = callback; return NULL;
+}
 
 void __wrap_glfwPollEvents(void) {
   if (pendingClick) {
-    int button = pendingClick - 1;
+    const int button = pendingClick - 1;
     pendingClick = 0;
-    mouse_button_callback(((Application *)windowUser)->window, button, GLFW_PRESS, 0);
+    buttonCallback(NULL, button, GLFW_PRESS, 0);
   }
 }
 
@@ -93,15 +99,16 @@ static void assert_player_unchanged(const Player *actual, const Player *expected
   assert(actual->camera.up.z == expected->camera.up.z);
 }
 
-/* Find the actual displayed control by label; layout changes must not rewrite scenarios. */
+/* Exercise the visible controls through captured clicks and the public routing path. */
 static void click_button(Application *application, const char *label) {
-  MenuButton buttons[3];
-  const int count = menu_buttons(application, buttons);
+  UiButton buttons[UI_BUTTON_CAPACITY];
+  const int count = ui_menu_buttons(&application->ui,
+      renderer_view_distance(&application->renderer), buttons);
   const float scale = fminf((float)windowWidth / 640.0f, (float)windowHeight / 480.0f);
   for (int i = 0; i < count; i++)
     if (strcmp(buttons[i].label, label) == 0) {
       click(application, windowWidth * 0.5 + buttons[i].centerX * scale,
-              windowHeight * 0.5 + (buttons[i].top + 24) * scale);
+              windowHeight * 0.5 + (buttons[i].top + 24.0f) * scale);
       return;
     }
   assert(!"Requested menu control is not displayed");
@@ -165,19 +172,102 @@ static void test_virtual_actions(void) {
   Application application = {0};
   input_init(&application.input);
   application.input.mouseBindings[GLFW_MOUSE_BUTTON_LEFT] = INPUT_JUMP;
-  windowUser = &application;
+  input_attach(&application.input, NULL);
   cursorMode = GLFW_CURSOR_DISABLED;
-  mouse_button_callback(NULL, GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
-  mouse_button_callback(NULL, GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
+  buttonCallback(NULL, GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+  buttonCallback(NULL, GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
   input_poll(&application.input, NULL);
   assert(input_player(&application.input).jump);
   input_poll(&application.input, NULL);
   assert(!input_player(&application.input).jump);
-  mouse_button_callback(NULL, GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+  buttonCallback(NULL, GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
   input_discard(&application.input);
   input_poll(&application.input, NULL);
   assert(!input_player(&application.input).jump);
   memset(keys, 0, sizeof(keys));
+}
+
+/* Callback capture cannot mutate menus, timing, cursor capture or the world. */
+static void test_passive_capture_and_ordering(void) {
+  Application application = {0};
+  input_init(&application.input);
+  input_attach(&application.input, NULL);
+  memset(keys, 0, sizeof(keys));
+  memset(mouseButtons, 0, sizeof(mouseButtons));
+  cursorMode = GLFW_CURSOR_DISABLED;
+  closeRequested = 0;
+  windowWidth = 640; windowHeight = 480; pixelScale = 2;
+  application.renderer.viewDistance = DEFAULT_VIEW_DISTANCE;
+  application.player = (Player){.position = {0, 5, 0}, .eyeHeight = 1,
+      .camera = {.front = {0, 0, -1}, .up = {0, 1, 0}, .yaw = -90}};
+  assert(create_platform(&application.world, 16, (Vec3){0}, 1, 1));
+  assert(world_set_block(&application.world, 0, 5, -3, BLOCK_TYPE_STONE));
+  const Player frozen = application.player;
+  const size_t voxels = application.world.voxelCount;
+  application.simulationAccumulator = 0.01;
+  application.jumpQueued = application.placeQueued = application.removeQueued = 1;
+  application.input.keyBindings[GLFW_KEY_P] = INPUT_PAUSE | INPUT_JUMP | INPUT_PLACE;
+  keyCallback(NULL, GLFW_KEY_P, 0, GLFW_PRESS, 0);
+  keyCallback(NULL, GLFW_KEY_P, 0, GLFW_RELEASE, 0);
+  cursorCallback(NULL, 100.0, 100.0);
+  cursorCallback(NULL, 200.0, 150.0);
+  assert(!application.paused && application.simulationAccumulator == 0.01);
+  assert(cursorMode == GLFW_CURSOR_DISABLED && !closeRequested);
+  /* Resizing stays passive and cannot be lost when pause discards gameplay. */
+  framebufferCallback(NULL, 1280, 960);
+  assert(application.renderer.framebufferWidth == 0);
+  frame(&application, 0.02);
+  assert(application.input.framebufferResized);
+  assert(application.input.framebufferWidth == 1280 && application.input.framebufferHeight == 960);
+  assert(application.paused && !application.ui.settingsOpen);
+  assert(!application.simulationAccumulator && !application.jumpQueued);
+  assert(!application.placeQueued && !application.removeQueued);
+  assert(!application.input.mouse.deltaX && !application.input.mouse.deltaY);
+  assert(application.world.voxelCount == voxels);
+  assert_player_unchanged(&application.player, &frozen);
+
+  /* All clicks happen between polls; the final cursor position is unrelated.
+     Settings, increase, back and resume must each use its captured coordinates. */
+  const double positions[][2] = {{320, 240}, {436, 240}, {320, 304},
+                                  {320, 176}, {320, 304}};
+  for (size_t i = 0; i < sizeof(positions) / sizeof(positions[0]); i++) {
+    cursorX = positions[i][0]; cursorY = positions[i][1];
+    buttonCallback(NULL, GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    buttonCallback(NULL, GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
+  }
+  cursorX = 0; cursorY = 0;
+  assert(!application.ui.settingsOpen && application.paused);
+  assert(application.renderer.viewDistance == DEFAULT_VIEW_DISTANCE);
+  frame(&application, 0.02);
+  assert(!application.paused && !application.ui.settingsOpen && !closeRequested);
+  assert(application.renderer.viewDistance == DEFAULT_VIEW_DISTANCE + VIEW_DISTANCE_STEP);
+  assert(!application.input.clickCount && !application.input.pressed);
+  assert(application.world.voxelCount == voxels);
+  assert_player_unchanged(&application.player, &frozen);
+
+  /* Pause beats a simultaneous resume click and clears gameplay actions. */
+  application.input.mouseBindings[GLFW_MOUSE_BUTTON_RIGHT] = INPUT_PAUSE | INPUT_REMOVE;
+  buttonCallback(NULL, GLFW_MOUSE_BUTTON_RIGHT, GLFW_PRESS, 0);
+  cursorX = 320; cursorY = 176;
+  buttonCallback(NULL, GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+  frame(&application, 0.02);
+  assert(application.paused && !application.input.clickCount);
+  assert(application.world.voxelCount == voxels);
+
+  /* Overflow drops newest menu clicks; coalesced gameplay capture continues. */
+  cursorX = 0; cursorY = 0;
+  for (int i = 0; i < INPUT_CLICK_CAPACITY; i++)
+    buttonCallback(NULL, GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+  cursorX = 320; cursorY = 176;
+  buttonCallback(NULL, GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+  assert(application.input.clickCount == INPUT_CLICK_CAPACITY);
+  frame(&application, 0.02);
+  assert(application.paused && !application.input.clickCount);
+  click_button(&application, "RESUME");
+  assert(!application.paused);
+  assert_player_unchanged(&application.player, &frozen);
+  world_destroy(&application.world);
+  pixelScale = 1;
 }
 
 static void test_view_distance_settings(int width, int height, int density) {
@@ -186,7 +276,7 @@ static void test_view_distance_settings(int width, int height, int density) {
   input_init(&application.input);
   application.input.keyBindings[GLFW_KEY_ESCAPE] = 0;
   application.input.keyBindings[GLFW_KEY_F1] = INPUT_PAUSE;
-  windowUser = &application;
+  input_attach(&application.input, NULL);
   memset(keys, 0, sizeof(keys));
   closeRequested = 0;
   now = 0;
@@ -202,11 +292,11 @@ static void test_view_distance_settings(int width, int height, int density) {
   keys[GLFW_KEY_F1] = GLFW_RELEASE;
   frame(&application, 0.02);
   Player frozen = application.player;
-  size_t voxels = application.world.voxelCount;
+  const size_t voxels = application.world.voxelCount;
   click_button(&application, "SETTINGS"); /* Settings */
-  assert(application.paused && application.settingsOpen);
+  assert(application.paused && application.ui.settingsOpen);
 
-  float beyond = DEFAULT_VIEW_DISTANCE + VIEW_DISTANCE_STEP * 0.5f;
+  const float beyond = DEFAULT_VIEW_DISTANCE + VIEW_DISTANCE_STEP * 0.5f;
   SectionGpuMesh distant = {.boundsMin = {beyond, -8, -8}, .boundsMax = {beyond + 16, 8, 8}};
   SectionGpuMesh nearby = {.boundsMin = {-8, -8, -8}, .boundsMax = {8, 8, 8}};
   assert(!section_within_view_distance(&distant, (Vec3){0}, application.renderer.viewDistance));
@@ -217,7 +307,7 @@ static void test_view_distance_settings(int width, int height, int density) {
   click_button(&application, "-"); /* Decrease */
   assert(application.renderer.viewDistance == DEFAULT_VIEW_DISTANCE);
   assert(!section_within_view_distance(&distant, (Vec3){0}, application.renderer.viewDistance));
-  int steps = (int)ceilf((MAX_VIEW_DISTANCE - MIN_VIEW_DISTANCE) / VIEW_DISTANCE_STEP) + 2;
+  const int steps = (int)ceilf((MAX_VIEW_DISTANCE - MIN_VIEW_DISTANCE) / VIEW_DISTANCE_STEP) + 2;
   for (int i = 0; i < steps; i++)
     click_button(&application, "+");
   assert(application.renderer.viewDistance == MAX_VIEW_DISTANCE);
@@ -233,12 +323,12 @@ static void test_view_distance_settings(int width, int height, int density) {
   assert_player_unchanged(&application.player, &frozen);
 
   click_button(&application, "BACK"); /* Back, not Quit */
-  assert(application.paused && !application.settingsOpen && !closeRequested);
+  assert(application.paused && !application.ui.settingsOpen && !closeRequested);
   click_button(&application, "SETTINGS");
-  assert(application.settingsOpen && application.renderer.viewDistance == MIN_VIEW_DISTANCE);
+  assert(application.ui.settingsOpen && application.renderer.viewDistance == MIN_VIEW_DISTANCE);
   keys[GLFW_KEY_F1] = GLFW_PRESS;
   frame(&application, 0.02);
-  assert(application.paused && !application.settingsOpen);
+  assert(application.paused && !application.ui.settingsOpen);
   keys[GLFW_KEY_F1] = GLFW_RELEASE;
   frame(&application, 0.02);
   keys[GLFW_KEY_F1] = GLFW_PRESS;
@@ -250,12 +340,13 @@ static void test_view_distance_settings(int width, int height, int density) {
   keys[GLFW_KEY_F1] = GLFW_PRESS;
   frame(&application, 0.02);
   click_button(&application, "SETTINGS");
-  assert(application.settingsOpen && application.renderer.viewDistance == MIN_VIEW_DISTANCE);
+  assert(application.ui.settingsOpen && application.renderer.viewDistance == MIN_VIEW_DISTANCE);
   world_destroy(&application.world);
 }
 
 int main(void) {
   test_virtual_actions();
+  test_passive_capture_and_ordering();
   /* Nearest-rank p95, maximum and mean retain spikes above the simulation cap. */
   Performance perf = {.enabled = 1};
   for (int i = 1; i <= 100; i++) {
@@ -275,7 +366,7 @@ int main(void) {
 
   Application application = {0};
   input_init(&application.input);
-  windowUser = &application;
+  input_attach(&application.input, NULL);
   assert(create_platform(&application.world, 16, (Vec3){0}, 1, 1));
   /* Keep editable terrain in reach: a leaked gameplay click must have an effect. */
   assert(world_set_block(&application.world, 0, 5, -3, BLOCK_TYPE_STONE));
@@ -290,7 +381,7 @@ int main(void) {
   frame(&application, 0.02);
   assert(application.paused && cursorMode == GLFW_CURSOR_NORMAL);
   Player frozen = application.player;
-  size_t voxels = application.world.voxelCount;
+  const size_t voxels = application.world.voxelCount;
   /* Holding Escape must not repeatedly toggle pause, even with movement held. */
   for (int i = 0; i < 30; i++)
     frame(&application, 0.1);
@@ -298,8 +389,8 @@ int main(void) {
   assert_player_unchanged(&application.player, &frozen);
   keys[GLFW_KEY_ESCAPE] = GLFW_RELEASE;
   keys[GLFW_KEY_SPACE] = GLFW_PRESS;
-  mouse_callback(application.window, 100, 100);
-  mouse_callback(application.window, 200, 150);
+  cursorCallback(application.window, 100, 100);
+  cursorCallback(application.window, 200, 150);
   pendingClick = GLFW_MOUSE_BUTTON_RIGHT + 1;
   frame(&application, 10);
   assert(fabs(application.rawFrame - 10) < 1e-9);

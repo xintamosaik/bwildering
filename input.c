@@ -1,5 +1,4 @@
-#include "application_internal.h"
-#include "ui.h"
+#include "input.h"
 
 void input_init(InputState *const input) {
   *input = (InputState){
@@ -28,28 +27,24 @@ static void mouse_button_callback(GLFWwindow *const window, const int button,
   (void)mods;
   if (action != GLFW_PRESS)
     return;
-  Application *const application = glfwGetWindowUserPointer(window);
-  if (!application)
+  InputState *const input = glfwGetWindowUserPointer(window);
+  if (!input || button < 0 || button > GLFW_MOUSE_BUTTON_LAST)
     return;
-  if (application->paused) {
-    if (button == GLFW_MOUSE_BUTTON_LEFT)
-      ui_click(application);
-    return;
+  /* Preserve clicks pressed and released between polls, including their position. */
+  input->pendingMousePresses |= input->mouseBindings[button];
+  if (button == GLFW_MOUSE_BUTTON_LEFT && input->clickCount < INPUT_CLICK_CAPACITY) {
+    InputClick *const click = &input->clicks[input->clickCount++];
+    glfwGetCursorPos(window, &click->x, &click->y);
   }
-  if (glfwGetInputMode(window, GLFW_CURSOR) != GLFW_CURSOR_DISABLED ||
-      button < 0 || button > GLFW_MOUSE_BUTTON_LAST)
-    return;
-  /* Preserve clicks pressed and released between polls. */
-  application->input.pendingMousePresses |= application->input.mouseBindings[button];
 }
 
 static void mouse_callback(GLFWwindow *const window, const double x, const double y) {
   if (glfwGetInputMode(window, GLFW_CURSOR) != GLFW_CURSOR_DISABLED)
     return;
-  Application *const application = glfwGetWindowUserPointer(window);
-  if (!application)
+  InputState *const input = glfwGetWindowUserPointer(window);
+  if (!input)
     return;
-  MouseInput *const mouse = &application->input.mouse;
+  MouseInput *const mouse = &input->mouse;
   if (!mouse->firstMouse) {
     mouse->deltaX += x - mouse->lastX;
     mouse->deltaY += mouse->lastY - y;
@@ -59,7 +54,29 @@ static void mouse_callback(GLFWwindow *const window, const double x, const doubl
   mouse->lastY = y;
 }
 
-void input_attach(GLFWwindow *const window) {
+static void key_callback(GLFWwindow *const window, const int key, const int scancode,
+                         const int action, const int mods) {
+  (void)scancode;
+  (void)mods;
+  InputState *const input = glfwGetWindowUserPointer(window);
+  if (input && action == GLFW_PRESS && key >= GLFW_KEY_SPACE && key <= GLFW_KEY_LAST)
+    input->pendingKeyPresses |= input->keyBindings[key] & ~input->held;
+}
+
+static void framebuffer_size_callback(GLFWwindow *const window, const int width,
+                                      const int height) {
+  InputState *const input = glfwGetWindowUserPointer(window);
+  if (!input)
+    return;
+  input->framebufferWidth = width;
+  input->framebufferHeight = height;
+  input->framebufferResized = 1;
+}
+
+void input_attach(InputState *const input, GLFWwindow *const window) {
+  glfwSetWindowUserPointer(window, input);
+  glfwSetKeyCallback(window, key_callback);
+  glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
   glfwSetCursorPosCallback(window, mouse_callback);
   glfwSetMouseButtonCallback(window, mouse_button_callback);
 }
@@ -73,14 +90,17 @@ void input_poll(InputState *const input, GLFWwindow *const window) {
   for (int button = 0; button <= GLFW_MOUSE_BUTTON_LAST; button++)
     if (input->mouseBindings[button] && glfwGetMouseButton(window, button) == GLFW_PRESS)
       held |= input->mouseBindings[button];
-  input->pressed = (held & ~input->held) | input->pendingMousePresses;
+  input->pressed = (held & ~input->held) | input->pendingMousePresses | input->pendingKeyPresses;
   input->held = held;
   input->pendingMousePresses = 0;
+  input->pendingKeyPresses = 0;
 }
 
 void input_discard(InputState *const input) {
+  input->clickCount = 0;
   input->pressed = 0;
   input->pendingMousePresses = 0;
+  input->pendingKeyPresses = 0;
   input->mouse.firstMouse = 1;
   input->mouse.deltaX = 0.0;
   input->mouse.deltaY = 0.0;

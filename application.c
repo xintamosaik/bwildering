@@ -45,14 +45,6 @@ static void update_camera(Camera *const camera, MouseInput *const input) {
 #pragma endregion
 
 #pragma region Application
-static void framebuffer_size_callback(GLFWwindow *const window, const int width,
-                                      const int height) {
-  Application *const application = glfwGetWindowUserPointer(window);
-  if (application == NULL)
-    return;
-  renderer_set_viewport(&application->renderer, width, height);
-}
-
 void application_shutdown(Application *const application) {
   world_destroy(&application->world);
   if (application->rendererInitialized) {
@@ -135,8 +127,7 @@ int application_init(Application *const application) {
   // For synchronized gameplay, switch the two swap-interval lines:
   // glfwSwapInterval(1);
 
-  glfwSetWindowUserPointer(application->window, application);
-  input_attach(application->window);
+  input_attach(&application->input, application->window);
   glfwSetInputMode(application->window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
   glewExperimental = GL_TRUE;
@@ -163,8 +154,6 @@ int application_init(Application *const application) {
                           &application->renderer.framebufferHeight);
   glViewport(0, 0, application->renderer.framebufferWidth,
              application->renderer.framebufferHeight);
-  glfwSetFramebufferSizeCallback(application->window,
-                                 framebuffer_size_callback);
 
   const double worldStart = perf_clock(&application->performance);
   if (!create_terrain_streamed(&application->world, worldSide, CENTER,
@@ -219,9 +208,76 @@ int application_init(Application *const application) {
   return 1;
 }
 
+/* Application policy: transitions retain held actions but clear all transient
+   input, queued gameplay work and accumulated simulation time. */
+static void application_discard_gameplay(Application *const application) {
+  application->simulationAccumulator = 0.0;
+  application->jumpQueued = 0;
+  application->placeQueued = 0;
+  application->removeQueued = 0;
+  input_discard(&application->input);
+}
+
+static void application_set_paused(Application *const application, const int paused) {
+  application->paused = paused;
+  application->ui.settingsOpen = 0;
+  application_discard_gameplay(application);
+  glfwSetInputMode(application->window, GLFW_CURSOR,
+                   paused ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_DISABLED);
+}
+
+static UiPointer application_pointer(const Application *const application) {
+  UiPointer pointer = {0};
+  glfwGetCursorPos(application->window, &pointer.x, &pointer.y);
+  glfwGetWindowSize(application->window, &pointer.windowWidth, &pointer.windowHeight);
+  glfwGetFramebufferSize(application->window, &pointer.framebufferWidth, &pointer.framebufferHeight);
+  return pointer;
+}
+
+static void application_apply_ui(Application *const application, const UiAction action) {
+  switch (action.type) {
+  case UI_RESUME: application_set_paused(application, 0); break;
+  case UI_QUIT: glfwSetWindowShouldClose(application->window, GLFW_TRUE); break;
+  case UI_VIEW_DISTANCE:
+    renderer_set_view_distance(&application->renderer, action.viewDistance);
+    break;
+  case UI_NONE: break;
+  }
+}
+
+/* Once after polling: pause controls take priority over clicks. Menu clicks are
+   applied in capture order, immediately after hit testing, until resume/quit.
+   Every frame beginning or ending paused is barred from gameplay. */
+static int application_route_input(Application *const application) {
+  InputState *const input = &application->input;
+  if (input->pressed & INPUT_PAUSE) {
+    if (application->paused)
+      application_apply_ui(application, ui_handle_pause(&application->ui));
+    else
+      application_set_paused(application, 1);
+    application_discard_gameplay(application);
+    return 1;
+  }
+  if (application->paused) {
+    UiPointer pointer = application_pointer(application);
+    for (int i = 0; i < input->clickCount; i++) {
+      pointer.x = input->clicks[i].x;
+      pointer.y = input->clicks[i].y;
+      const UiAction action = ui_click(&application->ui,
+          renderer_view_distance(&application->renderer), pointer);
+      application_apply_ui(application, action);
+      if (action.type == UI_RESUME || action.type == UI_QUIT)
+        break;
+    }
+    application_discard_gameplay(application);
+    return 1;
+  }
+  input->clickCount = 0;
+  return 0;
+}
+
 void application_update(Application *const application) {
   GLFWwindow *const window = application->window;
-  const int wasPaused = application->paused;
   glfwPollEvents();
   input_poll(&application->input, window);
 
@@ -242,17 +298,8 @@ void application_update(Application *const application) {
     application->fpsWindowStart = currentFrame;
   }
 
-  /* Handle pause transitions before consuming gameplay input. */
-  if (ui_handle_pause(application))
+  if (application_route_input(application))
     return;
-  if (application->paused || wasPaused) {
-    application->simulationAccumulator = 0;
-    application->jumpQueued = 0;
-    application->placeQueued = 0;
-    application->removeQueued = 0;
-    input_discard(&application->input);
-    return;
-  }
 
   /* Retain a new jump press until a simulation tick can consume it. */
   update_camera(&application->player.camera, &application->input.mouse);
@@ -289,11 +336,28 @@ void application_update(Application *const application) {
 void application_render(Application *const application) {
   Performance *const p = &application->performance;
   double start = perf_clock(p);
+  /* Resize callbacks capture dimensions without touching renderer state. Avoid
+     window-system queries and redundant viewport calls on ordinary frames. */
+  if (application->input.framebufferResized) {
+    renderer_set_viewport(&application->renderer, application->input.framebufferWidth,
+                          application->input.framebufferHeight);
+    application->input.framebufferResized = 0;
+  }
   glClearColor(0.15f, 0.15f, 0.2f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
   render_world(&application->renderer, &application->player);
   const UiDrawContext draw = renderer_ui_context(&application->renderer);
-  ui_render(application, &draw);
+  const UiFrame frame = {
+      .fps = application->fps, .paused = application->paused,
+      .viewDistance = renderer_view_distance(&application->renderer),
+      .performance = p, .residentChunks = application->residentChunks,
+      .sections = application->world.sectionCount, .editedChunks = application->editedChunks,
+      .dirtySections = application->dirtySections,
+      .neighborhoodSlots = renderer_neighborhood_slots(&application->renderer),
+      .gpuBytes = application->gpuBytes,
+      .pointer = application->paused ? application_pointer(application) : (UiPointer){0},
+  };
+  ui_render(&application->ui, &frame, &draw);
   if (p->enabled) p->frame.render += perf_clock(p) - start;
 
   start = perf_clock(p);

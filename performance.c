@@ -41,7 +41,7 @@ void perf_finish_window(Performance *p) {
   double sorted[PERF_SAMPLES];
   memcpy(sorted, p->samples, p->count * sizeof(*sorted));
   qsort(sorted, p->count, sizeof(*sorted), perf_compare);
-  p->average = p->total.raw / p->count;
+  p->average = p->total.raw / (double)p->count;
   p->p95 = sorted[(95 * p->count + 99) / 100 - 1];
   p->maximum = sorted[p->count - 1];
 }
@@ -69,11 +69,11 @@ void perf_report(Performance *p, const PerformanceSnapshot *s, const char *phase
       phase, p->count, p->average*1000, p->p95*1000, p->maximum*1000,
       p->total.update*1000/n, p->total.sync*1000/n, p->total.materialize*1000/n,
       p->total.mesh*1000/n, p->total.upload*1000/n, p->total.render*1000/n, p->total.swap*1000/n,
-      p->total.visibility*1000/n, p->total.distanceTests/n, p->total.frustumTests/n,
-      p->total.materialChanges/n, p->total.visibilityFallbacks,
+      p->total.visibility*1000/n, (double)p->total.distanceTests/n, (double)p->total.frustumTests/n,
+      (double)p->total.materialChanges/n, p->total.visibilityFallbacks,
       p->total.rebuilds, p->total.uploadCalls, p->total.uploadBytes,
       p->total.evictedChunks, p->total.retiredMeshes, p->total.retiredBytes,
-      p->total.draws/n, p->total.triangles/n, s->residentChunks, s->sections,
+      (double)p->total.draws/n, (double)p->total.triangles/n, s->residentChunks, s->sections,
       s->editedChunks, s->dirtySections, s->neighborhoodSlots,
       s->worldMetadataBytes,
       s->rendererMetadataBytes,

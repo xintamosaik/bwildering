@@ -825,8 +825,8 @@ static void render_performance(const Application *a) {
   snprintf(lines[4], 96, "NEIGHBORHOOD SLOTS %zu GPU REQUESTED BYTES %zu", a->renderer.visibleMeshCount, a->gpuBytes);
   glDisable(GL_DEPTH_TEST);
   for (int i = 0; i < 5; i++)
-    draw_menu_text(&a->renderer, lines[i], a->renderer.framebufferWidth * 0.5f,
-                   48 + i * 18, 0.6f, (Vec3){0.95f, 0.98f, 0.92f});
+    draw_menu_text(&a->renderer, lines[i], (float)a->renderer.framebufferWidth * 0.5f,
+                   48.0f + (float)i * 18.0f, 0.6f, (Vec3){0.95f, 0.98f, 0.92f});
   glEnable(GL_DEPTH_TEST);
 }
 
@@ -1201,8 +1201,8 @@ static int application_init(Application *application) {
             z < application->world.minZ || z >= application->world.minZ + worldSide) continue;
         TerrainColumn c = terrain_sample_column(application->world.terrainSeed, x, z);
         if (c.material != BLOCK_TYPE_GRASS || c.height < 8 || c.height > 80) continue;
-        application->player.position.x = application->world.origin.x + (x + 0.5f) * BLOCK_SIZE;
-        application->player.position.z = application->world.origin.z + (z + 0.5f) * BLOCK_SIZE;
+        application->player.position.x = application->world.origin.x + ((float)x + 0.5f) * BLOCK_SIZE;
+        application->player.position.z = application->world.origin.z + ((float)z + 0.5f) * BLOCK_SIZE;
         found = 1;
       }
   if (!player_spawn_on_surface(&application->player, &application->world)) {

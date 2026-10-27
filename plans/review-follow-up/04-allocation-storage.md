@@ -1,9 +1,9 @@
 # Allocation accounting and reusable storage
 
 Priority: measure with plan 01; migrate after lifecycle contracts settle.
-Status: planned.
+Status: implemented and validated (27 October 2026).
 
-## Current behavior and goal
+## Behavior at planning and goal
 
 Uniform storage reduced live payload memory, but individual section nodes,
 dense payloads and CPU meshes still allocate separately. Renderer metadata also
@@ -50,3 +50,15 @@ costly paths with explicit-capacity storage while preserving rollback behavior.
   allocate nothing; repeated routes should reuse storage within configured bounds.
 - Complete only migrations supported by measurements; record deferred categories
   and the capacity/failure contract for every adopted pool or arena.
+
+## Completion evidence
+
+See [allocation-storage.md](../../allocation-storage.md) for the adopted capacity
+and failure contracts, diagnostic definitions, reproducible before/after captures,
+initialization cost, retention tradeoffs and validation. Separate lazily committed
+node/payload pools, borrowed immediate-upload scratch and reusable renderer
+metadata/index capacity are implemented. Fault injection now rejects logical
+reservations, including reuse. Public owning meshes, chunk metadata and the edit
+arena retain their existing lifetime contracts; their disposition is explicit in
+the report. No GPU allocator overhead or frame-time bound is inferred from the
+requested-byte counters.

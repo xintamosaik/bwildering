@@ -110,3 +110,12 @@ disabled for the sanitizer run; address and undefined-behavior checks stayed
 active. The actual OpenGL renderer suite built but could not start because X11
 display `:0` was unavailable; no virtual display executable was installed.
 CPU mesh equality and lifecycle tests passed independently.
+
+
+## Reusable storage follow-up
+
+The historical glibc measurements above describe individually allocated sections.
+The current fixture reports requested live bytes and retained pool capacity;
+it no longer calls `malloc_usable_size()` on individual section/payload slots.
+See [allocation-storage.md](allocation-storage.md) for separate pools, ownership,
+exhaustion/reuse tests and current before/after allocation captures.

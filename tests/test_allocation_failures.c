@@ -1,31 +1,21 @@
 #include "../game_logic.h"
+#include "../storage.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-/* Linker wrappers allow deterministic failure at every allocation without
-   shipping allocator hooks in the world or renderer. */
-void *__real_malloc(size_t size);
-void *__real_calloc(size_t count, size_t size);
+/* Reject logical reservations, including already committed pool capacity. */
 static int fail_after = -1;
 static size_t allocation_calls;
-static int reject_allocation(void) {
-  if (fail_after < 0)
-    return 0;
-  if (fail_after == 0)
-    return 1;
+static int reject_reservation(const StorageCategory category) {
+  (void)category;
+  allocation_calls++;
+  if (fail_after < 0) return 0;
+  if (fail_after == 0) return 1;
   fail_after--;
   return 0;
-}
-void *__wrap_malloc(size_t size) {
-  allocation_calls++;
-  return reject_allocation() ? NULL : __real_malloc(size);
-}
-void *__wrap_calloc(size_t count, size_t size) {
-  allocation_calls++;
-  return reject_allocation() ? NULL : __real_calloc(count, size);
 }
 
 static int generate_world(int generator, World *world) {
@@ -44,8 +34,8 @@ static void assert_world_equal(const World *actual, const World *expected) {
          actual->origin.z == expected->origin.z);
   for (int x = expected->minX; x < expected->minX + expected->blocksPerSide; x++)
     for (int z = expected->minZ; z < expected->minZ + expected->blocksPerSide; z++) {
-      float wx = expected->origin.x + (x + 0.5f) * expected->blockSize;
-      float wz = expected->origin.z + (z + 0.5f) * expected->blockSize;
+      float wx = expected->origin.x + ((float)x + 0.5f) * expected->blockSize;
+      float wz = expected->origin.z + ((float)z + 0.5f) * expected->blockSize;
       float surface = world_surface_height(expected, wx, wz);
       float actualSurface = world_surface_height(actual, wx, wz);
       assert(isnan(surface) ? isnan(actualSurface) : actualSurface == surface);
@@ -233,6 +223,7 @@ static void test_storage_expansion_failure(void) {
 }
 
 int main(void) {
+  storage_reject = reject_reservation;
   test_storage_expansion_failure();
   test_materialization_preserves_existing_ownership();
   evict_prepared = 1;

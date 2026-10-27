@@ -1,3 +1,4 @@
+#include "storage.h"
 #include "application.h"
 #include "ui.h"
 #include <limits.h>
@@ -142,9 +143,12 @@ static void section_gpu_mesh_destroy(SectionGpuMesh *const mesh) {
 static void renderer_destroy(Renderer *const renderer) {
   for (size_t i = 0; i < renderer->meshCount; i++)
     section_gpu_mesh_destroy(&renderer->meshes[i]);
-  free(renderer->meshes);
-  free(renderer->visibleMeshes);
-  free(renderer->drawMeshes);
+  storage_release(STORAGE_RECORD, renderer->meshCount * sizeof(*renderer->meshes));
+  storage_backing_free(STORAGE_RECORD, renderer->meshes, renderer->meshCapacity * sizeof(*renderer->meshes));
+  storage_backing_free(STORAGE_RECORD, renderer->staging, renderer->stagingCapacity * sizeof(*renderer->staging));
+  storage_backing_free(STORAGE_MESH, renderer->meshScratch, SECTION_MESH_MAX_VERTICES * sizeof(*renderer->meshScratch));
+  storage_free(STORAGE_VISIBLE, renderer->visibleMeshes, renderer->visibleMeshCapacity * sizeof(*renderer->visibleMeshes));
+  storage_free(STORAGE_DRAW, renderer->drawMeshes, renderer->drawMeshCapacity * sizeof(*renderer->drawMeshes));
   if (renderer->textVao != 0)
     glDeleteVertexArrays(1, &renderer->textVao);
   if (renderer->textVbo != 0)
@@ -152,6 +156,18 @@ static void renderer_destroy(Renderer *const renderer) {
   if (renderer->program != 0)
     glDeleteProgram(renderer->program);
   *renderer = (Renderer){0};
+}
+
+/* Gameplay supports radius <= MAX_VIEW_DISTANCE. Include padded residency,
+   one node per authoritative edit, and one full transactional replacement column.
+   This configures limits only; pages are committed on demand. */
+static int renderer_storage_limits(World *const world) {
+  const double span = (double)world->blockSize * SECTION_SIZE;
+  const size_t columns = (size_t)fmin(ceil(2.0 * (double)MAX_VIEW_DISTANCE / span) + 3.0,
+                                      (double)world->chunksPerSide);
+  const size_t slots = columns * columns * WORLD_SECTION_COUNT +
+      WORLD_EDIT_CAPACITY + WORLD_SECTION_COUNT;
+  return world_storage_limits(world, slots, slots);
 }
 
 static int renderer_init(Renderer *const renderer) {
@@ -268,8 +284,23 @@ static int renderer_prepare_world(Renderer *const renderer, const World *const w
   if (same) return 1;
 
   const double start = perf_clock(renderer->performance);
-  SectionGpuMesh *const records = world->sectionCount ? calloc(world->sectionCount, sizeof(*records)) : NULL;
-  if (world->sectionCount && !records) return 0;
+  if (world->sectionCount > SIZE_MAX / sizeof(SectionGpuMesh)) return 0;
+  const size_t bytes = world->sectionCount * sizeof(SectionGpuMesh);
+  if (!storage_reserve(STORAGE_RECORD, bytes, world->sectionCount <= renderer->stagingCapacity)) return 0;
+  if (world->sectionCount > renderer->stagingCapacity) {
+    size_t capacity = renderer->stagingCapacity ? renderer->stagingCapacity : 64;
+    while (capacity < world->sectionCount && capacity <= SIZE_MAX / 2) capacity *= 2;
+    if (capacity < world->sectionCount || capacity > SIZE_MAX / sizeof(SectionGpuMesh)) {
+      storage_release(STORAGE_RECORD, bytes);
+      return 0;
+    }
+    SectionGpuMesh *const replacement = storage_backing_alloc(STORAGE_RECORD, capacity * sizeof(*replacement));
+    if (!replacement) { storage_release(STORAGE_RECORD, bytes); return 0; }
+    storage_backing_free(STORAGE_RECORD, renderer->staging, renderer->stagingCapacity * sizeof(*replacement));
+    renderer->staging = replacement;
+    renderer->stagingCapacity = capacity;
+  }
+  SectionGpuMesh *const records = renderer->staging;
 
   /* Merge current section identities with the existing GPU records. */
   size_t old = 0, n = 0;
@@ -285,14 +316,20 @@ static int renderer_prepare_world(Renderer *const renderer, const World *const w
     }
 
   while (old < renderer->meshCount) section_gpu_mesh_destroy(&renderer->meshes[old++]);
-  free(renderer->meshes);
+  storage_release(STORAGE_RECORD, renderer->meshCount * sizeof(*renderer->meshes));
+  renderer->staging = renderer->meshes;
   renderer->meshes = records;
+  const size_t oldCapacity = renderer->meshCapacity;
+  renderer->meshCapacity = renderer->stagingCapacity;
+  renderer->stagingCapacity = oldCapacity;
+  /* Staging is spare capacity only; copied GL handles have exactly one owner. */
+  if (renderer->staging) memset(renderer->staging, 0, renderer->stagingCapacity * sizeof(*renderer->staging));
   renderer->meshCount = n;
   renderer->metadataSeconds += perf_clock(renderer->performance) - start;
   return 1;
 }
 
-static int renderer_sync_section(const Renderer *const renderer, World *const world, const size_t i) {
+static int renderer_sync_section(Renderer *const renderer, World *const world, const size_t i) {
   SectionGpuMesh *const gpu = &renderer->meshes[i];
   Subchunk *const section = world_section_mut(world, gpu->chunkX, gpu->sectionY, gpu->chunkZ);
   if (!section) {
@@ -306,7 +343,11 @@ static int renderer_sync_section(const Renderer *const renderer, World *const wo
   SectionMesh cpu = {0};
   Performance *const p = renderer->performance;
   double start = perf_clock(p);
-  int success = section_mesh_build(world, gpu->chunkX, gpu->sectionY, gpu->chunkZ, &cpu);
+  const size_t scratchBytes = SECTION_MESH_MAX_VERTICES * sizeof(*renderer->meshScratch);
+  if (!storage_reserve(STORAGE_MESH, scratchBytes, renderer->meshScratch != NULL)) return 0;
+  if (!renderer->meshScratch) renderer->meshScratch = storage_backing_alloc(STORAGE_MESH, scratchBytes);
+  int success = renderer->meshScratch && section_mesh_build_scratch(world, gpu->chunkX,
+      gpu->sectionY, gpu->chunkZ, renderer->meshScratch, SECTION_MESH_MAX_VERTICES, &cpu);
   if (p && p->enabled) {
     p->frame.mesh += perf_clock(p) - start;
     p->frame.rebuilds++;
@@ -321,7 +362,7 @@ static int renderer_sync_section(const Renderer *const renderer, World *const wo
       p->frame.upload += perf_clock(p) - start;
     }
   }
-  section_mesh_destroy(&cpu);
+  storage_release(STORAGE_MESH, scratchBytes);
   if (!success)
     return 0;
   section->dirty = 0;
@@ -530,14 +571,20 @@ static StreamResult renderer_sync_view_work(Renderer *const renderer, World *con
     return STREAM_FAILED;
   }
   if (renderer->meshCount > renderer->visibleMeshCapacity) {
-    size_t *const indices = malloc(renderer->meshCount * sizeof(*indices));
+    size_t capacity = renderer->visibleMeshCapacity ? renderer->visibleMeshCapacity : 64;
+    while (capacity < renderer->meshCount && capacity <= SIZE_MAX / 2) capacity *= 2;
+    if (capacity < renderer->meshCount || capacity > SIZE_MAX / sizeof(size_t)) {
+      if (budget) stream_visible_fallback(renderer, minX, maxX, minZ, maxZ);
+      return STREAM_FAILED;
+    }
+    size_t *const indices = storage_alloc(STORAGE_VISIBLE, capacity * sizeof(*indices));
     if (!indices) {
       if (budget) stream_visible_fallback(renderer, minX, maxX, minZ, maxZ);
       return STREAM_FAILED;
     }
-    free(renderer->visibleMeshes);
+    storage_free(STORAGE_VISIBLE, renderer->visibleMeshes, renderer->visibleMeshCapacity * sizeof(*renderer->visibleMeshes));
     renderer->visibleMeshes = indices;
-    renderer->visibleMeshCapacity = renderer->meshCount;
+    renderer->visibleMeshCapacity = capacity;
   }
 
   /* Collect and synchronize only sections in the current neighborhood. */
@@ -665,13 +712,15 @@ static int renderer_collect_draw_meshes(Renderer *const renderer, const Vec3 eye
     if (!section_in_frustum(mesh, mvp)) continue;
     if (renderer->drawMeshCount == renderer->drawMeshCapacity) {
       size_t capacity = renderer->drawMeshCapacity ? renderer->drawMeshCapacity * 2 : 64;
-      if (capacity > count) capacity = count;
-      size_t *const indices = realloc(renderer->drawMeshes, capacity * sizeof(*indices));
+      size_t *const indices = capacity < renderer->drawMeshCapacity || capacity > SIZE_MAX / sizeof(size_t) ?
+          NULL : storage_alloc(STORAGE_DRAW, capacity * sizeof(*indices));
       if (!indices) {
         renderer->drawMeshCount = 0;
         if (p && p->enabled) p->frame.visibilityFallbacks++;
         return 0;
       }
+      if (renderer->drawMeshes) memcpy(indices, renderer->drawMeshes, renderer->drawMeshCount * sizeof(*indices));
+      storage_free(STORAGE_DRAW, renderer->drawMeshes, renderer->drawMeshCapacity * sizeof(*indices));
       renderer->drawMeshes = indices;
       renderer->drawMeshCapacity = capacity;
     }
@@ -861,7 +910,7 @@ static int application_init(Application *const application) {
 
   const double worldStart = perf_clock(&application->performance);
   if (!create_terrain_streamed(&application->world, worldSide, CENTER,
-                       BLOCK_SIZE, WORLD_SEED)) {
+                       BLOCK_SIZE, WORLD_SEED) || !renderer_storage_limits(&application->world)) {
     fprintf(stderr, "Failed to create voxel terrain\n");
     application_shutdown(application);
     return 0;

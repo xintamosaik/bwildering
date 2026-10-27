@@ -46,12 +46,12 @@ by that run. Both changed C files passed the narrowing-conversion check.
 | Operation | Before / success | Failure / departure |
 | --- | --- | --- |
 | `renderer_init` | Renderer owns shader program and text VAO/VBO. Shader objects are deleted after linking. | Partial initialization calls `renderer_destroy`; no world ownership is acquired. |
-| `renderer_prepare_world` | Renderer owns the record array. A sorted identity merge copies matching VAO/VBO handles into replacement records, deletes departing objects, frees the old array without destroying transferred handles, then commits the array. | Allocation happens before mutation; failure retains the old array and live handles. Successful merge leaves exactly one record owning each nonzero handle. |
-| `renderer_sync_section` | Borrows a world section by signed identity; owns a temporary CPU `SectionMesh` only during the call. Successful upload clears dirty and always destroys the temporary CPU mesh. | Build/upload failure destroys temporary storage, retains old drawable GPU data and leaves dirty set. Missing sections destroy their GPU record. Empty meshes retire old objects and retain zero-handle identity markers. |
+| `renderer_prepare_world` | Renderer owns active and spare record buffers. A sorted identity merge transfers matching VAO/VBO handles, deletes departing objects, clears old records and retains the old buffer as spare capacity. | Allocation happens before mutation; failure retains the old array and live handles. Successful merge leaves exactly one record owning each nonzero handle. |
+| `renderer_sync_section` | Borrows a world section by signed identity and renderer-owned CPU mesh scratch through upload. Successful upload clears dirty; the scratch scope ends after upload. | Build/upload failure releases the scratch scope, retains old drawable GPU data and leaves dirty set. Missing sections destroy their GPU record. Empty meshes retire old objects and retain zero-handle identity markers. |
 | `renderer_upload_section_mesh` | A temporary result owns new VAO/VBO handles until upload succeeds. Commit destroys the target's old GL objects and transfers the result to that target. | Invalid ranges or GL errors destroy only temporary objects; the target retains handles, vertex bytes, bounds and material ranges. |
 | `renderer_sync_view_work` / synchronous wrapper | Renderer owns index arrays and the fixed-capacity task queue. Index entries borrow current record indices; tasks hold coordinates/revisions, never section pointers or record indices. | Departure deletes GPU objects before releasing procedural CPU columns and cancels departing tasks. Retirement is allowed to commit before a later failure. New-work failures retain old in-range geometry; scheduled metadata failures rebuild a valid fallback index list. |
 | Visible/draw list growth | New storage commits after allocation. Lists are rebuilt after metadata replacement; final draw lists are camera-specific. | Failed visible growth keeps owned storage; the synchronous pass clears counts. The scheduled pass reconstructs surviving indices. Failed final draw-list growth discards partial counts and draws through direct visibility checks. |
-| `world_destroy` / `renderer_destroy` | World owns CPU sections, chunk metadata and edit-overlay storage. Renderer independently owns GL objects, record/index arrays and its inline queue. | World destruction leaves GL objects alive. Renderer destruction deletes section/text/program resources, releases arrays and zeroes state while the context is current. A current program is deletion-pending until unbound; the test unbinds it before asserting `glIsProgram == false`. Repeated renderer destruction is safe. |
+| `world_destroy` / `renderer_destroy` | World owns CPU sections, chunk metadata and edit-overlay storage. Renderer independently owns GL objects, both record buffers, mesh scratch, index arrays and its inline queue. | World destruction leaves GL objects alive. Renderer destruction deletes section/text/program resources, releases arrays and zeroes state while the context is current. A current program is deletion-pending until unbound; the test unbinds it before asserting `glIsProgram == false`. Repeated renderer destruction is safe. |
 
 Synchronization is transactional per materialization or section replacement,
 not per entire view. Earlier successful replacements and departures can commit
@@ -157,3 +157,11 @@ The soft scheduler budget does not guarantee a maximum frame time; residual
 metadata/retirement costs and large-radius convergence latency remain explicit
 follow-up work in plan 01. No new renderer lifecycle or culling defect was
 reproduced by these fixtures.
+
+
+The allocation/storage follow-up reran the real-context suite after migrating to
+pooled CPU sections, upload scratch and two renderer record buffers. New fixtures
+verify zero backing allocations on warmed routes, zero stationary reservations,
+scratch-reservation failure preserving old GL geometry, retry and zero accounted
+owned bytes after destruction. See [allocation-storage.md](allocation-storage.md)
+for capacities, failure contracts and allocation/timing captures.

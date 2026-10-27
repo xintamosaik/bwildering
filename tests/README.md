@@ -31,7 +31,7 @@ boundaries at negative and nonnegative Y. Eager and streamed fixtures cover both
 resident neighbours and edits before materialization, with exact dirty-section
 identity checks. See [issue 004](../issues/004-mesh-candidate-correctness.md).
 
-`make test` runs logic, allocation-failure, and headless menu interaction tests.
+`make test` runs logic, reservation-failure, reusable-storage, and headless menu interaction tests.
 `make test-renderer` additionally requires an X11 display and OpenGL 3.3 context.
 The [renderer audit](../renderer-audit.md) records the verified GL device,
 reproduction commands, handle/buffer ownership and real-context depth/submission
@@ -102,7 +102,7 @@ frozen pre-005 mesher. See [mesh-query measurements](../mesh-query-performance.m
 for fixtures, instrumentation limits and the storage decision.
 
 `make section_storage_benchmark && ./section_storage_benchmark` measures live
-section allocations (including glibc overhead) on three mountainous regions and
+live section requests and retained pool capacity on three mountainous regions and
 prints generation timings and complete voxel checksums. See
 [section storage](../section-storage.md) for before/after results and transition
 tests.
@@ -124,3 +124,13 @@ reservation and every materialization allocation with partial caches and after
 full edited eviction, checking overlay ownership and entry bytes as well as
 resident state. The GL travel fixture visits 60 edited locations under the same
 49-column residency bound as unedited terrain.
+
+
+`make allocation_capture && ./allocation_capture` captures opt-in per-category
+allocation/reservation counts, reuse, requested/live/peak capacity, slack, RSS,
+GPU requests and sync timing distributions on a real X11 GL context. See
+[allocation and reusable storage](../allocation-storage.md) for raw before/after
+captures, reproduction commands, capacity/exhaustion contracts and test evidence.
+`test_storage` exercises independent node/payload limits, partial staging rollback,
+reuse after eviction/compaction, world isolation and borrowed mesh overflow/parity.
+Failure injection operates on logical reservations, including reused slots.

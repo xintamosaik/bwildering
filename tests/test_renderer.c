@@ -3,35 +3,26 @@
 #include <stdlib.h>
 #include <assert.h>
 #include "../application.h"
+#include "../storage.h"
 static void checked_draw_arrays(GLenum mode, GLint first, GLsizei count);
+static int scratch_reservations_before_failure = -1;
 static int draw_allocations_before_failure = -1;
-static void *draw_test_realloc(void *pointer, size_t bytes) {
-  if (draw_allocations_before_failure == 0) return NULL;
-  if (draw_allocations_before_failure > 0) draw_allocations_before_failure--;
-  return realloc(pointer, bytes);
-}
 static int metadata_allocations_before_failure = -1;
-static void *metadata_test_calloc(size_t count, size_t bytes) {
-  if (metadata_allocations_before_failure == 0) return NULL;
-  if (metadata_allocations_before_failure > 0) metadata_allocations_before_failure--;
-  return calloc(count, bytes);
-}
 static int visible_allocations_before_failure = -1;
-static void *visible_test_malloc(size_t bytes) {
-  if (visible_allocations_before_failure == 0) return NULL;
-  if (visible_allocations_before_failure > 0) visible_allocations_before_failure--;
-  return malloc(bytes);
+static int reject_storage(const StorageCategory category) {
+  int *const remaining = category == STORAGE_DRAW ? &draw_allocations_before_failure :
+      category == STORAGE_RECORD ? &metadata_allocations_before_failure :
+      category == STORAGE_VISIBLE ? &visible_allocations_before_failure :
+      category == STORAGE_MESH ? &scratch_reservations_before_failure : NULL;
+  if (!remaining || *remaining < 0) return 0;
+  if (*remaining == 0) return 1;
+  (*remaining)--;
+  return 0;
 }
-#define malloc visible_test_malloc
-#define calloc metadata_test_calloc
-#define realloc draw_test_realloc
 #define glDrawArrays checked_draw_arrays
 #define main bwildering_application_main
 #include "../main.c"
 #undef main
-#undef realloc
-#undef calloc
-#undef malloc
 #undef glDrawArrays
 
 /* Record real submissions only while a verification capture is active. */
@@ -719,6 +710,7 @@ static void test_streamed_retirement_after_failed_sync(void) {
   /* Metadata may commit before visible-index growth fails. Existing handles
      and index storage remain owned; no stale indices may be submitted. */
   size_t *visible = renderer.visibleMeshes;
+  renderer.visibleMeshCapacity = renderer.meshCount;
   size_t capacity = renderer.visibleMeshCapacity;
   visible_allocations_before_failure = 0;
   assert(!renderer_sync_view(&renderer, &world, &player));
@@ -890,7 +882,7 @@ static void test_sparse_vertical_renderer(void) {
   }
   assert(world_init(&world, 6144, (Vec3){0}, 1));
   assert(renderer_sync_world(&r, &world));
-  assert(!r.meshes && !r.meshCount);
+  assert(!r.meshCount); /* Capacity remains reusable after the last departure. */
   renderer_destroy(&r);
   world_destroy(&world);
 }
@@ -974,6 +966,7 @@ static void test_stream_budget(void) {
   for (size_t n = 0; n < r.visibleMeshCount; n++)
     oldVisible |= r.meshes[r.visibleMeshes[n]].vbo == oldVbo;
   assert(oldVisible);
+  r.visibleMeshCapacity = r.meshCount;
   visible_allocations_before_failure = 0;
   assert(renderer_sync_view_work(&r, &world, &player, &paused) == STREAM_FAILED);
   visible_allocations_before_failure = -1;
@@ -1021,7 +1014,61 @@ static void test_stream_budget(void) {
   world_destroy(&world);
 }
 
+/* Accounting is enabled only around fresh owners, so fixture-only direct
+   allocations elsewhere cannot affect the capacity/lifetime assertions. */
+static void test_reusable_renderer_storage(void) {
+  storage_accounting(1);
+  World world = {0};
+  Renderer r = {.viewDistance = 25.0f};
+  Player player = {.position = {0.5f, 410.0f, 0.5f}};
+  assert(create_terrain_streamed(&world, 256, (Vec3){0}, 1.0f, WORLD_SEED));
+  for (int pass = 0; pass < 2; pass++)
+    for (int step = 0; step < 8; step++) {
+      player.position.x = (float)(step % 4) * 16.0f + 0.5f;
+      assert(renderer_sync_view(&r, &world, &player));
+    }
+  size_t allocations[STORAGE_CATEGORY_COUNT];
+  for (int c = 0; c < STORAGE_CATEGORY_COUNT; c++)
+    allocations[c] = storage_stats((StorageCategory)c)->systemAllocations;
+  for (int step = 0; step < 8; step++) {
+    player.position.x = (float)(step % 4) * 16.0f + 0.5f;
+    assert(renderer_sync_view(&r, &world, &player));
+  }
+  for (int c = 0; c < STORAGE_CATEGORY_COUNT; c++)
+    assert(storage_stats((StorageCategory)c)->systemAllocations == allocations[c]);
+  assert(storage_stats(STORAGE_MESH)->systemAllocations == 1);
+  assert(!storage_stats(STORAGE_MESH)->live);
+  assert(world_set_block(&world, 48, 500, 0, BLOCK_TYPE_SNOW));
+  assert(renderer_sync_view(&r, &world, &player));
+  SectionGpuMesh *const gpu = gpu_section(&r, 3, 31, 0);
+  assert(gpu && gpu->vbo);
+  const GLuint vbo = gpu->vbo;
+  assert(world_set_block(&world, 48, 500, 0, BLOCK_TYPE_STONE));
+  scratch_reservations_before_failure = 0;
+  assert(!renderer_sync_view(&r, &world, &player));
+  scratch_reservations_before_failure = -1;
+  assert(gpu->vbo == vbo && glIsBuffer(vbo));
+  assert(world_section(&world, 3, 31, 0)->dirty);
+  assert(!storage_stats(STORAGE_MESH)->live);
+  assert(renderer_sync_view(&r, &world, &player));
+  assert(!glIsBuffer(vbo));
+  size_t attempts = 0;
+  for (int c = 0; c < STORAGE_CATEGORY_COUNT; c++) attempts += storage_stats((StorageCategory)c)->attempts;
+  for (int frame = 0; frame < 16; frame++) assert(renderer_sync_view(&r, &world, &player));
+  size_t after = 0;
+  for (int c = 0; c < STORAGE_CATEGORY_COUNT; c++) after += storage_stats((StorageCategory)c)->attempts;
+  assert(attempts == after);
+  renderer_destroy(&r);
+  world_destroy(&world);
+  for (int c = 0; c < STORAGE_CATEGORY_COUNT; c++) {
+    assert(!storage_stats((StorageCategory)c)->live);
+    assert(!storage_stats((StorageCategory)c)->capacity);
+  }
+  storage_accounting(0);
+}
+
 int main(void) {
+  storage_reject = reject_storage;
   test_frustum();
   glfwSetErrorCallback(glfw_test_error);
   glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
@@ -1191,6 +1238,7 @@ int main(void) {
   test_view_distance_and_edits_change_rendered_geometry();
   test_streamed_exploration_revisits_edited_terrain();
   test_streamed_retirement_after_failed_sync();
+  test_reusable_renderer_storage();
   assert(glGetError() == GL_NO_ERROR);
   glfwDestroyWindow(window);
   glfwTerminate();

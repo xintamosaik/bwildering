@@ -66,6 +66,8 @@ enum {
   WORLD_MAX_BLOCKS_PER_SIDE = 6144,
   SECTION_SIZE = 16,
   SECTION_VOLUME = 16 * 16 * 16,
+  /* Six faces, two triangles, three vertices; valid for every voxel pattern. */
+  SECTION_MESH_MAX_VERTICES = SECTION_VOLUME * 6 * 6,
   WORLD_EDIT_CAPACITY = 65536,
   WORLD_MIN_SECTION_Y = -8,
   WORLD_SECTION_COUNT = 32,
@@ -93,7 +95,9 @@ enum {
 typedef enum { SECTION_EMPTY, SECTION_UNIFORM, SECTION_DENSE } SectionStorage;
 
 /* Owned by its chunk; blocks is owned only by this section, never shared. */
+struct WorldStorage;
 typedef struct Subchunk {
+  struct WorldStorage *pool; /* Stable world-owned pool, including staged nodes. */
   int meshCandidate; /* Conservative surface/edge exposure, or an edited section. */
   int sectionY;
   struct Subchunk *next;
@@ -135,6 +139,7 @@ typedef struct {
    sectionCount includes them. Renderer sync must retire their GPU geometry.
    Voxel coordinates are signed; render positions use origin + voxel * blockSize. */
 typedef struct {
+  struct WorldStorage *storage;
   Chunk *chunks;
   VoxelEdit *edits; /* Lazily reserved WORLD_EDIT_CAPACITY-entry arena. */
   size_t editCount;
@@ -250,6 +255,15 @@ size_t world_release_chunks_outside(World *world, int minX, int maxX, int minZ, 
 /* Transactionally replaces an initialized CPU mesh. Empty sections are valid. */
 int section_mesh_build(const World *world, int chunkX, int sectionY, int chunkZ,
                        SectionMesh *mesh);
+/* Output must be a nonowning descriptor. Borrowed vertices remain valid until
+   the caller reuses scratch; never destroy this output.
+   Overflow/failure leaves output unchanged. Capacity is in vertices. */
+int section_mesh_build_scratch(const World *world, int cx, int sy, int cz,
+                               SurfaceVertex *scratch, size_t capacity, SectionMesh *output);
+/* Configure before acquiring any nodes; zero is a valid exhaustion limit.
+   Default: all generated columns + maximum overlay sections + one staged column.
+   Pages are committed lazily and retained until world destruction. */
+int world_storage_limits(World *world, size_t nodes, size_t payloads);
 void section_mesh_destroy(SectionMesh *mesh);
 void update_player(Player *updatedPlayer, PlayerInput input, float deltaTime,
                    const World *world);

@@ -1,4 +1,5 @@
 #include "game_logic.h"
+#include "storage.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -13,6 +14,83 @@
 #define MESH_BENCH_QUERY_END() ((void)0)
 #define MESH_BENCH_SAMPLE(seed, x, z) terrain_sample_column(seed, x, z)
 #endif
+
+enum { NODE_PAGE_SLOTS = 128, PAYLOAD_PAGE_SLOTS = 64 };
+typedef struct NodePage { struct NodePage *next; Subchunk slots[NODE_PAGE_SLOTS]; } NodePage;
+typedef union PayloadSlot { union PayloadSlot *next; uint8_t bytes[SECTION_VOLUME]; } PayloadSlot;
+typedef struct PayloadPage { struct PayloadPage *next; PayloadSlot slots[PAYLOAD_PAGE_SLOTS]; } PayloadPage;
+struct WorldStorage {
+  NodePage *nodes;
+  PayloadPage *payloads;
+  Subchunk *freeNodes;
+  PayloadSlot *freePayloads;
+  size_t nodeLimit, payloadLimit, nodeLive, payloadLive, nodeSlots, payloadSlots;
+};
+int world_storage_limits(World *const world, const size_t nodes, const size_t payloads) {
+  if (!world || !world->storage || world->storage->nodes || world->storage->payloads) return 0;
+  world->storage->nodeLimit = nodes;
+  world->storage->payloadLimit = payloads;
+  return 1;
+}
+static Subchunk *node_acquire(struct WorldStorage *const pool) {
+  if (!storage_reserve(STORAGE_NODE, sizeof(Subchunk), pool->freeNodes != NULL)) return NULL;
+  if (pool->nodeLive >= pool->nodeLimit) { storage_exhausted(STORAGE_NODE); goto fail; }
+  if (!pool->freeNodes) {
+    NodePage *const page = storage_backing_alloc(STORAGE_NODE, sizeof(*page));
+    if (!page) goto fail;
+    page->next = pool->nodes;
+    pool->nodes = page;
+    const size_t remaining = pool->nodeLimit - pool->nodeSlots;
+    const size_t count = remaining < NODE_PAGE_SLOTS ? remaining : NODE_PAGE_SLOTS;
+    for (size_t i = 0; i < count; i++) {
+      page->slots[i].next = pool->freeNodes;
+      pool->freeNodes = &page->slots[i];
+    }
+    pool->nodeSlots += count;
+  }
+  Subchunk *const s = pool->freeNodes;
+  pool->freeNodes = s->next;
+  *s = (Subchunk){.pool = pool};
+  pool->nodeLive++;
+  return s;
+fail:
+  storage_release(STORAGE_NODE, sizeof(Subchunk));
+  return NULL;
+}
+static uint8_t *payload_acquire(struct WorldStorage *const pool) {
+  if (!storage_reserve(STORAGE_PAYLOAD, SECTION_VOLUME, pool->freePayloads != NULL)) return NULL;
+  if (pool->payloadLive >= pool->payloadLimit) { storage_exhausted(STORAGE_PAYLOAD); goto fail; }
+  if (!pool->freePayloads) {
+    PayloadPage *const page = storage_backing_alloc(STORAGE_PAYLOAD, sizeof(*page));
+    if (!page) goto fail;
+    page->next = pool->payloads;
+    pool->payloads = page;
+    const size_t remaining = pool->payloadLimit - pool->payloadSlots;
+    const size_t count = remaining < PAYLOAD_PAGE_SLOTS ? remaining : PAYLOAD_PAGE_SLOTS;
+    for (size_t i = 0; i < count; i++) {
+      page->slots[i].next = pool->freePayloads;
+      pool->freePayloads = &page->slots[i];
+    }
+    pool->payloadSlots += count;
+  }
+  PayloadSlot *const slot = pool->freePayloads;
+  pool->freePayloads = slot->next;
+  pool->payloadLive++;
+  return slot->bytes;
+fail:
+  storage_release(STORAGE_PAYLOAD, SECTION_VOLUME);
+  return NULL;
+}
+static void payload_release(Subchunk *const section) {
+  if (!section->blocks) return;
+  struct WorldStorage *const pool = section->pool;
+  PayloadSlot *const slot = (PayloadSlot *)section->blocks;
+  slot->next = pool->freePayloads;
+  pool->freePayloads = slot;
+  pool->payloadLive--;
+  storage_release(STORAGE_PAYLOAD, SECTION_VOLUME);
+  section->blocks = NULL;
+}
 
 int voxel_floor_div(const int coordinate, const int divisor) {
   return coordinate / divisor - (coordinate % divisor < 0);
@@ -42,8 +120,12 @@ int block_face_visible(const BlockType type, const BlockType neighbor) {
 
 static void section_destroy(Subchunk *const section) {
   if (!section) return;
-  free(section->blocks);
-  free(section);
+  payload_release(section);
+  struct WorldStorage *const pool = section->pool;
+  section->next = pool->freeNodes;
+  pool->freeNodes = section;
+  pool->nodeLive--;
+  storage_release(STORAGE_NODE, sizeof(*section));
 }
 
 /* Compact without allocating. Mixed full sections usually differ early. */
@@ -57,7 +139,7 @@ static void section_compact(Subchunk *const section) {
       if (section->blocks[i] != material) return;
   }
 
-  free(section->blocks);
+  payload_release(section);
   section->blocks = NULL;
   section->material = material;
   section->storage = section->voxelCount ? SECTION_UNIFORM : SECTION_EMPTY;
@@ -66,7 +148,7 @@ static void section_compact(Subchunk *const section) {
 /* Allocate first; callers commit ownership/counts only after success. */
 static int section_expand(Subchunk *const section) {
   if (section->storage == SECTION_DENSE) return 1;
-  uint8_t *const blocks = malloc(SECTION_VOLUME);
+  uint8_t *const blocks = payload_acquire(section->pool);
   if (!blocks) return 0;
   memset(blocks, section->storage == SECTION_EMPTY ? BLOCK_TYPE_EMPTY : section->material,
          SECTION_VOLUME);
@@ -83,15 +165,22 @@ void world_destroy(World *const world) {
       Subchunk *section = world->chunks[c].sections;
       while (section) { Subchunk *const next = section->next; section_destroy(section); section = next; }
     }
-  free(world->edits);
-  free(world->chunks);
+  storage_free(STORAGE_WORLD, world->edits, WORLD_EDIT_CAPACITY * sizeof(*world->edits));
+  storage_free(STORAGE_WORLD, world->chunks, world->chunkCount * sizeof(*world->chunks));
+  if (world->storage) {
+    NodePage *n = world->storage->nodes;
+    while (n) { NodePage *const next = n->next; storage_backing_free(STORAGE_NODE, n, sizeof(*n)); n = next; }
+    PayloadPage *p = world->storage->payloads;
+    while (p) { PayloadPage *const next = p->next; storage_backing_free(STORAGE_PAYLOAD, p, sizeof(*p)); p = next; }
+    storage_free(STORAGE_WORLD, world->storage, sizeof(*world->storage));
+  }
   *world = (World){0};
 }
 
 int world_init(World *const world, const int side, const Vec3 center, const float size) {
   Vec3 origin = center;
-  origin.x -= (side % 2) * size * 0.5f;
-  origin.z -= (side % 2) * size * 0.5f;
+  origin.x -= (float)(side % 2) * size * 0.5f;
+  origin.z -= (float)(side % 2) * size * 0.5f;
   return world_init_region(world, -(side / 2), -(side / 2), side, origin, size);
 }
 
@@ -130,9 +219,17 @@ int world_init_region(World *const world, const int minX, const int minZ, const 
   result.blocksPerSide = side;
   result.blockSize = size;
   result.origin = origin;
-  result.chunks = calloc(result.chunkCount, sizeof(*result.chunks));
+  result.chunks = storage_alloc(STORAGE_WORLD, result.chunkCount * sizeof(*result.chunks));
   if (!result.chunks)
     return 0;
+  result.storage = storage_alloc(STORAGE_WORLD, sizeof(*result.storage));
+  if (!result.storage) {
+    storage_free(STORAGE_WORLD, result.chunks, result.chunkCount * sizeof(*result.chunks));
+    return 0;
+  }
+  const size_t limit = result.chunkCount * WORLD_SECTION_COUNT + WORLD_EDIT_CAPACITY + WORLD_SECTION_COUNT;
+  *result.storage = (struct WorldStorage){.nodeLimit = limit, .payloadLimit = limit};
+  memset(result.chunks, 0, result.chunkCount * sizeof(*result.chunks));
   for (int x = 0; x < result.chunksPerSide; x++)
     for (int z = 0; z < result.chunksPerSide; z++) {
       Chunk *const chunk = &result.chunks[x * result.chunksPerSide + z];
@@ -243,12 +340,14 @@ BlockType world_get_block(const World *const world, const int x, const int y, co
   return BLOCK_TYPE_EMPTY;
 }
 
+static Subchunk *empty_section(const World *const world) { return node_acquire(world->storage); }
+
 static Subchunk *terrain_section(const World *const world, const int cx, const int sy, const int cz,
                                  const TerrainColumn columns[const SECTION_SIZE][SECTION_SIZE]) {
-  Subchunk *const section = malloc(sizeof(*section));
+  Subchunk *const section = node_acquire(world->storage);
   if (!section)
     return NULL;
-  *section = (Subchunk){.storage = SECTION_EMPTY, .material = BLOCK_TYPE_EMPTY,
+  *section = (Subchunk){.pool = world->storage, .storage = SECTION_EMPTY, .material = BLOCK_TYPE_EMPTY,
       .dirty = 1, .meshCandidate = 1, .sectionY = sy};
 
   /* Stack staging avoids allocating a dense payload for homogeneous terrain. */
@@ -470,19 +569,19 @@ int world_set_block(World *const world, const int x, const int y, const int z, c
   if (insert && world->editCount == WORLD_EDIT_CAPACITY) return 0;
   /* Reserve the whole arena once, without publishing ownership on failure. */
   VoxelEdit *const arena = insert && !world->edits ?
-      malloc(WORLD_EDIT_CAPACITY * sizeof(*arena)) : NULL;
+      storage_alloc(STORAGE_WORLD, WORLD_EDIT_CAPACITY * sizeof(*arena)) : NULL;
   if (insert && !world->edits && !arena) return 0;
 
   /* Prepare writable storage before linking a new section into the world. */
   Subchunk *const section = missing ?
       (world->proceduralTerrain && !chunk->terrainReady ?
-       terrain_section(world, cx, sy, cz, NULL) : calloc(1, sizeof(*section))) : *slot;
-  if (!section) { free(arena); return 0; }
+       terrain_section(world, cx, sy, cz, NULL) : empty_section(world)) : *slot;
+  if (!section) { storage_free(STORAGE_WORLD, arena, WORLD_EDIT_CAPACITY * sizeof(*arena)); return 0; }
   if (missing && section->storage == SECTION_EMPTY) section->material = BLOCK_TYPE_EMPTY;
   const BlockType old = section_block(section, index);
   if (!section_expand(section)) {
     if (missing) section_destroy(section);
-    free(arena);
+    storage_free(STORAGE_WORLD, arena, WORLD_EDIT_CAPACITY * sizeof(*arena));
     return 0;
   }
   if (missing) {
@@ -554,13 +653,13 @@ float world_surface_height(const World *const world, const float x, const float 
     return NAN;
   const float vx = (x - world->origin.x) / world->blockSize;
   const float vz = (z - world->origin.z) / world->blockSize;
-  if (vx < world->minX || vx > world->minX + world->blocksPerSide || vz < world->minZ ||
-      vz > world->minZ + world->blocksPerSide)
+  if (vx < (float)world->minX || vx > (float)(world->minX + world->blocksPerSide) || vz < (float)world->minZ ||
+      vz > (float)(world->minZ + world->blocksPerSide))
     return NAN;
-  const int ix = vx == world->minX + world->blocksPerSide
+  const int ix = vx == (float)(world->minX + world->blocksPerSide)
                ? world->minX + world->blocksPerSide - 1
                : (int)floorf(vx);
-  const int iz = vz == world->minZ + world->blocksPerSide
+  const int iz = vz == (float)(world->minZ + world->blocksPerSide)
                ? world->minZ + world->blocksPerSide - 1
                : (int)floorf(vz);
   const Chunk *const chunk = find_chunk(world, voxel_section_coord(ix), voxel_section_coord(iz));
@@ -598,13 +697,13 @@ float world_surface_height(const World *const world, const float x, const float 
         break;
       }
   }
-  return found ? world->origin.y + top * world->blockSize : NAN;
+  return found ? world->origin.y + (float)top * world->blockSize : NAN;
 }
 
 void section_mesh_destroy(SectionMesh *const mesh) {
   if (!mesh)
     return;
-  free(mesh->vertices);
+  storage_free(STORAGE_MESH, mesh->vertices, mesh->vertexCount * sizeof(*mesh->vertices));
   *mesh = (SectionMesh){0};
 }
 
@@ -640,7 +739,9 @@ static BlockType mesh_boundary_block(const World *const world, MeshNeighbors *co
   return terrain_column_block(cache->columns[x + 1][z + 1], wy);
 }
 
-int section_mesh_build(const World *const world, const int cx, const int sy, const int cz, SectionMesh *const mesh) {
+static int mesh_build(const World *const world, const int cx, const int sy, const int cz,
+                      SectionMesh *const mesh, SurfaceVertex *const scratch,
+                      const size_t capacity, const int borrowed) {
   const Chunk *const chunk = find_chunk(world, cx, cz);
   if (!mesh || !chunk || sy < voxel_section_coord(WORLD_COORD_MIN) ||
       sy > voxel_section_coord(WORLD_COORD_MAX))
@@ -663,7 +764,7 @@ int section_mesh_build(const World *const world, const int cx, const int sy, con
     if (neighbor && neighbor->edited) editedNeighbor = 1;
   }
   if (!section || section->voxelCount == 0 || (!section->meshCandidate && !editedNeighbor)) {
-    section_mesh_destroy(mesh);
+    if (!borrowed) section_mesh_destroy(mesh);
     *mesh = result;
     section_destroy(temporary);
     return 1;
@@ -716,9 +817,14 @@ int section_mesh_build(const World *const world, const int cx, const int sy, con
     result.typeVertexCount[t] = counts[t];
     result.vertexCount += counts[t];
   }
-  /* A section has at most 4096*6*6 vertices. */
-  result.vertices = result.vertexCount
-                        ? malloc(result.vertexCount * sizeof(*result.vertices)) : NULL;
+  if (result.vertexCount > SECTION_MESH_MAX_VERTICES ||
+      result.vertexCount > SIZE_MAX / sizeof(*result.vertices) ||
+      (borrowed && (result.vertexCount > capacity || (result.vertexCount && !scratch)))) {
+    section_destroy(temporary);
+    return 0;
+  }
+  result.vertices = result.vertexCount ? (borrowed ? scratch :
+      storage_alloc(STORAGE_MESH, result.vertexCount * sizeof(*result.vertices))) : NULL;
   if (result.vertexCount && !result.vertices) {
     section_destroy(temporary);
     return 0;
@@ -741,15 +847,25 @@ int section_mesh_build(const World *const world, const int cx, const int sy, con
           for (int v = 0; v < 6; v++) {
             const int *const corner = corners[d][order[v]];
             result.vertices[cursors[type]++] =
-                (SurfaceVertex){world->origin.x + (wx + corner[0]) * world->blockSize,
-                                world->origin.y + (wy + corner[1]) * world->blockSize,
-                                world->origin.z + (wz + corner[2]) * world->blockSize};
+                (SurfaceVertex){world->origin.x + (float)(wx + corner[0]) * world->blockSize,
+                                world->origin.y + (float)(wy + corner[1]) * world->blockSize,
+                                world->origin.z + (float)(wz + corner[2]) * world->blockSize};
           }
         }
       }
 
-  section_mesh_destroy(mesh);
+  if (!borrowed) section_mesh_destroy(mesh);
   *mesh = result;
   section_destroy(temporary);
   return 1;
+}
+
+int section_mesh_build(const World *const world, const int cx, const int sy, const int cz,
+                       SectionMesh *const mesh) {
+  return mesh_build(world, cx, sy, cz, mesh, NULL, 0, 0);
+}
+int section_mesh_build_scratch(const World *const world, const int cx, const int sy, const int cz,
+                               SurfaceVertex *const scratch, const size_t capacity,
+                               SectionMesh *const output) {
+  return mesh_build(world, cx, sy, cz, output, scratch, capacity, 1);
 }

@@ -36,7 +36,10 @@ typedef struct {
   /* Owns GPU resources for one bounded world layout. Destroy while its GL
      context is current, before destroying the window/context. */
   SectionGpuMesh *meshes;
-  size_t meshCount;
+  size_t meshCount, meshCapacity;
+  SectionGpuMesh *staging;
+  size_t stagingCapacity;
+  SurfaceVertex *meshScratch; /* Borrowed through upload; never crosses frames. */
   size_t *visibleMeshes;
   size_t visibleMeshCount, visibleMeshCapacity;
   /* Final camera-visible sections; independent of streaming residency. */

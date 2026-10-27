@@ -1,7 +1,7 @@
 # Review follow-up implementation plans
 
 Created 27 October 2026 after comparing [the review](../../review.md) with the
-current implementation. Plans 01 and 03 are now implemented and validated;
+current implementation. Plans 01, 03 and 04 are now implemented and validated;
 their completion evidence and fresh measurements are linked there.
 
 ## Scope and order
@@ -11,7 +11,7 @@ their completion evidence and fresh measurements are linked there.
 | 1 | [Streaming measurements and frame work budget](01-streaming-budget.md) | Implemented: bounded scheduled work; measurements and completion evidence in the plan. |
 | 2 | [Edit overlay and independent terrain eviction](02-edit-overlay.md) | Preserve modifications without pinning generated columns. |
 | Alongside 1–2 | [Renderer verification](03-renderer-verification.md) | Verified on accelerated OpenGL; ownership, depth/submission and staged convergence evidence in the audit. |
-| Measure alongside 1; implement after contracts settle | [Allocation accounting and reusable storage](04-allocation-storage.md) | Size pools and scratch storage from measured demand. |
+| Measure alongside 1; implement after contracts settle | [Allocation accounting and reusable storage](04-allocation-storage.md) | Implemented: measured churn, separate pools, upload scratch and reusable renderer capacity; evidence in the plan. |
 | Deferred | [Section-local and compact vertices](05-local-vertices.md) | Adopt only for measured memory, rendering or precision benefits. |
 | Deferred | [Direct section indexing](06-section-indexing.md) | Reconsider only if lookup costs become material. |
 | Deferred | [Validation boundaries](07-validation-boundaries.md) | Consolidate only demonstrated redundant hot-path checks. |

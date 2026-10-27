@@ -140,7 +140,7 @@ void performance_report(Application *const application, const char *const phase)
       .editedChunks = application->editedChunks,
       .dirtySections = application->dirtySections,
       .neighborhoodSlots = application->renderer.visibleMeshCount,
-      .worldMetadataBytes = sizeof(World) + world->chunkCount * sizeof(Chunk) +
+      .worldMetadataBytes = sizeof(World) + sizeof(application->streaming) + world->chunkCount * sizeof(Chunk) +
           (world->edits ? WORLD_EDIT_CAPACITY * sizeof(VoxelEdit) : 0),
       .rendererMetadataBytes = sizeof(Renderer) + application->renderer.meshCount * sizeof(SectionGpuMesh),
       .residentVoxelBytes = application->residentVoxelBytes,

@@ -23,10 +23,11 @@ int main(void) {
   storage_accounting(1);
   World world = {0};
   Renderer renderer = {0};
+  WorldStreaming rendererStreaming = {0};
   const double start = glfwGetTime();
   assert(create_terrain_streamed(&world, PLATFORM_BLOCKS_PER_SIDE, (Vec3){0}, 1.0f, 1260202551));
 #ifndef STORAGE_BASELINE
-  assert(renderer_storage_limits(&world));
+  assert(world_stream_storage_limits(&world, MAX_VIEW_DISTANCE));
 #endif
   assert(renderer_init(&renderer));
   printf("seed=1260202551 compiler=%s GL=%s init_ms=%.6f\n", __VERSION__,
@@ -53,10 +54,10 @@ int main(void) {
       const double t = glfwGetTime();
       if (scenario == 7) {
         storage_reject = reject_mesh;
-        assert(!renderer_sync_view(&renderer, &world, &player));
+        assert(!application_stream_view(&rendererStreaming, &renderer, &world, &player, NULL));
         storage_reject = NULL;
       }
-      assert(renderer_sync_view(&renderer, &world, &player));
+      assert(application_stream_view(&rendererStreaming, &renderer, &world, &player, NULL));
       /* Exercise retained draw-index capacity without camera-dependent culling. */
       const float mvp[16] = {0};
       assert(renderer_collect_draw_meshes(&renderer, player.position, renderer.viewDistance, mvp));

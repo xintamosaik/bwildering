@@ -1879,14 +1879,21 @@ static void test_section_storage(void) {
   World world = {0}, dense = {0};
   assert(create_terrain_region(&world, -17, -17, 49, (Vec3){2, 3, 4}, 1, 1));
   assert(create_terrain_region(&dense, -17, -17, 49, (Vec3){2, 3, 4}, 1, 1));
+  /* Independent dense reference storage is borrowed, never inserted into the
+     world's payload pool. Bounds -17..31 span four chunks on each axis. */
+  enum { DENSE_REFERENCE_CAPACITY = 4 * 4 * WORLD_SECTION_COUNT };
+  static uint8_t forcedBlocks[DENSE_REFERENCE_CAPACITY][SECTION_VOLUME];
+  Subchunk *forcedSections[DENSE_REFERENCE_CAPACITY];
+  size_t forcedCount = 0;
   size_t uniform = 0, mixed = 0;
   for (size_t c = 0; c < dense.chunkCount; c++) {
     for (Subchunk *s = dense.chunks[c].sections; s; s = s->next) {
       if (s->storage == SECTION_DENSE) { mixed++; continue; }
       assert(!s->blocks);
       uniform += s->storage == SECTION_UNIFORM;
-      s->blocks = malloc(SECTION_VOLUME);
-      assert(s->blocks);
+      assert(forcedCount < DENSE_REFERENCE_CAPACITY);
+      forcedSections[forcedCount] = s;
+      s->blocks = forcedBlocks[forcedCount++];
       memset(s->blocks, s->storage == SECTION_EMPTY ? BLOCK_TYPE_EMPTY : s->material,
              SECTION_VOLUME);
       s->storage = SECTION_DENSE;
@@ -1909,6 +1916,9 @@ static void test_section_storage(void) {
       section_mesh_destroy(&b);
     }
   }
+  /* Restore nonownership before pooled teardown; borrowed rows are not payload
+     slots and must not be returned to the world's free list. */
+  for (size_t i = 0; i < forcedCount; i++) forcedSections[i]->blocks = NULL;
   world_destroy(&world);
   world_destroy(&dense);
 

@@ -225,6 +225,7 @@ int main(void) {
          __VERSION__, (const char *)glGetString(GL_RENDERER), (const char *)glGetString(GL_VERSION), WORLD_SEED);
   for (int streamed = 0; streamed < 2; streamed++) {
     World world = {0}; Renderer r = {0};
+    WorldStreaming rStreaming = {0};
     assert(renderer_init(&r));
     r.framebufferWidth = 640; r.framebufferHeight = 480;
     if (streamed) assert(create_terrain_streamed(&world, 4608, (Vec3){0}, 1, WORLD_SEED));
@@ -235,7 +236,7 @@ int main(void) {
     const float distances[] = {25, 100, 300};
     for (size_t i = 0; i < 3; i++) {
       r.viewDistance = distances[i];
-      assert(renderer_sync_view(&r, &world, &player));
+      assert(application_stream_view(&rStreaming, &r, &world, &player, NULL));
       compare(window, &r, &player, streamed ? "streamed-4608" : "ordinary-192");
     }
     renderer_destroy(&r); world_destroy(&world);

@@ -28,11 +28,12 @@ static void update_look(GameplayAim *const aim, MouseInput *const input) {
 
 #pragma region Application
 void application_shutdown(Application *const application) {
-  game_destroy(&application->game);
   if (application->rendererInitialized) {
     renderer_destroy(&application->renderer);
     application->rendererInitialized = 0;
   }
+  application->streaming = (WorldStreaming){0};
+  game_destroy(&application->game);
   if (application->window != NULL) {
     glfwDestroyWindow(application->window);
     application->window = NULL;
@@ -132,7 +133,7 @@ int application_init(Application *const application) {
   const double worldStart = perf_clock(&application->performance);
   const GameConfig config = {worldSide, CENTER, BLOCK_SIZE, WORLD_SEED};
   if (!game_init(&application->game, config) ||
-      !renderer_storage_limits(game_streaming_world(&application->game))) {
+      !world_stream_storage_limits(game_streaming_world(&application->game), MAX_VIEW_DISTANCE)) {
     fprintf(stderr, "Failed to create voxel terrain\n");
     application_shutdown(application);
     return 0;
@@ -142,7 +143,7 @@ int application_init(Application *const application) {
   application->pendingAim = game_player(&application->game)->aim;
 
   const double syncStart = perf_clock(&application->performance);
-  if (!renderer_sync_view(&application->renderer, game_streaming_world(&application->game), game_player(&application->game))) {
+  if (!application_stream_view(&application->streaming, &application->renderer, game_streaming_world(&application->game), game_player(&application->game), NULL)) {
     fprintf(stderr,"Failed to build or upload section meshes\n");
     application_shutdown(application);
     return 0;
@@ -339,7 +340,7 @@ int application_frame(Application *const a) {
   }
 
   start = perf_clock(p);
-  const StreamResult result = renderer_step_view(&a->renderer, game_streaming_world(&a->game), game_player(&a->game));
+  const StreamResult result = application_stream_step(&a->streaming, &a->renderer, game_streaming_world(&a->game), game_player(&a->game));
   if (p->enabled) p->frame.sync = perf_clock(p) - start;
 
   application_render(a);
@@ -376,3 +377,24 @@ int application_run(void) {
   return EXIT_SUCCESS;
 }
 #pragma endregion
+
+/* View distance requests the local cache; server interest can supply a different
+   region directly to world_stream_update without depending on the renderer. */
+StreamResult application_stream_view(WorldStreaming *const stream, Renderer *const renderer,
+                                     World *const world, const Player *const player,
+                                     const StreamBudget *const budget) {
+  StreamRegion region = {0};
+  const float requested = renderer_view_distance(renderer);
+  const float radius = isfinite(requested) && requested > 0.0f ?
+      fminf(requested, MAX_VIEW_DISTANCE) : DEFAULT_VIEW_DISTANCE;
+  if (world->proceduralTerrain &&
+      !world_stream_region(world, player_eye_position(player), radius, &region)) return STREAM_FAILED;
+  const StreamConsumer consumer = renderer_stream_consumer(renderer);
+  return world_stream_update(stream, world, region, budget, &consumer, renderer->performance);
+}
+
+StreamResult application_stream_step(WorldStreaming *const stream, Renderer *const renderer,
+                                     World *const world, const Player *const player) {
+  const StreamBudget budget = {.seconds = 0.002, .operations = 128, .bytes = 2 * 1024 * 1024};
+  return application_stream_view(stream, renderer, world, player, &budget);
+}

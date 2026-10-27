@@ -9,20 +9,20 @@ static void capture_sync_cost(Application *a) {
   a->performance.enabled = 0;
   a->renderer.viewDistance = 100;
   a->game.player.position = (Vec3){0.5f, 410, 0.5f};
-  assert(renderer_sync_view(&a->renderer, &a->game.world, &a->game.player));
+  assert(application_stream_view(&a->streaming, &a->renderer, &a->game.world, &a->game.player, NULL));
   glFinish();
   printf("SYNC seed=%u side=%d distance=100 samples=5 frames=1000 GL=%s\n",
          WORLD_SEED, a->game.world.blocksPerSide, (const char *)glGetString(GL_RENDERER));
   for (int sample = 0; sample < 5; sample++) {
     double start = glfwGetTime();
     for (int frame = 0; frame < 1000; frame++)
-      assert(renderer_sync_view(&a->renderer, &a->game.world, &a->game.player));
+      assert(application_stream_view(&a->streaming, &a->renderer, &a->game.world, &a->game.player, NULL));
     printf("SYNC stationary_sample=%d average_ms=%.6f\n", sample, glfwGetTime() - start);
   }
   double start = glfwGetTime();
   for (int frame = 0; frame < 120; frame++) {
     a->game.player.position.x = 0.5f + (float)frame;
-    assert(renderer_sync_view(&a->renderer, &a->game.world, &a->game.player));
+    assert(application_stream_view(&a->streaming, &a->renderer, &a->game.world, &a->game.player, NULL));
   }
   printf("SYNC walking_frames=120 stride=1 average_ms=%.6f\n",
          (glfwGetTime() - start)*1000/120);
@@ -50,12 +50,12 @@ static void capture_frames(Application *const a, const int baseline) {
     a->game.player.position = (Vec3){-16.5f, 410.0f, -16.5f};
     a->game.player.velocityY = 0.0f;
     a->game.player.grounded = 0;
-    assert(renderer_sync_view(&a->renderer, &a->game.world, &a->game.player));
+    assert(application_stream_view(&a->streaming, &a->renderer, &a->game.world, &a->game.player, NULL));
     glFinish();
     for (int scenario = 0; scenario < 7; scenario++) {
       double sync[CAPTURE_FRAMES], frame[CAPTURE_FRAMES], submission[CAPTURE_FRAMES];
       FrameWork total = {0};
-      a->renderer.peakPending = 0;
+      a->streaming.peakPending = 0;
       size_t peakPending = 0, peakChunks = 0, peakSections = 0, peakGpu = 0;
       double atomicMax = 0;
       size_t peakQueue = 0, peakCpu = 0, loadingFrames = 0;
@@ -81,8 +81,8 @@ static void capture_frames(Application *const a, const int baseline) {
             .run = scenario == 2}, 1.0f / 60.0f, &a->game.world);
         const double start = glfwGetTime();
         const StreamResult result = baseline ?
-            renderer_sync_view_work(&a->renderer, &a->game.world, &a->game.player, NULL) :
-            renderer_step_view(&a->renderer, &a->game.world, &a->game.player);
+            application_stream_view(&a->streaming, &a->renderer, &a->game.world, &a->game.player, NULL) :
+            application_stream_step(&a->streaming, &a->renderer, &a->game.world, &a->game.player);
         assert(result != STREAM_FAILED);
         if (waiting && result == STREAM_COMPLETE) {
           loadingFrames = (size_t)(f + 1 - requestFrame);
@@ -106,17 +106,17 @@ static void capture_frames(Application *const a, const int baseline) {
         total.rebuilds += work->rebuilds;
         total.materializedChunks += work->materializedChunks;
         if (work->atomicMax > atomicMax) atomicMax = work->atomicMax;
-        if (a->renderer.pendingWork > peakPending) peakPending = a->renderer.pendingWork;
+        if (a->streaming.pendingWork > peakPending) peakPending = a->streaming.pendingWork;
         performance_snapshot(a);
-        if (a->renderer.peakPending > peakQueue) peakQueue = a->renderer.peakPending;
+        if (a->streaming.peakPending > peakQueue) peakQueue = a->streaming.peakPending;
         const size_t bound = (size_t)ceilf(2.0f * a->renderer.viewDistance / SECTION_SIZE) + 3;
         assert(a->residentChunks <= bound * bound);
         assert(a->game.world.sectionCount <= bound * bound * WORLD_SECTION_COUNT);
-        assert(a->renderer.pendingCount <= STREAM_TASK_CAPACITY);
+        assert(a->streaming.pendingCount <= STREAM_TASK_CAPACITY);
         if (scenario == 0) assert(!work->operations && !work->rebuilds && !work->uploadCalls);
         const size_t owned = sizeof(a->game.world) + a->game.world.chunkCount * sizeof(Chunk) +
             (a->game.world.edits ? WORLD_EDIT_CAPACITY * sizeof(VoxelEdit) : 0) + a->residentVoxelBytes +
-            sizeof(a->renderer) + a->renderer.meshCount * sizeof(SectionGpuMesh) +
+            sizeof(a->renderer) + sizeof(a->streaming) + a->renderer.meshCount * sizeof(SectionGpuMesh) +
             (a->renderer.visibleMeshCapacity + a->renderer.drawMeshCapacity) * sizeof(size_t);
         if (owned > peakCpu) peakCpu = owned;
         if (a->residentChunks > peakChunks) peakChunks = a->residentChunks;
@@ -128,7 +128,7 @@ static void capture_frames(Application *const a, const int baseline) {
         StreamResult result;
         do {
           a->performance.frame = (FrameWork){0};
-          result = renderer_step_view(&a->renderer, &a->game.world, &a->game.player);
+          result = application_stream_step(&a->streaming, &a->renderer, &a->game.world, &a->game.player);
           assert(result != STREAM_FAILED);
           if (a->performance.frame.atomicMax > atomicMax) atomicMax = a->performance.frame.atomicMax;
           if (result != STREAM_COMPLETE) assert(++convergence < 100000);
@@ -202,7 +202,7 @@ int main(int argc, char **argv) {
     a.game.player.position.y = world_surface_height(&a.game.world, a.game.player.position.x, 0.5f) + 8;
     a.performance.frame = (FrameWork){0};
     double start = glfwGetTime();
-    assert(renderer_sync_view(&a.renderer, &a.game.world, &a.game.player));
+    assert(application_stream_view(&a.streaming, &a.renderer, &a.game.world, &a.game.player, NULL));
     double sync = glfwGetTime() - start;
     start = glfwGetTime();
     glFinish();
@@ -232,7 +232,7 @@ int main(int argc, char **argv) {
     assert(getrusage(RUSAGE_SELF, &usage) == 0);
     size_t owned = sizeof(a.game.world) + a.game.world.chunkCount * sizeof(Chunk) +
         (a.game.world.edits ? WORLD_EDIT_CAPACITY * sizeof(VoxelEdit) : 0) +
-        a.residentVoxelBytes + sizeof(a.renderer) +
+        a.residentVoxelBytes + sizeof(a.renderer) + sizeof(a.streaming) +
         a.renderer.meshCount * sizeof(SectionGpuMesh) +
         a.renderer.visibleMeshCapacity * sizeof(size_t) + a.renderer.drawMeshCapacity * sizeof(size_t);
     FrameWork *f = &a.performance.frame;

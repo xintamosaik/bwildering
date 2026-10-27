@@ -1,11 +1,22 @@
 # Chunk residency
 
-`renderer_step_view()` owns streamed gameplay residency and runs before drawing.
-`renderer_sync_view()` retains a synchronous drain for startup and fixtures.
-It uses the player's eye X/Z, a square radius equal to view distance (maximum
-300 world units), and one extra chunk on each side. Bounds are clipped to the
-world. This is deliberately independent of camera orientation and vertical
-frustum culling. Non-streamed fixture worlds use `renderer_sync_world()`.
+`application_stream_step()` supplies the local visual cache policy before drawing:
+player eye X/Z, a square radius equal to view distance (maximum 300 world units),
+and one extra chunk on each side. `world_stream_region()` clips these bounds to
+the world. This is independent of camera orientation and vertical frustum culling.
+`world_stream_update()` owns CPU residency and the bounded task queue; it requires
+neither a renderer nor a GL context. Application embeds the coordinator beside
+Game and Renderer. A NULL budget drains synchronously for startup and fixtures;
+a NULL cache consumer schedules CPU materialization alone and preserves dirty
+sections for a later renderer. Nonprocedural fixtures retain full mesh sync.
+
+The renderer exposes a cache consumer for GPU retirement, metadata preparation,
+and transactional section build/upload. Departure retires GPU resources, then
+the coordinator cancels departing identities and recycles CPU columns before
+preparing replacement metadata. Failed metadata allocation cannot prevent that
+retirement. The shared work allowance and synchronous drain preserve the original
+scheduler; there is no second CPU or GPU budget. See the
+[stage 5 verification](plans/application-architecture/05-world-streaming.md).
 
 The baseline is the world bounds, transform and seed. Reads of missing terrain
 synthesize that baseline without allocating voxels. `world_materialize_chunk()`
@@ -169,7 +180,7 @@ were 77.704/201.592 ms, consistent with cold generation dominating that scenario
 
 # Scheduled frame work (27 October 2026)
 
-Gameplay collects residency separately from execution. A renderer-owned array
+Gameplay collects residency separately from execution. A coordinator-owned array
 holds at most 1,681 tasks (`41*41`, the conservative maximum column count at
 radius 300 and block size 1). Tasks store signed chunk/section coordinates,
 section revision and admission frame; they never borrow section pointers or

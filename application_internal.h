@@ -20,6 +20,7 @@ struct Application {
   GameplayAim pendingAim; /* Responsive view aim; committed only by game_step. */
   InputState input;
   Renderer renderer;
+  WorldStreaming streaming;
   Performance performance;
   size_t residentChunks, editedChunks, dirtySections, gpuBytes, residentVoxelBytes;
   double worldMetadataSeconds, startupSeconds;
@@ -39,6 +40,13 @@ struct Application {
   int glfwInitialized;
   int rendererInitialized;
 };
+
+/* Local visual residency policy and shared work allowance. */
+StreamResult application_stream_view(WorldStreaming *stream, Renderer *renderer,
+                                     World *world, const Player *player,
+                                     const StreamBudget *budget);
+StreamResult application_stream_step(WorldStreaming *stream, Renderer *renderer,
+                                     World *world, const Player *player);
 
 /* Private orchestration boundary for application fixtures and captures. */
 int application_init(Application *application);

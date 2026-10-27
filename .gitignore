@@ -26,3 +26,6 @@ local_vertex_capture
 
 /test_game
 /test_game_sanitize
+
+/test_world_streaming
+/test_world_streaming_sanitize

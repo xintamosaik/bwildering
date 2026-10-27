@@ -207,7 +207,7 @@ BlockType world_get_block(const World *world, int x, int y, int z);
    before rendering catches up. Identical writes leave dirty flags unchanged.
    Edits dirty this section and existing sections sharing an affected face;
    missing neighbours are not allocated. Last-voxel removal retains an empty
-   section so renderer_sync_world() can retire its GPU resources.
+   section so the cache consumer can retire its GPU resources.
    GPU replacement is transactional per section during renderer synchronization:
    failure retains that section's old mesh and dirty flag for retry, but earlier
    sections in the pass may already have updated. CPU edits are not rolled back. */

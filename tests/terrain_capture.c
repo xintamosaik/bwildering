@@ -21,6 +21,7 @@ int main(void) {
   glViewport(0, 0, 960, 640);
   World world = {0};
   Renderer r = {0};
+  WorldStreaming rStreaming = {0};
   assert(create_terrain_streamed(&world, 6144, (Vec3){0}, 1, 1));
   assert(renderer_init(&r));
   r.framebufferWidth = 960;
@@ -47,7 +48,7 @@ int main(void) {
     /* Steeper terrain can rise above the target at the camera's offset. */
     p.position.y = fmaxf(p.position.y, world_surface_height(&world, p.position.x, p.position.z) + 12);
     p.aim.front = vec3_normalize((Vec3){0, (float)column.height - (p.position.y + p.eyeHeight), -32});
-    assert(renderer_sync_view(&r, &world, &p));
+    assert(application_stream_view(&rStreaming, &r, &world, &p, NULL));
     glClearColor(0.62f, 0.72f, 0.80f, 1);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     render_world(&r, player_committed_view(&p));

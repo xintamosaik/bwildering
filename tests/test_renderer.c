@@ -380,7 +380,7 @@ static void test_unculled_transforms_seams_and_destruction(void) {
     /* A current program remains flagged for deletion until it is unbound. */
     glUseProgram(0);
     assert(!glIsProgram(program) && !glIsVertexArray(textVao) && !glIsBuffer(textVbo));
-    assert(!renderer.meshes && !renderer.visibleMeshes && !renderer.drawMeshes && !renderer.pendingCount);
+    assert(!renderer.meshes && !renderer.visibleMeshes && !renderer.drawMeshes);
     renderer_destroy(&renderer); /* Idempotent while the context remains current. */
     assert(glGetError() == GL_NO_ERROR);
   }
@@ -389,8 +389,10 @@ static void test_unculled_transforms_seams_and_destruction(void) {
 
 static void test_rendered_pending_edits_and_cancellation(void) {
   Renderer renderer = {0};
+  WorldStreaming rendererStreaming = {0};
   World world = {0}, referenceWorld = {0};
   Renderer reference = {0};
+  WorldStreaming referenceStreaming = {0};
   Player player = {.position = {-0.5f, 400.5f, 0.0f}, .eyeHeight = 0.0f,
       .aim = {.front = {0, 0, -1}}};
   const StreamBudget paused = {.operations = 0, .bytes = SIZE_MAX};
@@ -400,7 +402,7 @@ static void test_rendered_pending_edits_and_cancellation(void) {
   assert(create_terrain_streamed(&world, 256, (Vec3){0}, 1.0f, WORLD_SEED));
   assert(world_set_block(&world, -1, 400, -16, BLOCK_TYPE_STONE));
   assert(world_set_block(&world, 0, 400, -16, BLOCK_TYPE_SNOW));
-  assert(renderer_sync_view(&renderer, &world, &player));
+  assert(application_stream_view(&rendererStreaming, &renderer, &world, &player, NULL));
   assert_unculled_parity(&renderer, &player, 1);
   static float oldDepth[AUDIT_WIDTH * AUDIT_HEIGHT], pendingDepth[AUDIT_WIDTH * AUDIT_HEIGHT];
   glReadPixels(0, 0, AUDIT_WIDTH, AUDIT_HEIGHT, GL_DEPTH_COMPONENT, GL_FLOAT, oldDepth);
@@ -408,7 +410,7 @@ static void test_rendered_pending_edits_and_cancellation(void) {
   SectionMesh oldCpu = {0};
   assert(section_mesh_build(&world, -1, 25, -1, &oldCpu));
   assert(world_set_block(&world, -1, 400, -16, BLOCK_TYPE_EMPTY));
-  assert(renderer_sync_view_work(&renderer, &world, &player, &paused) == STREAM_DEFERRED);
+  assert(application_stream_view(&rendererStreaming, &renderer, &world, &player, &paused) == STREAM_DEFERRED);
   assert(world_get_block(&world, -1, 400, -16) == BLOCK_TYPE_EMPTY);
   assert_gpu_geometry(gpu_section(&renderer, -1, 25, -1), &oldCpu);
   assert_unculled_parity(&renderer, &player, 1);
@@ -419,14 +421,14 @@ static void test_rendered_pending_edits_and_cancellation(void) {
   /* Fast departure cancels pending identities and deletes the old mesh before
      any new upload can reuse its names. Rendering submits no retired object. */
   player.position.x = 10000.0f;
-  assert(renderer_sync_view_work(&renderer, &world, &player, &paused) == STREAM_COMPLETE);
-  assert(!renderer.pendingCount && !glIsVertexArray(old.vao) && !glIsBuffer(old.vbo));
+  assert(application_stream_view(&rendererStreaming, &renderer, &world, &player, &paused) == STREAM_COMPLETE);
+  assert(!rendererStreaming.pendingCount && !glIsVertexArray(old.vao) && !glIsBuffer(old.vbo));
   assert_unculled_parity(&renderer, &player, 0);
   assert(!auditRangeCount);
   player.position.x = -0.5f;
   renderer.viewDistance = 100.0f;
   size_t passes = 0;
-  while (renderer_sync_view_work(&renderer, &world, &player, &batch) != STREAM_COMPLETE)
+  while (application_stream_view(&rendererStreaming, &renderer, &world, &player, &batch) != STREAM_COMPLETE)
     assert(++passes < 1000);
   /* Independent world, same edits: the synchronous drain is the convergence
      oracle, including driver-owned bytes and each material range. */
@@ -435,7 +437,7 @@ static void test_rendered_pending_edits_and_cancellation(void) {
   assert(world_set_block(&referenceWorld, 0, 400, -16, BLOCK_TYPE_SNOW));
   assert(renderer_init(&reference));
   reference.viewDistance = renderer.viewDistance;
-  assert(renderer_sync_view(&reference, &referenceWorld, &player));
+  assert(application_stream_view(&referenceStreaming, &reference, &referenceWorld, &player, NULL));
   assert(renderer.meshCount == reference.meshCount);
   for (size_t i = 0; i < reference.meshCount; i++) {
     const SectionGpuMesh *const expected = &reference.meshes[i];
@@ -604,6 +606,7 @@ static void test_view_distance_and_edits_change_rendered_geometry(void) {
 static void test_streamed_exploration_revisits_edited_terrain(void) {
   World world = {0};
   Renderer renderer = {0};
+  WorldStreaming rendererStreaming = {0};
   uint32_t seed = UINT32_C(0x4B1D2A37);
   assert(create_terrain_streamed(&world, 1024, (Vec3){0}, 1, seed));
   assert(renderer_init(&renderer));
@@ -613,11 +616,11 @@ static void test_streamed_exploration_revisits_edited_terrain(void) {
   int height = terrain_sample_column(seed, 0, 0).height;
   Player player = {.position = {0.5f, (float)height + 8.0f, 4.5f}, .eyeHeight = 1,
       .aim = {.front = {0, -0.8944272f, -0.4472136f}}};
-  assert(renderer_sync_view(&renderer, &world, &player));
+  assert(application_stream_view(&rendererStreaming, &renderer, &world, &player, NULL));
   DepthFrame before = capture_world(&renderer, &player);
   assert_terrain_visible(&before);
   assert(world_set_block(&world, 0, height, 0, BLOCK_TYPE_STONE));
-  assert(renderer_sync_view(&renderer, &world, &player));
+  assert(application_stream_view(&rendererStreaming, &renderer, &world, &player, NULL));
   DepthFrame edited = capture_world(&renderer, &player);
   assert_view_changed(&before, &edited);
   free(before.depth);
@@ -626,7 +629,7 @@ static void test_streamed_exploration_revisits_edited_terrain(void) {
     player.position.x = (float)(visit % 8 - 4) * 96.0f + 0.5f;
     player.position.z = (float)(visit / 8 - 4) * 96.0f + 4.5f;
     player.position.y = world_surface_height(&world, player.position.x, player.position.z) + 8;
-    assert(renderer_sync_view(&renderer, &world, &player));
+    assert(application_stream_view(&rendererStreaming, &renderer, &world, &player, NULL));
     DepthFrame explored = capture_world(&renderer, &player);
     assert_terrain_visible(&explored);
     free(explored.depth);
@@ -647,7 +650,7 @@ static void test_streamed_exploration_revisits_edited_terrain(void) {
     assert(world_get_block(&world, 0, height, 0) == BLOCK_TYPE_STONE);
   }
   player = originalView;
-  assert(renderer_sync_view(&renderer, &world, &player));
+  assert(application_stream_view(&rendererStreaming, &renderer, &world, &player, NULL));
   DepthFrame revisited = capture_world(&renderer, &player);
   assert(revisited.count == edited.count);
   for (size_t i = 0; i < edited.count; i++)
@@ -657,14 +660,14 @@ static void test_streamed_exploration_revisits_edited_terrain(void) {
   assert(world_get_block(&world, 0, height, 0) == BLOCK_TYPE_STONE);
   size_t narrowSections = world.sectionCount;
   renderer.viewDistance = 300;
-  assert(renderer_sync_view(&renderer, &world, &player));
+  assert(application_stream_view(&rendererStreaming, &renderer, &world, &player, NULL));
   size_t wideSections = world.sectionCount;
   assert(wideSections > narrowSections);
   DepthFrame wide = capture_world(&renderer, &player);
   assert_terrain_visible(&wide);
   free(wide.depth);
   renderer.viewDistance = 25;
-  assert(renderer_sync_view(&renderer, &world, &player));
+  assert(application_stream_view(&rendererStreaming, &renderer, &world, &player, NULL));
   assert(world.sectionCount < wideSections);
   assert(world.sectionCount <= renderer.visibleMeshCount + WORLD_SECTION_COUNT);
   assert(world_get_block(&world, 0, height, 0) == BLOCK_TYPE_STONE);
@@ -677,16 +680,17 @@ static void test_streamed_exploration_revisits_edited_terrain(void) {
 static void test_streamed_retirement_after_failed_sync(void) {
   World world = {0};
   Renderer renderer = {.viewDistance = 25};
+  WorldStreaming rendererStreaming = {0};
   Performance p = {.enabled = 1};
   renderer.performance = &p;
   assert(create_terrain_streamed(&world, 1024, (Vec3){0}, 1, WORLD_SEED));
   Player player = {.position = {0.5f, 410, 0.5f}, .eyeHeight = 1};
   metadata_allocations_before_failure = 0;
-  assert(!renderer_sync_view(&renderer, &world, &player));
+  assert(!application_stream_view(&rendererStreaming, &renderer, &world, &player, NULL));
   metadata_allocations_before_failure = -1;
   assert(world.sectionCount && !renderer.meshCount);
   player.position.x = 2000;
-  assert(renderer_sync_view(&renderer, &world, &player));
+  assert(application_stream_view(&rendererStreaming, &renderer, &world, &player, NULL));
   assert(!world.sectionCount); /* No GPU records existed to drive CPU eviction. */
   player.position.x = 0.5f;
   p.frame = (FrameWork){0};
@@ -694,7 +698,7 @@ static void test_streamed_retirement_after_failed_sync(void) {
   assert(world_materialize_chunk(&world, -24, 0));
   assert(world_section(&world, -24, WORLD_MIN_SECTION_Y, 0));
   assert(world_set_block(&world, 0, 400, 0, BLOCK_TYPE_STONE));
-  assert(renderer_sync_view(&renderer, &world, &player));
+  assert(application_stream_view(&rendererStreaming, &renderer, &world, &player, NULL));
   assert(!world_section(&world, -24, WORLD_MIN_SECTION_Y, 0));
   assert(p.frame.evictedChunks == 1);
   SectionGpuMesh *gpu = gpu_section(&renderer, 0, 25, 0);
@@ -715,7 +719,7 @@ static void test_streamed_retirement_after_failed_sync(void) {
   SectionGpuMesh *records = renderer.meshes;
   size_t recordCount = renderer.meshCount;
   metadata_allocations_before_failure = 0;
-  assert(!renderer_sync_view(&renderer, &world, &player));
+  assert(!application_stream_view(&rendererStreaming, &renderer, &world, &player, NULL));
   metadata_allocations_before_failure = -1;
   assert(renderer.meshes == records && renderer.meshCount == recordCount);
   assert(world_section(&world, 0, 26, 0)->dirty);
@@ -727,7 +731,7 @@ static void test_streamed_retirement_after_failed_sync(void) {
   renderer.visibleMeshCapacity = renderer.meshCount;
   size_t capacity = renderer.visibleMeshCapacity;
   visible_allocations_before_failure = 0;
-  assert(!renderer_sync_view(&renderer, &world, &player));
+  assert(!application_stream_view(&rendererStreaming, &renderer, &world, &player, NULL));
   visible_allocations_before_failure = -1;
   assert(renderer.visibleMeshes == visible && renderer.visibleMeshCapacity == capacity);
   assert(!renderer.visibleMeshCount && !renderer.drawMeshCount);
@@ -735,10 +739,10 @@ static void test_streamed_retirement_after_failed_sync(void) {
   gpu = gpu_section(&renderer, 0, 25, 0);
   assert(gpu->vbo == vbo && gpu->vao == vao);
   assert_gpu_geometry(gpu, &oldMesh);
-  assert(renderer_sync_view(&renderer, &world, &player));
+  assert(application_stream_view(&rendererStreaming, &renderer, &world, &player, NULL));
   assert(!world_section(&world, 0, 26, 0)->dirty);
   assert(world_set_block(&world, 0, 416, 0, BLOCK_TYPE_EMPTY));
-  assert(renderer_sync_view(&renderer, &world, &player));
+  assert(application_stream_view(&rendererStreaming, &renderer, &world, &player, NULL));
   gpu = gpu_section(&renderer, 0, 26, 0);
   assert(gpu && !gpu->vbo && !gpu->vao && !vertex_count(gpu));
   const Subchunk *marker = world_section(&world, 0, 26, 0);
@@ -753,7 +757,7 @@ static void test_streamed_retirement_after_failed_sync(void) {
   real_buffer_upload = __glewBufferData;
   uploads_before_failure = 0;
   __glewBufferData = fail_buffer_upload;
-  assert(!renderer_sync_view(&renderer, &world, &player));
+  assert(!application_stream_view(&rendererStreaming, &renderer, &world, &player, NULL));
   __glewBufferData = real_buffer_upload;
   assert(world_section(&world, 0, 25, 0)->dirty);
   gpu = gpu_section(&renderer, 0, 25, 0);
@@ -762,7 +766,7 @@ static void test_streamed_retirement_after_failed_sync(void) {
   assert(world_get_block(&world, 0, 400, 0) == BLOCK_TYPE_SNOW);
   /* Leave the whole world: no new uploads can reuse the deleted GL names. */
   player.position.x = 2000;
-  assert(renderer_sync_view(&renderer, &world, &player));
+  assert(application_stream_view(&rendererStreaming, &renderer, &world, &player, NULL));
   assert(!glIsBuffer(vbo) && !glIsVertexArray(vao));
   assert(!renderer.visibleMeshCount && !renderer.drawMeshCount);
   assert(p.frame.retiredMeshes && p.frame.retiredBytes);
@@ -775,7 +779,7 @@ static void test_streamed_retirement_after_failed_sync(void) {
   assert(!world_section(&world, 0, 26, 0));
   assert_empty_gpu_world(&renderer);
   player.position.x = 0.5f;
-  assert(renderer_sync_view(&renderer, &world, &player));
+  assert(application_stream_view(&rendererStreaming, &renderer, &world, &player, NULL));
   gpu = gpu_section(&renderer, 0, 25, 0);
   assert(gpu && gpu->vertexCount[BLOCK_TYPE_SNOW] == 36);
   assert(world_section(&world, 0, 25, 0) && !world_section(&world, 0, 25, 0)->dirty);
@@ -905,6 +909,7 @@ static void test_sparse_vertical_renderer(void) {
 static void test_stream_budget(void) {
   World world = {0};
   Renderer r = {0};
+  WorldStreaming rStreaming = {0};
   Performance perf = {.enabled = 1};
   Player player = {.position = {-0.5f, 410.0f, -0.5f}, .eyeHeight = 1.0f};
   assert(create_terrain_streamed(&world, 256, (Vec3){0}, 1.0f, WORLD_SEED));
@@ -914,18 +919,18 @@ static void test_stream_budget(void) {
   const StreamBudget paused = {.operations = 0, .bytes = SIZE_MAX};
   const StreamBudget one = {.operations = 1, .bytes = SIZE_MAX};
   const StreamBudget batch = {.operations = 256, .bytes = SIZE_MAX};
-  assert(renderer_sync_view_work(&r, &world, &player, &paused) == STREAM_DEFERRED);
-  assert(!world.sectionCount && r.pendingCount && r.pendingCount <= STREAM_TASK_CAPACITY);
+  assert(application_stream_view(&rStreaming, &r, &world, &player, &paused) == STREAM_DEFERRED);
+  assert(!world.sectionCount && rStreaming.pendingCount && rStreaming.pendingCount <= STREAM_TASK_CAPACITY);
   /* Nearest missing column wins, with signed identities and stable ties. */
-  const StreamTask first = r.pending[0];
+  const StreamTask first = rStreaming.pending[0];
   assert(first.materialize && first.x == -1 && first.z == -1);
   perf.frame = (FrameWork){0};
-  assert(renderer_sync_view_work(&r, &world, &player, &one) == STREAM_DEFERRED);
+  assert(application_stream_view(&rStreaming, &r, &world, &player, &one) == STREAM_DEFERRED);
   assert(perf.frame.operations == 1 && stream_chunk(&world, -1, -1)->terrainReady);
   /* A zero byte budget also prevents starting work. */
   const StreamBudget noBytes = {.operations = 256, .bytes = 0};
   perf.frame = (FrameWork){0};
-  assert(renderer_sync_view_work(&r, &world, &player, &noBytes) == STREAM_DEFERRED);
+  assert(application_stream_view(&rStreaming, &r, &world, &player, &noBytes) == STREAM_DEFERRED);
   assert(!perf.frame.operations);
   /* Materialize without meshing to exceed the bounded queue's capacity. */
   for (int x = world.minChunkX; x < world.minChunkX + world.chunksPerSide; x++)
@@ -936,18 +941,18 @@ static void test_stream_budget(void) {
           assert(world_set_block(&world, x * SECTION_SIZE + 8, 500 + j * SECTION_SIZE,
                                  z * SECTION_SIZE + 8, BLOCK_TYPE_STONE));
       }
-  assert(renderer_sync_view_work(&r, &world, &player, &paused) == STREAM_DEFERRED);
-  assert(r.pendingCount == STREAM_TASK_CAPACITY && r.pendingWork > r.pendingCount);
+  assert(application_stream_view(&rStreaming, &r, &world, &player, &paused) == STREAM_DEFERRED);
+  assert(rStreaming.pendingCount == STREAM_TASK_CAPACITY && rStreaming.pendingWork > rStreaming.pendingCount);
   /* A long-waiting distant task overtakes newer nearby work. */
-  const StreamTask aged = r.pending[r.pendingCount - 1];
-  for (size_t i = 0; i < r.pendingCount; i++) r.pending[i].born = 10000;
-  r.pending[r.pendingCount - 1].born = 0;
-  r.streamFrame = 10000;
-  assert(renderer_sync_view_work(&r, &world, &player, &paused) == STREAM_DEFERRED);
-  assert(!stream_identity_compare(&aged, &r.pending[0]));
+  const StreamTask aged = rStreaming.pending[rStreaming.pendingCount - 1];
+  for (size_t i = 0; i < rStreaming.pendingCount; i++) rStreaming.pending[i].born = 10000;
+  rStreaming.pending[rStreaming.pendingCount - 1].born = 0;
+  rStreaming.streamFrame = 10000;
+  assert(application_stream_view(&rStreaming, &r, &world, &player, &paused) == STREAM_DEFERRED);
+  assert(!stream_identity_compare(&aged, &rStreaming.pending[0]));
   size_t passes = 0;
-  while (renderer_sync_view_work(&r, &world, &player, &batch) != STREAM_COMPLETE) {
-    assert(r.pendingCount <= STREAM_TASK_CAPACITY && ++passes < 1000);
+  while (application_stream_view(&rStreaming, &r, &world, &player, &batch) != STREAM_COMPLETE) {
+    assert(rStreaming.pendingCount <= STREAM_TASK_CAPACITY && ++passes < 1000);
   }
   assert(passes > 1);
   for (size_t n = 0; n < r.visibleMeshCount; n++) {
@@ -958,23 +963,23 @@ static void test_stream_budget(void) {
     section_mesh_destroy(&cpu);
   }
   perf.frame = (FrameWork){0};
-  assert(renderer_sync_view_work(&r, &world, &player, &one) == STREAM_COMPLETE);
+  assert(application_stream_view(&rStreaming, &r, &world, &player, &one) == STREAM_COMPLETE);
   assert(!perf.frame.operations && !perf.frame.uploadCalls && !perf.frame.rebuilds);
 
   /* An edit is authoritative immediately; queued revisions refresh on retry. */
   assert(world_set_block(&world, -1, 410, -1, BLOCK_TYPE_STONE));
-  assert(renderer_sync_view_work(&r, &world, &player, &paused) == STREAM_DEFERRED);
+  assert(application_stream_view(&rStreaming, &r, &world, &player, &paused) == STREAM_DEFERRED);
   const uint64_t revision = world_section(&world, -1, voxel_section_coord(410), -1)->revision;
   assert(world_set_block(&world, -1, 410, -1, BLOCK_TYPE_SNOW));
   assert(world_section(&world, -1, voxel_section_coord(410), -1)->revision > revision);
   assert(world_get_block(&world, -1, 410, -1) == BLOCK_TYPE_SNOW);
-  while (renderer_sync_view_work(&r, &world, &player, &batch) != STREAM_COMPLETE) {}
+  while (application_stream_view(&rStreaming, &r, &world, &player, &batch) != STREAM_COMPLETE) {}
   SectionGpuMesh *mesh = gpu_section(&r, -1, voxel_section_coord(410), -1);
   assert(mesh && mesh->vertexCount[BLOCK_TYPE_SNOW] == 36);
   const GLuint oldVbo = mesh->vbo;
   assert(world_set_block(&world, -1, 450, -1, BLOCK_TYPE_WATER));
   metadata_allocations_before_failure = 0;
-  assert(renderer_sync_view_work(&r, &world, &player, &paused) == STREAM_FAILED);
+  assert(application_stream_view(&rStreaming, &r, &world, &player, &paused) == STREAM_FAILED);
   metadata_allocations_before_failure = -1;
   int oldVisible = 0;
   for (size_t n = 0; n < r.visibleMeshCount; n++)
@@ -982,25 +987,25 @@ static void test_stream_budget(void) {
   assert(oldVisible);
   r.visibleMeshCapacity = r.meshCount;
   visible_allocations_before_failure = 0;
-  assert(renderer_sync_view_work(&r, &world, &player, &paused) == STREAM_FAILED);
+  assert(application_stream_view(&rStreaming, &r, &world, &player, &paused) == STREAM_FAILED);
   visible_allocations_before_failure = -1;
   oldVisible = 0;
   for (size_t n = 0; n < r.visibleMeshCount; n++)
     oldVisible |= r.meshes[r.visibleMeshes[n]].vbo == oldVbo;
   assert(oldVisible);
-  while (renderer_sync_view_work(&r, &world, &player, &batch) != STREAM_COMPLETE) {}
+  while (application_stream_view(&rStreaming, &r, &world, &player, &batch) != STREAM_COMPLETE) {}
   mesh = gpu_section(&r, -1, voxel_section_coord(410), -1);
   assert(world_set_block(&world, -1, 410, -1, BLOCK_TYPE_GRASS));
-  assert(renderer_sync_view_work(&r, &world, &player, &paused) == STREAM_DEFERRED);
+  assert(application_stream_view(&rStreaming, &r, &world, &player, &paused) == STREAM_DEFERRED);
   assert(mesh->vbo == oldVbo && glIsBuffer(oldVbo));
   real_buffer_upload = __glewBufferData;
   uploads_before_failure = 0;
   __glewBufferData = fail_buffer_upload;
-  assert(renderer_sync_view_work(&r, &world, &player, &one) == STREAM_FAILED);
+  assert(application_stream_view(&rStreaming, &r, &world, &player, &one) == STREAM_FAILED);
   __glewBufferData = real_buffer_upload;
   assert(mesh->vbo == oldVbo && world_section(&world, -1, voxel_section_coord(410), -1)->dirty);
-  assert(r.pendingCount);
-  while (renderer_sync_view_work(&r, &world, &player, &batch) != STREAM_COMPLETE) {}
+  assert(rStreaming.pendingCount);
+  while (application_stream_view(&rStreaming, &r, &world, &player, &batch) != STREAM_COMPLETE) {}
   SectionMesh reference = {0};
   assert(section_mesh_build(&world, -1, voxel_section_coord(410), -1, &reference));
   assert_gpu_geometry(gpu_section(&r, -1, voxel_section_coord(410), -1), &reference);
@@ -1008,19 +1013,19 @@ static void test_stream_budget(void) {
 
   /* Shrink, leave while work is queued, then revisit. No departing task survives. */
   assert(world_set_block(&world, 90, 410, 0, BLOCK_TYPE_SAND));
-  assert(renderer_sync_view_work(&r, &world, &player, &paused) == STREAM_DEFERRED);
+  assert(application_stream_view(&rStreaming, &r, &world, &player, &paused) == STREAM_DEFERRED);
   r.viewDistance = 25.0f;
-  assert(renderer_sync_view_work(&r, &world, &player, &paused) == STREAM_COMPLETE);
-  assert(!r.pendingCount && world_get_block(&world, 90, 410, 0) == BLOCK_TYPE_SAND);
+  assert(application_stream_view(&rStreaming, &r, &world, &player, &paused) == STREAM_COMPLETE);
+  assert(!rStreaming.pendingCount && world_get_block(&world, 90, 410, 0) == BLOCK_TYPE_SAND);
   player.position.x = 10000.0f;
-  assert(renderer_sync_view_work(&r, &world, &player, &paused) == STREAM_COMPLETE);
-  assert(!r.pendingCount && !r.visibleMeshCount);
+  assert(application_stream_view(&rStreaming, &r, &world, &player, &paused) == STREAM_COMPLETE);
+  assert(!rStreaming.pendingCount && !r.visibleMeshCount);
   player.position.x = 90.0f;
   assert(world_set_block(&world, 90, 450, 0, BLOCK_TYPE_WATER));
   metadata_allocations_before_failure = 0;
-  assert(renderer_sync_view_work(&r, &world, &player, &batch) == STREAM_FAILED);
+  assert(application_stream_view(&rStreaming, &r, &world, &player, &batch) == STREAM_FAILED);
   metadata_allocations_before_failure = -1;
-  while (renderer_sync_view_work(&r, &world, &player, &batch) != STREAM_COMPLETE) {}
+  while (application_stream_view(&rStreaming, &r, &world, &player, &batch) != STREAM_COMPLETE) {}
   assert(section_mesh_build(&world, voxel_section_coord(90), voxel_section_coord(410), 0, &reference));
   assert_gpu_geometry(gpu_section(&r, voxel_section_coord(90), voxel_section_coord(410), 0), &reference);
   section_mesh_destroy(&reference);
@@ -1034,41 +1039,42 @@ static void test_reusable_renderer_storage(void) {
   storage_accounting(1);
   World world = {0};
   Renderer r = {.viewDistance = 25.0f};
+  WorldStreaming rStreaming = {0};
   Player player = {.position = {0.5f, 410.0f, 0.5f}};
   assert(create_terrain_streamed(&world, 256, (Vec3){0}, 1.0f, WORLD_SEED));
   for (int pass = 0; pass < 2; pass++)
     for (int step = 0; step < 8; step++) {
       player.position.x = (float)(step % 4) * 16.0f + 0.5f;
-      assert(renderer_sync_view(&r, &world, &player));
+      assert(application_stream_view(&rStreaming, &r, &world, &player, NULL));
     }
   size_t allocations[STORAGE_CATEGORY_COUNT];
   for (int c = 0; c < STORAGE_CATEGORY_COUNT; c++)
     allocations[c] = storage_stats((StorageCategory)c)->systemAllocations;
   for (int step = 0; step < 8; step++) {
     player.position.x = (float)(step % 4) * 16.0f + 0.5f;
-    assert(renderer_sync_view(&r, &world, &player));
+    assert(application_stream_view(&rStreaming, &r, &world, &player, NULL));
   }
   for (int c = 0; c < STORAGE_CATEGORY_COUNT; c++)
     assert(storage_stats((StorageCategory)c)->systemAllocations == allocations[c]);
   assert(storage_stats(STORAGE_MESH)->systemAllocations == 1);
   assert(!storage_stats(STORAGE_MESH)->live);
   assert(world_set_block(&world, 48, 500, 0, BLOCK_TYPE_SNOW));
-  assert(renderer_sync_view(&r, &world, &player));
+  assert(application_stream_view(&rStreaming, &r, &world, &player, NULL));
   SectionGpuMesh *const gpu = gpu_section(&r, 3, 31, 0);
   assert(gpu && gpu->vbo);
   const GLuint vbo = gpu->vbo;
   assert(world_set_block(&world, 48, 500, 0, BLOCK_TYPE_STONE));
   scratch_reservations_before_failure = 0;
-  assert(!renderer_sync_view(&r, &world, &player));
+  assert(!application_stream_view(&rStreaming, &r, &world, &player, NULL));
   scratch_reservations_before_failure = -1;
   assert(gpu->vbo == vbo && glIsBuffer(vbo));
   assert(world_section(&world, 3, 31, 0)->dirty);
   assert(!storage_stats(STORAGE_MESH)->live);
-  assert(renderer_sync_view(&r, &world, &player));
+  assert(application_stream_view(&rStreaming, &r, &world, &player, NULL));
   assert(!glIsBuffer(vbo));
   size_t attempts = 0;
   for (int c = 0; c < STORAGE_CATEGORY_COUNT; c++) attempts += storage_stats((StorageCategory)c)->attempts;
-  for (int frame = 0; frame < 16; frame++) assert(renderer_sync_view(&r, &world, &player));
+  for (int frame = 0; frame < 16; frame++) assert(application_stream_view(&rStreaming, &r, &world, &player, NULL));
   size_t after = 0;
   for (int c = 0; c < STORAGE_CATEGORY_COUNT; c++) after += storage_stats((StorageCategory)c)->attempts;
   assert(attempts == after);

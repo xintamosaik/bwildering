@@ -125,18 +125,6 @@ void renderer_destroy(Renderer *const renderer) {
   *renderer = (Renderer){0};
 }
 
-/* Gameplay supports radius <= MAX_VIEW_DISTANCE. Include padded residency,
-   one node per authoritative edit, and one full transactional replacement column.
-   This configures limits only; pages are committed on demand. */
-int renderer_storage_limits(World *const world) {
-  const double span = (double)world->blockSize * SECTION_SIZE;
-  const size_t columns = (size_t)fmin(ceil(2.0 * (double)MAX_VIEW_DISTANCE / span) + 3.0,
-                                       world->chunksPerSide);
-  const size_t slots = columns * columns * WORLD_SECTION_COUNT +
-      WORLD_EDIT_CAPACITY + WORLD_SECTION_COUNT;
-  return world_storage_limits(world, slots, slots);
-}
-
 int renderer_init(Renderer *const renderer) {
   *renderer = (Renderer){.viewDistance = DEFAULT_VIEW_DISTANCE};
   renderer->program = create_shader_program();
@@ -345,33 +333,6 @@ RENDERER_PRIVATE int renderer_sync_world(Renderer *const renderer, const World *
   return 1;
 }
 
-RENDERER_PRIVATE const Chunk *stream_chunk(const World *const world, const int x, const int z) {
-  return &world->chunks[(size_t)(x - world->minChunkX) * (size_t)world->chunksPerSide +
-                        (size_t)(z - world->minChunkZ)];
-}
-
-RENDERER_PRIVATE int stream_identity_compare(const void *const a, const void *const b) {
-  const StreamTask *const x = a, *const y = b;
-  if (x->x != y->x) return x->x < y->x ? -1 : 1;
-  if (x->z != y->z) return x->z < y->z ? -1 : 1;
-  if (x->materialize != y->materialize) return x->materialize < y->materialize ? -1 : 1;
-  return (x->y > y->y) - (x->y < y->y);
-}
-
-static int stream_priority_compare(const void *const a, const void *const b) {
-  const StreamTask *const x = a, *const y = b;
-  if (x->priority != y->priority) return x->priority < y->priority ? -1 : 1;
-  return stream_identity_compare(a, b);
-}
-
-static void stream_admit(Renderer *const r, const StreamTask task, const size_t retained,
-                         const size_t ordinal, const int pass, size_t *const nextCursor) {
-  if ((ordinal < r->scanCursor) != (pass != 0) || r->pendingCount == STREAM_TASK_CAPACITY) return;
-  if (bsearch(&task, r->pending, retained, sizeof(task), stream_identity_compare)) return;
-  r->pending[r->pendingCount++] = task;
-  *nextCursor = ordinal + 1;
-}
-
 static size_t stream_mesh_index(const Renderer *const r, const int x, const int y, const int z) {
   size_t lo = 0, hi = r->meshCount;
   while (lo < hi) {
@@ -395,36 +356,13 @@ static void stream_visible_fallback(Renderer *const r, const int minX, const int
   }
 }
 
-/* Sole residency owner for streamed gameplay: a square view radius in X/Z plus
-   one chunk of padding, clipped to world bounds. Retire before allocating the
-   next neighbourhood, including chunks with no renderer records (failed sync).
-   The world overlay remains authoritative after CPU and GPU caches retire. */
-RENDERER_PRIVATE StreamResult renderer_sync_view_work(Renderer *const renderer, World *const world, const Player *const player,
-                                            const StreamBudget *const budget) {
-  if (!world->proceduralTerrain)
-    return renderer_sync_world(renderer, world);
-  const Vec3 eye = player_eye_position(player);
-  if (!isfinite(eye.x) || !isfinite(eye.z))
-    return 0;
-  const float span = world->blockSize * SECTION_SIZE;
-  const float distance = isfinite(renderer->viewDistance) && renderer->viewDistance > 0 ?
-      fminf(renderer->viewDistance, MAX_VIEW_DISTANCE) : DEFAULT_VIEW_DISTANCE;
-  const int maxChunkX = world->minChunkX + world->chunksPerSide - 1;
-  const int maxChunkZ = world->minChunkZ + world->chunksPerSide - 1;
-  const float loX = floorf((eye.x - world->origin.x - distance) / span) - 1;
-  const float hiX = floorf((eye.x - world->origin.x + distance) / span) + 1;
-  const float loZ = floorf((eye.z - world->origin.z - distance) / span) - 1;
-  const float hiZ = floorf((eye.z - world->origin.z + distance) / span) + 1;
-  const int minX = (int)fminf((float)maxChunkX + 1, fmaxf((float)world->minChunkX, loX));
-  const int maxX = (int)fmaxf((float)world->minChunkX - 1, fminf((float)maxChunkX, hiX));
-  const int minZ = (int)fminf((float)maxChunkZ + 1, fmaxf((float)world->minChunkZ, loZ));
-  const int maxZ = (int)fmaxf((float)world->minChunkZ - 1, fminf((float)maxChunkZ, hiZ));
-
+static void renderer_stream_retire(void *const context, World *const world, const StreamRegion region) {
+  Renderer *const renderer = context;
+  const int minX = region.minX, maxX = region.maxX, minZ = region.minZ, maxZ = region.maxZ;
   /* No indices may survive metadata replacement or an interrupted sync pass. */
   renderer->streamed = 1;
   renderer->visibleMeshCount = renderer->drawMeshCount = 0;
 
-  const double retirementStart = perf_clock(renderer->performance);
   /* Retire departing columns before collecting current section identities. */
   for (size_t i = 0; i < renderer->meshCount; i++) {
     SectionGpuMesh *const m = &renderer->meshes[i];
@@ -440,114 +378,28 @@ RENDERER_PRIVATE StreamResult renderer_sync_view_work(Renderer *const renderer, 
     section_gpu_mesh_destroy(m);
     m->chunkX = x; m->sectionY = y; m->chunkZ = z;
   }
+}
 
-  /* Tasks contain identities only; discard departing work before CPU recycling. */
-  size_t retainedTasks = 0;
-  for (size_t i = 0; i < renderer->pendingCount; i++) {
-    const StreamTask task = renderer->pending[i];
-    if (task.x >= minX && task.x <= maxX && task.z >= minZ && task.z <= maxZ)
-      renderer->pending[retainedTasks++] = task;
-  }
-  renderer->pendingCount = retainedTasks;
-
-  /* CPU residency must not depend on successful renderer metadata allocation. */
-  const size_t evicted = world_release_chunks_outside(world, minX, maxX, minZ, maxZ);
-  if (renderer->performance && renderer->performance->enabled)
-    renderer->performance->frame.evictedChunks += evicted;
-
-  if (renderer->performance && renderer->performance->enabled)
-    renderer->performance->frame.retirement += perf_clock(renderer->performance) - retirementStart;
-
-  if (budget) {
-    const double collectionStart = perf_clock(renderer->performance);
-    /* Collection owns no section pointers. Invalidate departed/clean tasks and
-       refresh revisions before executing; edits retain their original age. */
-    renderer->streamFrame++;
-    size_t n = 0;
-    for (size_t i = 0; i < renderer->pendingCount; i++) {
-      StreamTask task = renderer->pending[i];
-      if (task.x < minX || task.x > maxX || task.z < minZ || task.z > maxZ) continue;
-      const Chunk *const chunk = stream_chunk(world, task.x, task.z);
-      const Subchunk *const section = task.materialize ? NULL : world_section(world, task.x, task.y, task.z);
-      if (task.materialize ? chunk->terrainReady : !section || !section->dirty) continue;
-      if (section) task.revision = section->revision;
-      renderer->pending[n++] = task;
-    }
-    renderer->pendingCount = n;
-    qsort(renderer->pending, n, sizeof(*renderer->pending), stream_identity_compare);
-    const size_t retained = n;
-    size_t ordinal = 0, nextCursor = renderer->scanCursor;
-    renderer->pendingWork = 0;
-    /* Two passes wrap the admission cursor without borrowing mutable records. */
-    for (int pass = 0; pass < 2; pass++) {
-      ordinal = 0;
-      for (int x = minX; x <= maxX; x++) for (int z = minZ; z <= maxZ; z++) {
-        const Chunk *const chunk = stream_chunk(world, x, z);
-        if (!chunk->terrainReady) {
-          const StreamTask task = {.x=x, .z=z, .materialize=1, .born=renderer->streamFrame};
-          stream_admit(renderer, task, retained, ordinal++, pass, &nextCursor);
-        }
-        for (const Subchunk *section = chunk->sections; section; section = section->next) {
-          if (!section->dirty) continue;
-          const StreamTask task = {.x=x, .y=section->sectionY, .z=z,
-              .revision=section->revision, .born=renderer->streamFrame};
-          stream_admit(renderer, task, retained, ordinal++, pass, &nextCursor);
-        }
-      }
-    }
-    renderer->pendingWork = ordinal;
-    renderer->scanCursor = ordinal ? nextCursor % ordinal : 0;
-    if (renderer->pendingCount > renderer->peakPending) renderer->peakPending = renderer->pendingCount;
-    const double eyeX = (double)(eye.x - world->origin.x) / (double)span;
-    const double eyeZ = (double)(eye.z - world->origin.z) / (double)span;
-    for (size_t i = 0; i < renderer->pendingCount; i++) {
-      StreamTask *const task = &renderer->pending[i];
-      const Chunk *const chunk = stream_chunk(world, task->x, task->z);
-      /* Aging eventually dominates both distance and the edit preference. */
-      task->priority = fabs((double)task->x + 0.5 - eyeX) + fabs((double)task->z + 0.5 - eyeZ)
-          + (task->materialize ? 0.0 : fabs((double)task->y + 0.5 -
-              (double)(eye.y - world->origin.y) / (double)span) * 0.25)
-          - (double)(renderer->streamFrame - task->born) * 0.5 - (chunk->edited ? 64.0 : 0.0);
-    }
-    qsort(renderer->pending, renderer->pendingCount, sizeof(*renderer->pending), stream_priority_compare);
-    if (renderer->performance && renderer->performance->enabled)
-      renderer->performance->frame.metadata += perf_clock(renderer->performance) - collectionStart;
-  } else {
-    renderer->pendingCount = renderer->pendingWork = 0;
-    for (int cx = minX; cx <= maxX; cx++) for (int cz = minZ; cz <= maxZ; cz++) {
-      const int missing = !stream_chunk(world, cx, cz)->terrainReady;
-      const double start = perf_clock(renderer->performance);
-      const int ready = world_materialize_chunk(world, cx, cz);
-      if (renderer->performance && renderer->performance->enabled) {
-        FrameWork *const f = &renderer->performance->frame;
-        const double elapsed = perf_clock(renderer->performance) - start;
-        f->materialize += elapsed;
-        if (missing) {
-          f->materializedChunks += ready != 0;
-          f->operations++;
-          if (elapsed > f->atomicMax) f->atomicMax = elapsed;
-        }
-      }
-      if (!ready) return STREAM_FAILED;
-    }
-  }
-
+static int renderer_stream_prepare(void *const context, const World *const world,
+                                   const StreamRegion region, const int bounded) {
+  Renderer *const renderer = context;
+  const int minX = region.minX, maxX = region.maxX, minZ = region.minZ, maxZ = region.maxZ;
   const double metadataStart = perf_clock(renderer->performance);
   if (!renderer_prepare_world(renderer, world)) {
-    if (budget) stream_visible_fallback(renderer, minX, maxX, minZ, maxZ);
-    return STREAM_FAILED;
+    if (bounded) stream_visible_fallback(renderer, minX, maxX, minZ, maxZ);
+    return 0;
   }
   if (renderer->meshCount > renderer->visibleMeshCapacity) {
     size_t capacity = renderer->visibleMeshCapacity ? renderer->visibleMeshCapacity : 64;
     while (capacity < renderer->meshCount && capacity <= SIZE_MAX / 2) capacity *= 2;
     if (capacity < renderer->meshCount || capacity > SIZE_MAX / sizeof(size_t)) {
-      if (budget) stream_visible_fallback(renderer, minX, maxX, minZ, maxZ);
-      return STREAM_FAILED;
+      if (bounded) stream_visible_fallback(renderer, minX, maxX, minZ, maxZ);
+      return 0;
     }
     size_t *const indices = storage_alloc(STORAGE_VISIBLE, capacity * sizeof(*indices));
     if (!indices) {
-      if (budget) stream_visible_fallback(renderer, minX, maxX, minZ, maxZ);
-      return STREAM_FAILED;
+      if (bounded) stream_visible_fallback(renderer, minX, maxX, minZ, maxZ);
+      return 0;
     }
     storage_free(STORAGE_VISIBLE, renderer->visibleMeshes, renderer->visibleMeshCapacity * sizeof(*renderer->visibleMeshes));
     renderer->visibleMeshes = indices;
@@ -565,75 +417,45 @@ RENDERER_PRIVATE StreamResult renderer_sync_view_work(Renderer *const renderer, 
   }
   if (renderer->performance && renderer->performance->enabled)
     renderer->performance->frame.metadata += perf_clock(renderer->performance) - metadataStart;
-  if (!budget) {
-    for (size_t n = 0; n < renderer->visibleMeshCount; n++) {
-      const size_t i = renderer->visibleMeshes[n];
-      const SectionGpuMesh *const m = &renderer->meshes[i];
-      const Subchunk *const section = world_section(world, m->chunkX, m->sectionY, m->chunkZ);
-      const int dirty = section && section->dirty;
-      const double start = perf_clock(renderer->performance);
-      const int success = renderer_sync_section(renderer, world, i);
-      if (dirty && renderer->performance && renderer->performance->enabled) {
-        FrameWork *const f = &renderer->performance->frame;
-        const double elapsed = perf_clock(renderer->performance) - start;
-        f->operations++;
-        if (elapsed > f->atomicMax) f->atomicMax = elapsed;
-      }
-      if (!success) return STREAM_FAILED;
-    }
-    return STREAM_COMPLETE;
-  }
+  return 1;
+}
 
-  const double workStart = glfwGetTime();
-  size_t done = 0, bytes = 0;
-  StreamResult result = STREAM_DEFERRED;
-  while (done < renderer->pendingCount && done < budget->operations && bytes < budget->bytes) {
-    if (budget->seconds > 0.0 && glfwGetTime() - workStart >= budget->seconds) break;
-    const StreamTask task = renderer->pending[done];
-    const double start = glfwGetTime();
-    int success;
-    if (task.materialize) {
-      success = world_materialize_chunk(world, task.x, task.z);
-      if (renderer->performance && renderer->performance->enabled) {
-        renderer->performance->frame.materialize += glfwGetTime() - start;
-        renderer->performance->frame.materializedChunks += success != 0;
-      }
-    } else {
-      const Subchunk *const section = world_section(world, task.x, task.y, task.z);
-      if (!section || !section->dirty || section->revision != task.revision) break;
-      const size_t index = stream_mesh_index(renderer, task.x, task.y, task.z);
-      if (index == renderer->meshCount) break; /* Materialized this pass; prepare next frame. */
-      success = renderer_sync_section(renderer, world, index);
-      for (int t = 0; t < BLOCK_TYPE_COUNT; t++)
-        bytes += (size_t)renderer->meshes[index].vertexCount[t] * sizeof(SurfaceVertex);
-    }
-    if (renderer->performance && renderer->performance->enabled) {
+static int renderer_stream_drain(void *const context, const World *const world) {
+  Renderer *const renderer = context;
+  if (!world->proceduralTerrain) return renderer_sync_world(renderer, world);
+  for (size_t n = 0; n < renderer->visibleMeshCount; n++) {
+    const size_t i = renderer->visibleMeshes[n];
+    const SectionGpuMesh *const m = &renderer->meshes[i];
+    const Subchunk *const section = world_section(world, m->chunkX, m->sectionY, m->chunkZ);
+    const int dirty = section && section->dirty;
+    const double start = perf_clock(renderer->performance);
+    const int success = renderer_sync_section(renderer, world, i);
+    if (dirty && renderer->performance && renderer->performance->enabled) {
       FrameWork *const f = &renderer->performance->frame;
+      const double elapsed = perf_clock(renderer->performance) - start;
       f->operations++;
-      const double elapsed = glfwGetTime() - start;
       if (elapsed > f->atomicMax) f->atomicMax = elapsed;
     }
-    if (!success) { result = STREAM_FAILED; break; }
-    done++;
+    if (!success) return STREAM_FAILED;
   }
-  memmove(renderer->pending, renderer->pending + done,
-          (renderer->pendingCount - done) * sizeof(*renderer->pending));
-  renderer->pendingCount -= done;
-  /* A materialization creates section work discovered on the next collection.
-     Only an empty collection can certify stationary convergence. */
-  return result == STREAM_FAILED ? result : renderer->pendingWork ? STREAM_DEFERRED : STREAM_COMPLETE;
+  return STREAM_COMPLETE;
 }
 
-/* Startup, deterministic captures and fixtures drain synchronously. */
-int renderer_sync_view(Renderer *const renderer, World *const world, const Player *const player) {
-  return renderer_sync_view_work(renderer, world, player, NULL) == STREAM_COMPLETE;
+static StreamResult renderer_stream_sync(void *const context, const World *const world,
+                                         const StreamTask task, size_t *const bytes) {
+  Renderer *const renderer = context;
+  const size_t index = stream_mesh_index(renderer, task.x, task.y, task.z);
+  if (index == renderer->meshCount) return STREAM_DEFERRED;
+  const int success = renderer_sync_section(renderer, world, index);
+  for (int t = 0; t < BLOCK_TYPE_COUNT; t++)
+    *bytes += (size_t)renderer->meshes[index].vertexCount[t] * sizeof(SurfaceVertex);
+  return success ? STREAM_COMPLETE : STREAM_FAILED;
 }
 
-StreamResult renderer_step_view(Renderer *const renderer, World *const world, const Player *const player) {
-  const StreamBudget budget = {.seconds = 0.002, .operations = 128, .bytes = 2 * 1024 * 1024};
-  return renderer_sync_view_work(renderer, world, player, &budget);
+StreamConsumer renderer_stream_consumer(Renderer *const renderer) {
+  return (StreamConsumer){renderer, renderer_stream_retire, renderer_stream_prepare,
+                          renderer_stream_sync, renderer_stream_drain};
 }
-
 
 /* Test the most positive AABB vertex against each homogeneous clip plane.
    No normalization is needed, and boxes crossing a plane remain visible. */

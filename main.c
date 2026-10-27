@@ -1221,8 +1221,8 @@ static int application_init(Application *application) {
   application->startupSeconds = perf_clock(&application->performance) - startupStart;
   if (application->performance.enabled) {
     fprintf(stdout, "PERF build=%s %s compiler=%s GL_vendor=%s GL_renderer=%s GL_version=%s\n",
-            __DATE__, __TIME__, __VERSION__, glGetString(GL_VENDOR),
-            glGetString(GL_RENDERER), glGetString(GL_VERSION));
+            __DATE__, __TIME__, __VERSION__, (const char *)glGetString(GL_VENDOR),
+            (const char *)glGetString(GL_RENDERER), (const char *)glGetString(GL_VERSION));
     application->performance.frame.raw = application->startupSeconds;
     perf_record(&application->performance);
     performance_report(application, "startup");

@@ -54,7 +54,7 @@ int main(void) {
          a.renderer.framebufferHeight, a.performance.overlay);
   printf("CAPTURE startup_wall_ms=%.3f side=%d instrumentation=%d GL_renderer=%s\n",
          (glfwGetTime()-start)*1000, a.world.blocksPerSide, a.performance.enabled,
-         glGetString(GL_RENDERER));
+         (const char *)glGetString(GL_RENDERER));
   const float distances[] = {25, 100, 300};
   for (size_t i = 0; i < sizeof(distances)/sizeof(*distances); i++) {
     a.renderer.viewDistance = distances[i];

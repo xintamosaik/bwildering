@@ -14,7 +14,7 @@ static void capture_sync_cost(Application *a) {
   assert(renderer_sync_view(&a->renderer, &a->world, &a->player));
   glFinish();
   printf("SYNC seed=%u side=%d distance=100 samples=5 frames=1000 GL=%s\n",
-         WORLD_SEED, a->world.blocksPerSide, glGetString(GL_RENDERER));
+         WORLD_SEED, a->world.blocksPerSide, (const char *)glGetString(GL_RENDERER));
   for (int sample = 0; sample < 5; sample++) {
     double start = glfwGetTime();
     for (int frame = 0; frame < 1000; frame++)
@@ -64,7 +64,7 @@ int main(int argc, char **argv) {
   size_t peakChunks = 0, peakSections = 0, peakGpu = 0, evictions = 0, retirements = 0;
   double total = 0, maximum = 0;
   printf("STREAM seed=%u side=%d distance=25 steps=64 stride=96 chunk_bound=%zu GL=%s\n",
-         WORLD_SEED, a.world.blocksPerSide, bound * bound, glGetString(GL_RENDERER));
+         WORLD_SEED, a.world.blocksPerSide, bound * bound, (const char *)glGetString(GL_RENDERER));
   puts("step,x,sync_ms,materialize_ms,mesh_ms,upload_ms,gpu_drain_ms,chunks,sections,cpu_owned_bytes,rss_peak_kib,gpu_requested_bytes,evicted_chunks,retired_meshes,retired_bytes");
   for (int step = 0; step <= 64; step++) {
     int travel = step < 32 ? step : 63 - step;

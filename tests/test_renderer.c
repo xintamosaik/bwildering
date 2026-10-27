@@ -747,7 +747,7 @@ int main(void) {
     render_world(&renderer, &player);
     glFinish();
   }
-  printf("GL renderer: %s; startup %.3f ms; frame %.3f ms\n", glGetString(GL_RENDERER),
+  printf("GL renderer: %s; startup %.3f ms; frame %.3f ms\n", (const char *)glGetString(GL_RENDERER),
          startup, 1000 * (glfwGetTime() - start) / 120);
   unsigned char pixels[640 * 480 * 3];
   DepthFrame terrainFrame = capture_world(&renderer, &player);

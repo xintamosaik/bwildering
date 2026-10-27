@@ -221,7 +221,7 @@ int main(void) {
   glEnable(GL_DEPTH_TEST); glEnable(GL_CULL_FACE);
   glViewport(0, 0, 640, 480);
   printf("VIS compiler=%s GL=%s version=%s seed=%u resolution=640x480 swap_interval=0 overlay=0\n",
-         __VERSION__, glGetString(GL_RENDERER), glGetString(GL_VERSION), WORLD_SEED);
+         __VERSION__, (const char *)glGetString(GL_RENDERER), (const char *)glGetString(GL_VERSION), WORLD_SEED);
   for (int streamed = 0; streamed < 2; streamed++) {
     World world = {0}; Renderer r = {0};
     assert(renderer_init(&r));

@@ -1042,46 +1042,31 @@ static void performance_snapshot(Application *a) {
 }
 
 static void performance_report(Application *a, const char *phase) {
-  Performance *p = &a->performance;
-  if (!p->enabled) return;
+  if (!a->performance.enabled) return;
   performance_snapshot(a);
-  perf_finish_window(p);
-  double n = p->count ? (double)p->count : 1;
-  fprintf(stdout, "PERF phase=%s samples=%zu frame_ms=%.3f/%.3f/%.3f "
-      "update_ms=%.3f sync_ms=%.3f materialize_ms=%.3f mesh_ms=%.3f upload_ms=%.3f "
-      "render_ms=%.3f swap_ms=%.3f visibility_ms=%.3f distance_tests_avg=%.1f "
-      "frustum_tests_avg=%.1f material_changes_avg=%.1f visibility_fallbacks=%zu "
-      "rebuilds=%zu upload_calls=%zu upload_bytes=%zu evicted_chunks=%zu retired_meshes=%zu retired_bytes=%zu "
-      "draws_avg=%.1f triangles_avg=%.1f resident_chunks=%zu sections=%zu edited=%zu dirty=%zu "
-      "neighborhood_slots=%zu world_metadata_bytes=%zu renderer_metadata_bytes=%zu "
-      "resident_voxel_bytes=%zu visible_index_bytes=%zu draw_index_bytes=%zu peak_cpu_mesh_bytes=%zu "
-      "gpu_world_requested_bytes=%zu world_metadata_ms=%.3f renderer_metadata_ms=%.3f startup_ms=%.3f "
-      "seed=%u side=%d distance=%.0f resolution=%dx%d swap_interval=0 overlay=%d paused=%d\n",
-      phase, p->count, p->average*1000, p->p95*1000, p->maximum*1000,
-      p->total.update*1000/n, p->total.sync*1000/n, p->total.materialize*1000/n,
-      p->total.mesh*1000/n, p->total.upload*1000/n, p->total.render*1000/n, p->total.swap*1000/n,
-      p->total.visibility*1000/n, p->total.distanceTests/n, p->total.frustumTests/n,
-      p->total.materialChanges/n, p->total.visibilityFallbacks,
-      p->total.rebuilds, p->total.uploadCalls, p->total.uploadBytes,
-      p->total.evictedChunks, p->total.retiredMeshes, p->total.retiredBytes,
-      p->total.draws/n, p->total.triangles/n, a->residentChunks, a->world.sectionCount,
-      a->editedChunks, a->dirtySections, a->renderer.visibleMeshCount,
-      sizeof(World) + a->world.chunkCount * sizeof(Chunk),
-      sizeof(Renderer) + a->renderer.meshCount * sizeof(SectionGpuMesh),
-      a->residentVoxelBytes,
-      a->renderer.visibleMeshCapacity * sizeof(size_t),
-      a->renderer.drawMeshCapacity * sizeof(size_t), p->total.peakMeshBytes,
-      a->gpuBytes, a->worldMetadataSeconds*1000, a->renderer.metadataSeconds*1000,
-      a->startupSeconds*1000, a->world.terrainSeed, a->world.blocksPerSide,
-      a->renderer.viewDistance, a->renderer.framebufferWidth, a->renderer.framebufferHeight,
-      p->overlay, a->paused);
-  fflush(stdout);
-}
-
-static void performance_reset(Performance *p) {
-  p->count = 0;
-  p->total = (FrameWork){0};
-  p->frame = (FrameWork){0};
+  const PerformanceSnapshot snapshot = {
+      .residentChunks = a->residentChunks,
+      .sections = a->world.sectionCount,
+      .editedChunks = a->editedChunks,
+      .dirtySections = a->dirtySections,
+      .neighborhoodSlots = a->renderer.visibleMeshCount,
+      .worldMetadataBytes = sizeof(World) + a->world.chunkCount * sizeof(Chunk),
+      .rendererMetadataBytes = sizeof(Renderer) + a->renderer.meshCount * sizeof(SectionGpuMesh),
+      .residentVoxelBytes = a->residentVoxelBytes,
+      .visibleIndexBytes = a->renderer.visibleMeshCapacity * sizeof(size_t),
+      .drawIndexBytes = a->renderer.drawMeshCapacity * sizeof(size_t),
+      .gpuBytes = a->gpuBytes,
+      .worldMetadataSeconds = a->worldMetadataSeconds,
+      .rendererMetadataSeconds = a->renderer.metadataSeconds,
+      .startupSeconds = a->startupSeconds,
+      .seed = a->world.terrainSeed,
+      .side = a->world.blocksPerSide,
+      .viewDistance = a->renderer.viewDistance,
+      .framebufferWidth = a->renderer.framebufferWidth,
+      .framebufferHeight = a->renderer.framebufferHeight,
+      .paused = a->paused,
+  };
+  perf_report(&a->performance, &snapshot, phase);
 }
 
 static void application_shutdown(Application *application) {
@@ -1125,9 +1110,7 @@ static int application_init(Application *application) {
     worldSide = (int)parsed;
   }
 
-  application->performance.enabled = getenv("BW_PERF") && strcmp(getenv("BW_PERF"), "0");
-  application->performance.overlay = getenv("BW_DEBUG") && strcmp(getenv("BW_DEBUG"), "0");
-  if (application->performance.overlay) application->performance.enabled = 1;
+  perf_configure(&application->performance);
 
   if (!glfwInit()) {
     fprintf(stderr, "Failed to initialize GLFW\n");

@@ -1,4 +1,4 @@
-/* Reproducible flat-foundation views; writes PPM frames to /tmp. */
+/* Reproducible ocean and experimental beach views; writes PPM frames to /tmp. */
 #include "../world_generation.h"
 #include "../application_internal.h"
 #include <stdio.h>
@@ -28,7 +28,8 @@ int main(void) {
   r.framebufferWidth = 960;
   r.framebufferHeight = 640;
   r.viewDistance = 300;
-  const char *const names[] = {"sea-level", "seabed", "edge", "underwater"};
+  const char *const names[] = {"sea-level", "seabed", "edge", "underwater",
+                                "beach-overhead", "beach-approach", "beach-shore", "beach-interior"};
   const Player views[] = {
       {.position = {0.5f, 6.0f, 0.5f}, .eyeHeight = 1.0f,
        .aim = {.front = {0.0f, -0.6f, -0.8f}}},
@@ -38,6 +39,14 @@ int main(void) {
        .aim = {.front = {-0.8f, -0.6f, 0.0f}}},
       {.position = {0.5f, -4.0f, 0.5f}, .eyeHeight = 1.0f,
        .aim = {.front = {0.0f, 0.6f, -0.8f}}},
+      {.position = {256.0f, 190.0f, 256.0f}, .eyeHeight = 1.0f,
+       .aim = {.front = {0.0f, -0.9998f, -0.02f}}},
+      {.position = {398.5f, 1.4f, 256.5f}, .eyeHeight = 1.0f,
+       .aim = {.front = {-0.9998f, 0.02f, 0.0f}}},
+      {.position = {371.5f, 3.0f, 256.5f}, .eyeHeight = 1.0f,
+       .aim = {.front = {0.95f, -0.31225f, 0.0f}}},
+      {.position = {256.5f, 3.0f, 256.5f}, .eyeHeight = 1.0f,
+       .aim = {.front = {0.9968f, -0.08f, 0.0f}}},
   };
   for (size_t scene = 0; scene < sizeof(views) / sizeof(*views); scene++) {
     const Player p = views[scene];

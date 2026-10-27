@@ -1490,15 +1490,15 @@ static void test_terrain_relief_and_underground_depth(void) {
       if (column.height < lowest) lowest = column.height;
       if (column.height > highest) highest = column.height;
       assert(column.height < (WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT) * SECTION_SIZE - 8);
-      assert(column.material == BLOCK_TYPE_WATER);
+      assert(block_is_material(column.material));
       assert(terrain_column_block(column, column.height - 1) == column.material);
       assert(terrain_column_block(column, column.height) == BLOCK_TYPE_EMPTY);
       assert(terrain_column_block(column, TERRAIN_BASE_Y) == BLOCK_TYPE_DARK_STONE);
-      assert(terrain_column_block(column, -33) == BLOCK_TYPE_STONE);
-      assert(terrain_column_block(column, 0) == BLOCK_TYPE_WATER);
+      assert(terrain_column_block(column, -64) == BLOCK_TYPE_STONE);
+      assert(block_is_solid(terrain_column_block(column, column.stoneTopY - 1)));
       assert(terrain_column_block(column, TERRAIN_BASE_Y - 1) == BLOCK_TYPE_EMPTY);
     }
-  assert(lowest == 1 && highest == 1);
+  assert(lowest == 1 && highest == 3);
   printf("Terrain relief: %d..%d blocks; underground base %d\n", lowest, highest, TERRAIN_BASE_Y);
   World world = {0};
   assert(create_terrain_streamed(&world, 1, (Vec3){0}, 1, seed));

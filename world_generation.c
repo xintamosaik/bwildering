@@ -1,18 +1,76 @@
 #include "world_generation.h"
 
+#include <math.h>
+
+/* EXPERIMENTAL 01: plans/world-generation/experiments/01-small-beach-quadrant.md.
+   This is a local profile, not a world-size limit or an archetype registry. */
+static const struct {
+  int quadrantSide;
+  float centerX, centerZ;
+  float grassRadius, beachRadius, footholdRadius, shelfRadius;
+  int grassTopY, beachTopY, footholdTopY;
+  int sandDepth, soilDepth;
+} BEACH_EXPERIMENT_01 = {
+    .quadrantSide = 512,
+    .centerX = 256.0f, .centerZ = 256.0f,
+    .grassRadius = 118.0f, .beachRadius = 128.0f,
+    .footholdRadius = 132.0f, .shelfRadius = 192.0f,
+    .grassTopY = 3, .beachTopY = 2, .footholdTopY = 1,
+    .sandDepth = 3, .soilDepth = 2,
+};
+
 TerrainColumn terrain_sample_column(const uint32_t seed, const int worldX, const int worldZ) {
   (void)seed;
-  (void)worldX;
-  (void)worldZ;
-  return (TerrainColumn){.height = TERRAIN_SEA_LEVEL + 1, .stoneTopY = TERRAIN_STONE_TOP_Y,
-                         .material = BLOCK_TYPE_WATER,
-                         .deepRockY = TERRAIN_DEEP_ROCK_Y};
+  TerrainColumn column = {.height = TERRAIN_SEA_LEVEL + 1, .stoneTopY = TERRAIN_STONE_TOP_Y,
+                          .material = BLOCK_TYPE_WATER, .deepRockY = TERRAIN_DEEP_ROCK_Y};
+  /* Bound integer coordinates before conversion; distant and negative queries
+     remain the unchanged ocean, including INT_MIN/INT_MAX sampling. */
+  if (worldX < 0 || worldZ < 0 || worldX >= BEACH_EXPERIMENT_01.quadrantSide ||
+      worldZ >= BEACH_EXPERIMENT_01.quadrantSide) return column;
+  const float dx = (float)worldX + 0.5f - BEACH_EXPERIMENT_01.centerX;
+  const float dz = (float)worldZ + 0.5f - BEACH_EXPERIMENT_01.centerZ;
+  const float distanceSquared = dx * dx + dz * dz;
+  if (distanceSquared >= BEACH_EXPERIMENT_01.shelfRadius * BEACH_EXPERIMENT_01.shelfRadius)
+    return column;
+
+  const float radius = sqrtf(distanceSquared);
+  if (radius < BEACH_EXPERIMENT_01.grassRadius) {
+    column.stoneTopY = BEACH_EXPERIMENT_01.grassTopY;
+    column.soilDepth = BEACH_EXPERIMENT_01.soilDepth;
+  } else {
+    if (radius < BEACH_EXPERIMENT_01.beachRadius)
+      column.stoneTopY = BEACH_EXPERIMENT_01.beachTopY;
+    else if (radius < BEACH_EXPERIMENT_01.footholdRadius)
+      column.stoneTopY = BEACH_EXPERIMENT_01.footholdTopY;
+    else {
+      const float t = (radius - BEACH_EXPERIMENT_01.footholdRadius) /
+          (BEACH_EXPERIMENT_01.shelfRadius - BEACH_EXPERIMENT_01.footholdRadius);
+      const float smooth = t * t * (3.0f - 2.0f * t);
+      column.stoneTopY = (int)floorf((float)BEACH_EXPERIMENT_01.footholdTopY -
+          (float)(BEACH_EXPERIMENT_01.footholdTopY - TERRAIN_STONE_TOP_Y) * smooth);
+    }
+    if (column.stoneTopY > TERRAIN_STONE_TOP_Y) column.sandDepth = BEACH_EXPERIMENT_01.sandDepth;
+  }
+
+  if (column.stoneTopY >= column.height) {
+    column.height = column.stoneTopY;
+    column.material = column.soilDepth ? BLOCK_TYPE_GRASS :
+        column.sandDepth ? BLOCK_TYPE_SAND : BLOCK_TYPE_STONE;
+  }
+  return column;
 }
 
 BlockType terrain_column_block(const TerrainColumn column, const int y) {
   if (y < TERRAIN_BASE_Y || y >= column.height) return BLOCK_TYPE_EMPTY;
   if (y < column.deepRockY) return BLOCK_TYPE_DARK_STONE;
-  return y < column.stoneTopY ? BLOCK_TYPE_STONE : BLOCK_TYPE_WATER;
+  if (y >= column.stoneTopY) return BLOCK_TYPE_WATER;
+  const int depth = column.stoneTopY - 1 - y;
+  if (depth < column.sandDepth) return BLOCK_TYPE_SAND;
+  if (column.soilDepth) {
+    if (!depth) return BLOCK_TYPE_GRASS;
+    if (depth <= column.soilDepth) return BLOCK_TYPE_DIRT;
+  }
+  return BLOCK_TYPE_STONE;
 }
 
 static uint32_t next_random(uint32_t *const state) {

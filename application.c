@@ -309,6 +309,7 @@ void application_render(Application *const application) {
   const UiDrawContext draw = renderer_ui_context(&application->renderer);
   const UiFrame frame = {
       .fps = application->fps, .paused = application->paused,
+      .playerPosition = game_player(&application->game)->position,
       .viewDistance = renderer_view_distance(&application->renderer),
       .performance = p, .residentChunks = application->residentChunks,
       .sections = game_world(&application->game)->sectionCount, .editedChunks = application->editedChunks,

@@ -16,6 +16,7 @@ typedef struct {
 /* Read-only frame snapshot, borrowed only for drawing. */
 typedef struct {
   int fps, paused;
+  Vec3 playerPosition;
   float viewDistance;
   const Performance *performance;
   size_t residentChunks, sections, editedChunks, dirtySections, neighborhoodSlots, gpuBytes;

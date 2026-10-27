@@ -132,6 +132,7 @@ static const unsigned char *font_glyph(const char character) {
   static const unsigned char glyphY[7] = {17,17,10,4,4,4,4};
   static const unsigned char glyphPlus[7] = {0,4,4,31,4,4,0};
   static const unsigned char glyphMinus[7] = {0,0,0,31,0,0,0};
+  static const unsigned char glyphPipe[7] = {4,4,4,4,4,4,4};
 
   switch (character) {
   case '0': return glyph0;
@@ -171,6 +172,7 @@ static const unsigned char *font_glyph(const char character) {
   case 'Y': return glyphY;
   case '+': return glyphPlus;
   case '-': return glyphMinus;
+  case '|': return glyphPipe;
   default: return NULL;
   }
 }
@@ -213,23 +215,31 @@ static int build_text_vertices(const char *const text, const float shadowOffset,
   return vertexCount;
 }
 
-static void render_fps(const UiDrawContext *const draw, const int fps) {
+static double rounded_coordinate(const float value) {
+  const double rounded = round((double)value);
+  return rounded == 0.0 ? 0.0 : rounded; /* Avoid displaying negative zero. */
+}
+
+static void render_fps(const UiDrawContext *const draw, const int fps, const Vec3 position) {
   if (draw->framebufferWidth <= 0 || draw->framebufferHeight <= 0)
     return;
 
-  char text[16];
-  snprintf(text, sizeof(text), "FPS: %d", fps);
-  float vertices[16 * 5 * 7 * 6 * 3];
+  char text[UI_TEXT_MAX_CHARS];
+  snprintf(text, sizeof(text), "FPS: %d   %.0f | %.0f | %.0f", fps,
+           rounded_coordinate(position.x), rounded_coordinate(position.y), rounded_coordinate(position.z));
+  static float vertices[UI_TEXT_MAX_CHARS * 5 * 7 * 6 * 3];
+  const float textWidth = (float)strlen(text) * 18.0f;
+  const float scale = fminf(1.0f, fmaxf(1.0f, (float)draw->framebufferWidth - 32.0f) / textWidth);
   const UiDrawState state = ui_draw_begin(draw, UI_DRAW_FPS);
 
   int vertexCount = build_text_vertices(
       text, 1.0f, draw->framebufferWidth, draw->framebufferHeight,
-      vertices, 16, 16, 1);
+      vertices, 16, 16, scale);
   ui_draw_vertices(draw, vertices, vertexCount, (Vec3){0.02f, 0.03f, 0.02f});
 
   vertexCount = build_text_vertices(
       text, 0.0f, draw->framebufferWidth, draw->framebufferHeight,
-      vertices, 16, 16, 1);
+      vertices, 16, 16, scale);
   ui_draw_vertices(draw, vertices, vertexCount, (Vec3){0.95f, 0.98f, 0.92f});
 
   ui_draw_end(state);
@@ -327,7 +337,7 @@ static void render_pause_menu(const UiState *const ui, const UiFrame *const fram
 }
 
 void ui_render(const UiState *const ui, const UiFrame *const frame, const UiDrawContext *const draw) {
-  render_fps(draw, frame->fps);
+  render_fps(draw, frame->fps, frame->playerPosition);
   render_performance(frame, draw);
   if (frame->paused)
     render_pause_menu(ui, frame, draw);

@@ -8,7 +8,7 @@ invalidation, or recovery is the behaviour under test.
 | --- | --- |
 | World size | Test the smallest supported size, the documented maximum, and the first invalid sizes. Rejected replacement must preserve the old world. Keep these separate from the default gameplay size. |
 | Application startup | Check configured bounds, safe spawn, grounding/jumping, and visible terrain. Mesh-slot counts do not establish that terrain renders. |
-| Terrain generation | Check seed independence of the current flat layers, continuous regions, exact dark-stone/stone/water boundaries, valid materials, and hidden water/water faces. Add different-seed variation and relief checks when landmasses are implemented. Check exposed mesh surface area rather than a fixed vertex total. Exact hashes would impose a separate terrain-format compatibility requirement that this game does not currently have. |
+| Terrain generation | Check seed independence of the experimental profile, exact foundation/ocean boundaries, sand/soil caps, a connected round outline, valid materials, and hidden water/water faces. Add different-seed variation when seeded shapes are introduced. Check exposed mesh surface area rather than a fixed vertex total. Exact hashes would impose a separate terrain-format compatibility requirement that this game does not currently have. |
 | Palette | Check valid, distinct colours and invalid-input behaviour. Exact RGB values are an art choice. |
 | Meshing | Use small, explicitly constructed shapes for exact geometry assertions. Counts such as 36 vertices for one cube belong here, rather than in application smoke tests. |
 | Dirty sections | Check the identities of affected sections, including unaffected neighbours and identical writes. The right number of wrong neighbours is still a bug. |
@@ -174,3 +174,11 @@ Water movement checks in `test_game` cover buoyancy, slower travel, view-directe
 swimming, held Space ascent, Shift diving, drag on entry, solid floor/ceiling
 collision, leaving water, and stable floating at several update rates. Input
 checks keep held swimming separate from a one-shot land jump.
+
+`make test_beach_generation && ./test_beach_generation` checks experimental beach
+01: positive-quadrant bounds, round outline, grass/dirt/sand layers, foundation,
+water fill, direct/eager/streamed agreement, mesh parity, and edits across eviction.
+Cardinal and diagonal movement fixtures swim onto the waterline foothold and use
+two normal jumps to reach the grass. The beach spawn is checked for dry support and normal jumping.
+`make terrain_capture && ./terrain_capture` adds overhead, approach, shore, and
+interior views under `/tmp/world-generation-beach-*.ppm` using a real GL context.

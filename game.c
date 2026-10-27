@@ -20,7 +20,19 @@ int game_init(Game *const game, const GameConfig config) {
       .position = {game->world.origin.x + 0.5f * config.blockSize, config.center.y,
                    game->world.origin.z + 0.5f * config.blockSize},
       .eyeHeight = 1.0f, .aim = game_aim(-90.0f, 0.0f)};
-  /* Start at sea level; immersion determines buoyancy and movement. */
+  /* Experimental beach spawn. Small fixture worlds that exclude this location
+     retain the original origin spawn; ground height comes from solid support. */
+  const int spawnX = 170, spawnZ = 170;
+  if (spawnX >= game->world.minX && spawnX < game->world.minX + config.blocksPerSide &&
+      spawnZ >= game->world.minZ && spawnZ < game->world.minZ + config.blocksPerSide) {
+    Player landSpawn = game->player;
+    landSpawn.position = (Vec3){game->world.origin.x + (float)spawnX * config.blockSize,
+                               game->world.origin.y + config.blockSize,
+                               game->world.origin.z + (float)spawnZ * config.blockSize};
+    const float waterSurface = game->world.origin.y + (float)game->world.waterTopY * config.blockSize;
+    if (player_spawn_on_surface(&landSpawn, &game->world) && landSpawn.position.y > waterSurface)
+      game->player = landSpawn;
+  }
   game->tick = 0;
   return 1;
 }

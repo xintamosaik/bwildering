@@ -1,4 +1,6 @@
 bwildering
+/test_beach_generation
+/test_beach_generation_sanitize
 .md
 stb_image.h
 test_game_logic

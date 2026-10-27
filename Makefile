@@ -11,6 +11,7 @@ FIXTURE_FLAGS = -DBW_RENDERER_TEST
 PAUSE_WRAP = -Wl,--wrap=glfwSetFramebufferSizeCallback -Wl,--wrap=glfwSetWindowUserPointer -Wl,--wrap=glfwSetMouseButtonCallback -Wl,--wrap=glfwSetCursorPosCallback -Wl,--wrap=glfwSetKeyCallback -Wl,--wrap=glfwGetKey -Wl,--wrap=glfwGetMouseButton -Wl,--wrap=glfwGetInputMode -Wl,--wrap=glfwSetInputMode -Wl,--wrap=glfwGetTime -Wl,--wrap=glfwGetWindowUserPointer -Wl,--wrap=glfwGetCursorPos -Wl,--wrap=glfwGetWindowSize -Wl,--wrap=glfwGetFramebufferSize -Wl,--wrap=glfwSetWindowShouldClose -Wl,--wrap=glfwPollEvents
 TEST_TARGET = test_game_logic
 TEST_SRC = tests/test_game_logic.c game_logic.c world_generation.c voxel_world.c storage.c
+BEACH_TEST_SRC = tests/test_beach_generation.c game.c game_logic.c world_generation.c voxel_world.c storage.c
 
 all: $(TARGET)
 
@@ -29,7 +30,11 @@ test_renderer: tests/test_renderer.c $(SRC) $(APP_HEADERS) tests/renderer_test.h
 test_pause_menu: tests/test_pause_menu.c $(SRC) $(APP_HEADERS) tests/renderer_test.h
 	$(CC) $(CFLAGS) tests/test_pause_menu.c application.c $(COMMON_SRC) $(FIXTURE_FLAGS) $(PAUSE_WRAP) -o $@ $(LDFLAGS)
 
-test: test_world_streaming test_game $(TEST_TARGET) test_allocation_failures test_pause_menu test_storage
+test_beach_generation: $(BEACH_TEST_SRC) game.h game_logic.h world_generation.h block_type.h storage.h
+	$(CC) $(CFLAGS) $(BEACH_TEST_SRC) -o $@ -lm
+
+test: test_beach_generation test_world_streaming test_game $(TEST_TARGET) test_allocation_failures test_pause_menu test_storage
+	./test_beach_generation
 	./test_world_streaming
 	./test_game
 	./$(TEST_TARGET)
@@ -42,6 +47,8 @@ test-renderer: test_renderer
 	./test_renderer
 
 test-sanitize:
+	$(CC) -Wall -Wextra -O1 -g -std=c99 -fsanitize=address,undefined -fno-omit-frame-pointer $(BEACH_TEST_SRC) -o test_beach_generation_sanitize -lm
+	./test_beach_generation_sanitize
 	$(CC) -Wall -Wextra -O1 -g -std=c99 -fsanitize=address,undefined -fno-omit-frame-pointer tests/test_world_streaming.c world_streaming.c game_logic.c world_generation.c voxel_world.c storage.c -o test_world_streaming_sanitize -lm
 	./test_world_streaming_sanitize
 	$(CC) -Wall -Wextra -O1 -g -std=c99 -fsanitize=address,undefined -fno-omit-frame-pointer tests/test_game.c game.c game_logic.c world_generation.c voxel_world.c storage.c -o test_game_sanitize -lm
@@ -56,6 +63,7 @@ test-sanitize:
 	./test_pause_menu_sanitize
 
 clean:
+	rm -f test_beach_generation test_beach_generation_sanitize
 	rm -f test_world_streaming test_world_streaming_sanitize test_game test_game_sanitize local_vertex_capture test_storage test_storage_sanitize allocation_capture section_storage_benchmark mesh_query_benchmark mesh_query_profile streaming_capture terrain_capture visibility_capture performance_capture $(TARGET) $(TEST_TARGET) test_allocation_failures test_renderer test_pause_menu test_game_logic_sanitize test_allocation_failures_sanitize test_pause_menu_sanitize
 
 run: all

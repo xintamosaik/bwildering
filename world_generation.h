@@ -12,13 +12,15 @@ enum {
 
 typedef struct {
   int height; /* Exclusive occupied top, including water. */
-  int stoneTopY; /* Exclusive solid top underneath water; later the land surface. */
+  int stoneTopY; /* Exclusive solid top, including sand, dirt and grass caps. */
   BlockType material;
   int deepRockY; /* Exclusive dark-stone top. */
+  int sandDepth;
+  int soilDepth; /* Dirt blocks beneath a single grass block; zero disables grass. */
 } TerrainColumn;
 
-/* Pure voxel sampling for every signed int X/Z. The flat foundation is seed
-   independent; keep seed and coordinates in the interface for later stages. */
+/* Pure voxel sampling for every signed int X/Z. Experimental beach 01 and the
+   surrounding ocean are seed independent until shape variation is introduced. */
 TerrainColumn terrain_sample_column(uint32_t seed, int worldX, int worldZ);
 BlockType terrain_column_block(TerrainColumn column, int y);
 
@@ -29,7 +31,7 @@ int create_platform(World *world, int blocksPerSide, Vec3 center,
 /* Transactional bounded region generation; bounds/transform as world_init_region. */
 int create_terrain_region(World *world, int minX, int minZ, int side,
                           Vec3 origin, float blockSize, uint32_t seed);
-/* Flat stone foundation with static water through TERRAIN_SEA_LEVEL inclusive. */
+/* Experimental beach 01 over the foundation and static ocean. */
 int create_terrain(World *world, int blocksPerSide, Vec3 center,
                    float blockSize, uint32_t seed);
 /* Same terrain and bounds, generated on demand rather than all at startup. */

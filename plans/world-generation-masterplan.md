@@ -1,9 +1,33 @@
 # World generation and persistence masterplan
 
-Status: agreed direction, 27 October 2026. The first flat-foundation step is
-implemented, followed by static water; hierarchical landmasses and disk persistence
-remain planned.
+Status: agreed direction, 27 October 2026. Foundation, static water, swimming, and
+experimental beach 01 are implemented. The full creation hierarchy, islands, and
+disk persistence remain planned.
 Dimensions below are experimental presets, not settled world constants.
+
+## Next creation blueprint: archetypes and a land spawn
+
+Status: the first experimental landmass and beach spawn are implemented. Its size
+and placement are accepted; the full area layout and islands remain planned.
+
+Every creation has one primary landmass, one ocean area, and two archipelago
+areas. Each archipelago area will eventually contain 2–3 small islands; those
+islands are deferred. For the next terrain experiment, develop only the primary
+landmass and leave the reserved archipelago areas as ocean.
+
+The first landmass profile is rather round and mostly flat: shallow coast,
+sandy beach, then a grassy interior. Players should eventually wake up on the
+first landmass. The [experimental small-quadrant implementation plan](world-generation/experiments/01-small-beach-quadrant.md)
+uses `0 <= x,z < 512` and a 256-block dry-land diameter. After the terrain was
+finished, spawn was moved to `(170, 2, 170)`, using solid support to avoid placing
+the requested approximate y=1 inside the beach. The origin remains ocean.
+
+The [creation and archetype index](world-generation/README.md) defines the shared
+contract and links the archetype documents. The detailed next profile is
+[round, flat land with beach and grass](world-generation/archetypes/landmass/round-flat-beach-grass.md).
+Its proposed dimensions are experiments, not approved constants. The older
+hill/mountain experiments below remain future work; this profile takes priority
+for the first landmass.
 
 ## First playable step: flat foundation
 
@@ -104,9 +128,10 @@ warnings. Dry jump/landing and held-key timing checks remain in the existing sui
 ## Intended world
 
 The world is predominantly ocean, with substantial stretches of open water,
-large landmasses, and groups of smaller islands. Land has hills and mountains,
-with continuous stone connecting it to the seabed. Begin with dark stone,
-stone, water, and air; surface materials can follow after the shapes feel right.
+large landmasses, and groups of smaller islands. The first landmass is round and
+mostly flat, with a sandy beach and grassy interior. Other profiles may later
+add hills and mountains. Land connects continuously to the seabed; dark stone,
+stone, water, and surface materials follow the ordered composition below.
 
 Use large squares to organize planning, and successive zoom levels to refine
 their decisions. A planning square owns descriptions; its edges do not constrain
@@ -118,7 +143,7 @@ are independent units and need not have the same dimensions.
 | Owner | Responsibility |
 | --- | --- |
 | Landmass planner | Coarse ocean/land distribution, region categories, landmass centers, bounds, shapes, and regional mountain placement. |
-| World generator | Resolve the plan into column descriptions and block types. Proposed module: `world_generation.c/.h`, extracted from `game_logic.c`. |
+| World generator | Resolve the plan into column descriptions and block types. Implemented in `world_generation.c/.h`, extracted from `game_logic.c`. |
 | World storage | Resident sections, block queries, player edits, and bounded memory ownership. |
 | Streaming coordinator | Schedule chunk loading/generation and eviction within budgets. |
 | Persistence | Encode/decode binary world metadata and chunk snapshots; preserve saved terrain and edits. |
@@ -134,6 +159,11 @@ edit overlay is sufficient to reconstruct every evicted chunk. Integrating that
 change is an explicit implementation stage, not an existing capability.
 
 ## Planning hierarchy
+
+The fixed archetype mix in the creation blueprint is the current composition
+rule. The broader fields and regional probabilities below describe future scale
+and placement options; they must not randomly change the required counts within
+a creation. Layout, area sizes, and whether creations repeat remain open.
 
 1. **World scale:** a seeded coarse field establishes broad oceans, continental
    regions, and archipelago regions. Evaluate locally; do not allocate a complete
@@ -168,7 +198,9 @@ Exploration order, eviction, and restart must not change placement.
    surface, replacing water where necessary while retaining the dark foundation.
 5. Refine the land surface with hills and mountain ranges. Usually reduce relief
    toward coasts; allow selected cliffs. Mountains belong to planned landmasses.
-6. Optionally add beaches, soil, grass, or snow in a later surface-material pass.
+6. Apply the selected profile's surface materials. The first landmass requires
+   sand at the beach, dirt under the grassy interior, and grass on its surface.
+   Snow and other surface profiles remain future work.
 
 These are semantic priorities, not mandatory full-chunk overwrite passes. A
 column can resolve directly to dark stone below the foundation top, stone below

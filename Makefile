@@ -3,13 +3,13 @@ CFLAGS = -Wall -Wextra -O2 -std=c99
 LDFLAGS = -lGLEW -lglfw -lGL -lm -lpthread
 
 TARGET = bwildering
-SRC = main.c game_logic.c voxel_world.c performance.c ui.c
+SRC = main.c game_logic.c voxel_world.c performance.c ui.c input.c
 TEST_TARGET = test_game_logic
 TEST_SRC = tests/test_game_logic.c game_logic.c voxel_world.c
 
 all: $(TARGET)
 
-$(TARGET): $(SRC) game_logic.h performance.h application.h ui.h
+$(TARGET): $(SRC) game_logic.h performance.h application.h ui.h input.h
 	$(CC) $(CFLAGS) $(SRC) -o $(TARGET) $(LDFLAGS)
 
 $(TEST_TARGET): $(TEST_SRC) game_logic.h
@@ -18,10 +18,10 @@ $(TEST_TARGET): $(TEST_SRC) game_logic.h
 test_allocation_failures: tests/test_allocation_failures.c game_logic.c voxel_world.c game_logic.h
 	$(CC) $(CFLAGS) tests/test_allocation_failures.c game_logic.c voxel_world.c -o $@ -lm -Wl,--wrap=malloc,--wrap=calloc
 
-test_renderer: tests/test_renderer.c $(SRC) game_logic.h performance.h application.h ui.h
-	$(CC) $(CFLAGS) tests/test_renderer.c game_logic.c voxel_world.c performance.c ui.c -o $@ $(LDFLAGS)
+test_renderer: tests/test_renderer.c $(SRC) game_logic.h performance.h application.h ui.h input.h
+	$(CC) $(CFLAGS) tests/test_renderer.c game_logic.c voxel_world.c performance.c ui.c input.c -o $@ $(LDFLAGS)
 
-test_pause_menu: tests/test_pause_menu.c $(SRC) game_logic.h performance.h application.h ui.h
+test_pause_menu: tests/test_pause_menu.c $(SRC) game_logic.h performance.h application.h ui.h input.h
 	$(CC) $(CFLAGS) tests/test_pause_menu.c game_logic.c voxel_world.c performance.c -o $@ $(LDFLAGS)
 
 test: $(TEST_TARGET) test_allocation_failures test_pause_menu
@@ -49,17 +49,17 @@ run: all
 
 .PHONY: all clean run test test-renderer test-sanitize
 
-performance_capture: tests/performance_capture.c $(SRC) game_logic.h performance.h application.h ui.h
-	$(CC) $(CFLAGS) tests/performance_capture.c game_logic.c voxel_world.c performance.c ui.c -o $@ $(LDFLAGS)
+performance_capture: tests/performance_capture.c $(SRC) game_logic.h performance.h application.h ui.h input.h
+	$(CC) $(CFLAGS) tests/performance_capture.c game_logic.c voxel_world.c performance.c ui.c input.c -o $@ $(LDFLAGS)
 
-streaming_capture: tests/streaming_capture.c $(SRC) game_logic.h performance.h application.h ui.h
-	$(CC) $(CFLAGS) tests/streaming_capture.c game_logic.c voxel_world.c performance.c ui.c -o $@ $(LDFLAGS)
+streaming_capture: tests/streaming_capture.c $(SRC) game_logic.h performance.h application.h ui.h input.h
+	$(CC) $(CFLAGS) tests/streaming_capture.c game_logic.c voxel_world.c performance.c ui.c input.c -o $@ $(LDFLAGS)
 
-visibility_capture: tests/visibility_capture.c $(SRC) game_logic.h performance.h application.h ui.h
-	$(CC) $(CFLAGS) tests/visibility_capture.c game_logic.c voxel_world.c performance.c ui.c -o $@ $(LDFLAGS)
+visibility_capture: tests/visibility_capture.c $(SRC) game_logic.h performance.h application.h ui.h input.h
+	$(CC) $(CFLAGS) tests/visibility_capture.c game_logic.c voxel_world.c performance.c ui.c input.c -o $@ $(LDFLAGS)
 
-terrain_capture: tests/terrain_capture.c $(SRC) game_logic.h performance.h application.h ui.h
-	$(CC) $(CFLAGS) tests/terrain_capture.c game_logic.c voxel_world.c performance.c ui.c -o $@ $(LDFLAGS)
+terrain_capture: tests/terrain_capture.c $(SRC) game_logic.h performance.h application.h ui.h input.h
+	$(CC) $(CFLAGS) tests/terrain_capture.c game_logic.c voxel_world.c performance.c ui.c input.c -o $@ $(LDFLAGS)
 
 # Headless CPU benchmark; profile timings include instrumentation overhead.
 mesh_query_benchmark: tests/mesh_query_benchmark.c tests/mesh_query_baseline.inc voxel_world.c game_logic.c game_logic.h

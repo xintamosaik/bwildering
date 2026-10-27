@@ -5,17 +5,10 @@
 #include <GLFW/glfw3.h>
 
 #include "game_logic.h"
+#include "input.h"
 #include "performance.h"
 
 /* Internal application state shared with performance instrumentation. */
-typedef struct {
-  double lastX;
-  double lastY;
-  double deltaX;
-  double deltaY;
-  int firstMouse;
-} MouseInput;
-
 typedef struct {
   int chunkX, sectionY, chunkZ;
   GLuint vao, vbo;
@@ -50,7 +43,7 @@ typedef struct {
 struct Application {
   GLFWwindow *window;
   Player player;
-  MouseInput mouseInput;
+  InputState input;
   Renderer renderer;
   World world;
   Performance performance;
@@ -62,13 +55,11 @@ struct Application {
   double simulationAccumulator;
   int fpsFrameCount;
   int fps;
-  int jumpWasDown;
   int jumpQueued;
   int placeQueued;
   int removeQueued;
   int paused;
   int settingsOpen;
-  int escapeWasDown;
   int glfwInitialized;
   int rendererInitialized;
 };

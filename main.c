@@ -19,64 +19,6 @@ static const float DEFAULT_VIEW_DISTANCE = 100.0f;
 
 #pragma endregion
 
-#pragma region Input
-static void mouse_button_callback(GLFWwindow *const window, const int button, const int action, const int mods) {
-  (void)mods;
-  if (action != GLFW_PRESS)
-    return;
-  Application *const application = glfwGetWindowUserPointer(window);
-  if (application && application->paused) {
-    if (button != GLFW_MOUSE_BUTTON_LEFT)
-      return;
-    ui_click(application);
-    return;
-  }
-  if (glfwGetInputMode(window, GLFW_CURSOR) != GLFW_CURSOR_DISABLED)
-    return;
-  if (application) {
-    if (button == GLFW_MOUSE_BUTTON_LEFT)
-      application->placeQueued = 1;
-    else if (button == GLFW_MOUSE_BUTTON_RIGHT)
-      application->removeQueued = 1;
-  }
-}
-
-static void mouse_callback(GLFWwindow *const window, const double position_x, const double position_y) {
-  if (glfwGetInputMode(window, GLFW_CURSOR) != GLFW_CURSOR_DISABLED)
-    return;
-  Application *const application = glfwGetWindowUserPointer(window);
-  if (application == NULL)
-    return;
-  MouseInput *const mouseInput = &application->mouseInput;
-  if (mouseInput->firstMouse) {
-    mouseInput->lastX = position_x;
-    mouseInput->lastY = position_y;
-    mouseInput->firstMouse = 0;
-    return;
-  }
-
-  mouseInput->deltaX += position_x - mouseInput->lastX;
-  mouseInput->deltaY += mouseInput->lastY - position_y;
-  mouseInput->lastX = position_x;
-  mouseInput->lastY = position_y;
-}
-
-static PlayerInput read_player_input(GLFWwindow *const window) {
-  PlayerInput input = {0};
-  input.forward = (float)((glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) -
-                          (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS));
-  input.strafe = (float)((glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) -
-                         (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS));
-  input.jump = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
-  input.run = glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
-              glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
-  input.crouch = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
-                 glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
-  return input;
-}
-
-#pragma endregion
-
 #pragma region Camera
 static void update_camera_front(Camera *const camera) {
   const float radYaw = camera->yaw * 3.14159265f / 180.0f;
@@ -625,8 +567,9 @@ static int application_init(Application *const application) {
                             .pitch = 0.0f,
                             .front = {.x = 0.0f, .y = 0.0f, .z = -1.0f},
                             .up = {.x = 0.0f, .y = 1.0f, .z = 0.0f}}},
-      .mouseInput = {.firstMouse = 1},
   };
+
+  input_init(&application->input);
 
   int worldSide = PLATFORM_BLOCKS_PER_SIDE;
   const char *const configuredSide = getenv("BW_WORLD_SIZE");
@@ -682,8 +625,7 @@ static int application_init(Application *const application) {
   // glfwSwapInterval(1);
 
   glfwSetWindowUserPointer(application->window, application);
-  glfwSetCursorPosCallback(application->window, mouse_callback);
-  glfwSetMouseButtonCallback(application->window, mouse_button_callback);
+  input_attach(application->window);
   glfwSetInputMode(application->window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
   glewExperimental = GL_TRUE;
@@ -770,6 +712,7 @@ static void application_update(Application *const application) {
   GLFWwindow *const window = application->window;
   const int wasPaused = application->paused;
   glfwPollEvents();
+  input_poll(&application->input, window);
 
   const double currentFrame = glfwGetTime();
   double deltaTime = currentFrame - application->lastFrame;
@@ -789,22 +732,24 @@ static void application_update(Application *const application) {
   }
 
   /* Handle pause transitions before consuming gameplay input. */
-  if (ui_handle_escape(application))
+  if (ui_handle_pause(application))
     return;
   if (application->paused || wasPaused) {
     application->simulationAccumulator = 0;
     application->jumpQueued = 0;
     application->placeQueued = 0;
     application->removeQueued = 0;
+    input_discard(&application->input);
     return;
   }
 
   /* Retain a new jump press until a simulation tick can consume it. */
-  update_camera(&application->player.camera, &application->mouseInput);
-  PlayerInput input = read_player_input(window);
-  if (input.jump && !application->jumpWasDown)
+  update_camera(&application->player.camera, &application->input.mouse);
+  PlayerInput input = input_player(&application->input);
+  if (application->input.pressed & INPUT_JUMP)
     application->jumpQueued = 1;
-  application->jumpWasDown = input.jump;
+  application->placeQueued |= (application->input.pressed & INPUT_PLACE) != 0;
+  application->removeQueued |= (application->input.pressed & INPUT_REMOVE) != 0;
   input.jump = 0;
 
   /* Advance physics at a fixed rate, independent of rendering frequency. */

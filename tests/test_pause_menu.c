@@ -5,12 +5,17 @@
 #include <string.h>
 
 static int keys[GLFW_KEY_LAST + 1];
+static int mouseButtons[GLFW_MOUSE_BUTTON_LAST + 1];
 static int cursorMode = GLFW_CURSOR_DISABLED;
 static double now, cursorX, cursorY;
 static int closeRequested, pendingClick;
 static int windowWidth = 640, windowHeight = 480, pixelScale = 1;
 static void *windowUser;
 static int test_get_key(GLFWwindow *window, int key) { (void)window; return keys[key]; }
+static int test_get_mouse_button(GLFWwindow *const window, const int button) {
+  (void)window;
+  return mouseButtons[button];
+}
 static int test_get_input_mode(GLFWwindow *window, int mode) {
   (void)window; (void)mode; return cursorMode;
 }
@@ -35,6 +40,7 @@ static void test_set_close(GLFWwindow *window, int value) {
 static void test_poll_events(void);
 
 #define glfwGetKey test_get_key
+#define glfwGetMouseButton test_get_mouse_button
 #define glfwGetInputMode test_get_input_mode
 #define glfwSetInputMode test_set_input_mode
 #define glfwGetTime test_get_time
@@ -49,6 +55,7 @@ static void test_poll_events(void);
 #undef main
 /* Compile the UI with the same GLFW stubs and inspect its shared layout. */
 #include "../ui.c"
+#include "../input.c"
 
 static void test_poll_events(void) {
   if (pendingClick) {
@@ -102,9 +109,85 @@ static void click_button(Application *application, const char *label) {
   assert(!"Requested menu control is not displayed");
 }
 
+/* Bindings aggregate physical sources before detecting virtual action edges. */
+static void test_virtual_actions(void) {
+  InputState input;
+  input_init(&input);
+  memset(keys, 0, sizeof(keys));
+  memset(mouseButtons, 0, sizeof(mouseButtons));
+  input.keyBindings[GLFW_KEY_W] = 0;
+  input.keyBindings[GLFW_KEY_UP] = INPUT_FORWARD;
+  input.keyBindings[GLFW_KEY_DOWN] = INPUT_BACKWARD;
+  keys[GLFW_KEY_W] = GLFW_PRESS;
+  input_poll(&input, NULL);
+  assert(!input.held && !input.pressed);
+  keys[GLFW_KEY_UP] = GLFW_PRESS;
+  input_poll(&input, NULL);
+  assert(input.held == INPUT_FORWARD && input.pressed == INPUT_FORWARD);
+  assert(input_player(&input).forward == 1.0f);
+  input_poll(&input, NULL);
+  assert(!input.pressed && input.held == INPUT_FORWARD);
+  keys[GLFW_KEY_DOWN] = GLFW_PRESS;
+  keys[GLFW_KEY_A] = GLFW_PRESS;
+  keys[GLFW_KEY_D] = GLFW_PRESS;
+  input_poll(&input, NULL);
+  assert(input_player(&input).forward == 0.0f);
+  assert(input_player(&input).strafe == 0.0f);
+
+  keys[GLFW_KEY_LEFT_CONTROL] = GLFW_PRESS;
+  input_poll(&input, NULL);
+  assert(input.pressed & INPUT_RUN);
+  keys[GLFW_KEY_RIGHT_CONTROL] = GLFW_PRESS;
+  input_poll(&input, NULL);
+  assert(!(input.pressed & INPUT_RUN));
+  keys[GLFW_KEY_LEFT_CONTROL] = GLFW_RELEASE;
+  input_poll(&input, NULL);
+  assert(input_player(&input).run);
+  assert(!(input.pressed & INPUT_RUN));
+  keys[GLFW_KEY_RIGHT_CONTROL] = GLFW_RELEASE;
+  input_poll(&input, NULL);
+  assert(!input_player(&input).run);
+
+  /* A key can activate several actions; mouse buttons use the same virtual map. */
+  input.keyBindings[GLFW_KEY_J] = INPUT_JUMP | INPUT_CROUCH;
+  input.mouseBindings[GLFW_MOUSE_BUTTON_LEFT] = INPUT_JUMP;
+  keys[GLFW_KEY_J] = GLFW_PRESS;
+  input_poll(&input, NULL);
+  assert(input_player(&input).jump && input_player(&input).crouch);
+  mouseButtons[GLFW_MOUSE_BUTTON_LEFT] = GLFW_PRESS;
+  input_poll(&input, NULL);
+  assert(!input_player(&input).jump);
+  keys[GLFW_KEY_J] = GLFW_RELEASE;
+  input_poll(&input, NULL);
+  assert((input.held & INPUT_JUMP) && !input_player(&input).jump);
+  mouseButtons[GLFW_MOUSE_BUTTON_LEFT] = GLFW_RELEASE;
+  input_poll(&input, NULL);
+  assert(!(input.held & INPUT_JUMP));
+
+  Application application = {0};
+  input_init(&application.input);
+  application.input.mouseBindings[GLFW_MOUSE_BUTTON_LEFT] = INPUT_JUMP;
+  windowUser = &application;
+  cursorMode = GLFW_CURSOR_DISABLED;
+  mouse_button_callback(NULL, GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+  mouse_button_callback(NULL, GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
+  input_poll(&application.input, NULL);
+  assert(input_player(&application.input).jump);
+  input_poll(&application.input, NULL);
+  assert(!input_player(&application.input).jump);
+  mouse_button_callback(NULL, GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+  input_discard(&application.input);
+  input_poll(&application.input, NULL);
+  assert(!input_player(&application.input).jump);
+  memset(keys, 0, sizeof(keys));
+}
+
 static void test_view_distance_settings(int width, int height, int density) {
   windowWidth = width; windowHeight = height; pixelScale = density;
   Application application = {0};
+  input_init(&application.input);
+  application.input.keyBindings[GLFW_KEY_ESCAPE] = 0;
+  application.input.keyBindings[GLFW_KEY_F1] = INPUT_PAUSE;
   windowUser = &application;
   memset(keys, 0, sizeof(keys));
   closeRequested = 0;
@@ -116,9 +199,9 @@ static void test_view_distance_settings(int width, int height, int density) {
   /* Keep editable terrain in reach: a leaked gameplay click must have an effect. */
   assert(world_set_block(&application.world, 0, 5, -3, BLOCK_TYPE_STONE));
   assert(world_set_block(&application.world, 0, 6, -3, BLOCK_TYPE_STONE));
-  keys[GLFW_KEY_ESCAPE] = GLFW_PRESS;
+  keys[GLFW_KEY_F1] = GLFW_PRESS;
   frame(&application, 0.02);
-  keys[GLFW_KEY_ESCAPE] = GLFW_RELEASE;
+  keys[GLFW_KEY_F1] = GLFW_RELEASE;
   frame(&application, 0.02);
   Player frozen = application.player;
   size_t voxels = application.world.voxelCount;
@@ -155,18 +238,18 @@ static void test_view_distance_settings(int width, int height, int density) {
   assert(application.paused && !application.settingsOpen && !closeRequested);
   click_button(&application, "SETTINGS");
   assert(application.settingsOpen && application.renderer.viewDistance == MIN_VIEW_DISTANCE);
-  keys[GLFW_KEY_ESCAPE] = GLFW_PRESS;
+  keys[GLFW_KEY_F1] = GLFW_PRESS;
   frame(&application, 0.02);
   assert(application.paused && !application.settingsOpen);
-  keys[GLFW_KEY_ESCAPE] = GLFW_RELEASE;
+  keys[GLFW_KEY_F1] = GLFW_RELEASE;
   frame(&application, 0.02);
-  keys[GLFW_KEY_ESCAPE] = GLFW_PRESS;
+  keys[GLFW_KEY_F1] = GLFW_PRESS;
   frame(&application, 0.02);
   assert(!application.paused && cursorMode == GLFW_CURSOR_DISABLED);
   assert(application.renderer.viewDistance == MIN_VIEW_DISTANCE);
-  keys[GLFW_KEY_ESCAPE] = GLFW_RELEASE;
+  keys[GLFW_KEY_F1] = GLFW_RELEASE;
   frame(&application, 0.02);
-  keys[GLFW_KEY_ESCAPE] = GLFW_PRESS;
+  keys[GLFW_KEY_F1] = GLFW_PRESS;
   frame(&application, 0.02);
   click_button(&application, "SETTINGS");
   assert(application.settingsOpen && application.renderer.viewDistance == MIN_VIEW_DISTANCE);
@@ -174,6 +257,7 @@ static void test_view_distance_settings(int width, int height, int density) {
 }
 
 int main(void) {
+  test_virtual_actions();
   /* Nearest-rank p95, maximum and mean retain spikes above the simulation cap. */
   Performance perf = {.enabled = 1};
   for (int i = 1; i <= 100; i++) {
@@ -192,6 +276,7 @@ int main(void) {
   assert(!perf.count);
 
   Application application = {0};
+  input_init(&application.input);
   windowUser = &application;
   assert(create_platform(&application.world, 16, (Vec3){0}, 1, 1));
   /* Keep editable terrain in reach: a leaked gameplay click must have an effect. */

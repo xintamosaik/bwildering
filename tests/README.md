@@ -37,6 +37,13 @@ identity checks. See [issue 004](../issues/004-mesh-candidate-correctness.md).
 that cannot run LeakSanitizer under tracing can use
 `ASAN_OPTIONS=detect_leaks=0 make test-sanitize`; this does not check leaks.
 
+The headless menu suite also checks virtual action rebinding, opposing movement,
+shared bindings, one-shot presses, buffered mouse clicks, and a remapped pause
+action. Bindings currently live in `InputState.keyBindings` and `mouseBindings`;
+`input_init` installs defaults, and zero removes a binding. `held` tracks active
+actions and `pressed` tracks new presses for each frame. Binding persistence and
+a controls settings screen are not implemented.
+
 The headless menu suite substitutes window input and time, but calls the real
 application update and callbacks. It does not verify GLFW's delivery of physical
 keyboard/mouse events or the visual appearance of menu text.

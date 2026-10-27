@@ -17,10 +17,7 @@ static void application_set_paused(Application *const application, const int pau
   application->jumpQueued = 0;
   application->placeQueued = 0;
   application->removeQueued = 0;
-  application->jumpWasDown = glfwGetKey(application->window, GLFW_KEY_SPACE) == GLFW_PRESS;
-  application->mouseInput.firstMouse = 1;
-  application->mouseInput.deltaX = 0;
-  application->mouseInput.deltaY = 0;
+  input_discard(&application->input);
   glfwSetInputMode(application->window, GLFW_CURSOR,
                    paused ? GLFW_CURSOR_NORMAL : GLFW_CURSOR_DISABLED);
 }
@@ -94,18 +91,14 @@ void ui_click(Application *const application) {
   }
 }
 
-int ui_handle_escape(Application *const application) {
-  const int escapeIsDown = glfwGetKey(application->window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
-  if (escapeIsDown && !application->escapeWasDown) {
-    if (application->paused && application->settingsOpen)
-      application->settingsOpen = 0;
-    else
-      application_set_paused(application, !application->paused);
-    application->escapeWasDown = escapeIsDown;
-    return 1;
-  }
-  application->escapeWasDown = escapeIsDown;
-  return 0;
+int ui_handle_pause(Application *const application) {
+  if (!(application->input.pressed & INPUT_PAUSE))
+    return 0;
+  if (application->paused && application->settingsOpen)
+    application->settingsOpen = 0;
+  else
+    application_set_paused(application, !application->paused);
+  return 1;
 }
 
 static const unsigned char *font_glyph(const char character) {

@@ -1,5 +1,6 @@
 /* Exercise the private renderer in a real GL context without adding test hooks
    or development controls to the game. */
+#include "../world_generation.h"
 #include <stdlib.h>
 #include <assert.h>
 #include "../application_internal.h"
@@ -1276,18 +1277,25 @@ int main(void) {
          1000 * (glfwGetTime() - applicationStart), application.game.world.sectionCount,
          (double)(terrainVertices * sizeof(SurfaceVertex)) / (1024.0 * 1024.0));
   assert(application.game.world.blocksPerSide == PLATFORM_BLOCKS_PER_SIDE);
-  float spawnY = world_surface_height(&application.game.world, application.game.player.position.x,
-                                      application.game.player.position.z);
-  assert(isfinite(spawnY) && application.game.player.position.y == spawnY);
-  for (int i = 0; i < 60; i++)
-    game_step(&application.game, (GameCommand){.yaw = -90.0f});
-  assert(application.game.player.grounded && application.game.player.position.y == spawnY);
-  DepthFrame spawnView = capture_world(&application.renderer, &application.game.player);
+  const float spawnY = application.game.player.position.y;
+  assert(spawnY == 0.0f && !application.game.player.grounded);
+  /* Look down from sea level to assess the foundation while water is absent. */
+  Player foundationView = application.game.player;
+  foundationView.aim = game_aim(-90.0f, -45.0f);
+  DepthFrame spawnView = capture_world(&application.renderer, &foundationView);
   assert_terrain_visible(&spawnView);
   free(spawnView.depth);
+  game_step(&application.game, (GameCommand){.yaw = -90.0f});
+  assert(application.game.player.position.y < spawnY);
+  for (int i = 0; i < 600 && !application.game.player.grounded; i++)
+    game_step(&application.game, (GameCommand){.yaw = -90.0f});
+  const float surfaceY = world_surface_height(&application.game.world,
+      application.game.player.position.x, application.game.player.position.z);
+  assert(application.game.player.grounded &&
+         fabsf(application.game.player.position.y - surfaceY) < 0.001f);
   game_step(&application.game, (GameCommand){.yaw = -90.0f, .movement.jump = 1});
-  assert(!application.game.player.grounded && application.game.player.position.y > spawnY);
-  printf("Application spawn surface: %.1f; grounded and jump checks passed.\n", spawnY);
+  assert(!application.game.player.grounded && application.game.player.position.y > surfaceY);
+  printf("Application spawn: sea-level start, falling, landing, jump and foundation visibility checks passed.\n");
   /* A pending resize is applied exactly once, without polling window sizes. */
   const GLFWframebuffersizefun resize = glfwSetFramebufferSizeCallback(application.window, NULL);
   assert(resize);

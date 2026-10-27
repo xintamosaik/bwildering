@@ -1,3 +1,4 @@
+#include "../world_generation.h"
 #include "../game_logic.h"
 #include "../storage.h"
 #include <assert.h>

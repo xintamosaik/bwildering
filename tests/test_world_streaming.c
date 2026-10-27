@@ -1,3 +1,4 @@
+#include "../world_generation.h"
 #include "../world_streaming.h"
 #include <assert.h>
 #include <math.h>

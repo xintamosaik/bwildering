@@ -1,4 +1,5 @@
 /* Opt-in representation experiment. Production meshing/upload/drawing is unchanged. */
+#include "../world_generation.h"
 #include "renderer_test.h"
 #include <assert.h>
 

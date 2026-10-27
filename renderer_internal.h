@@ -34,6 +34,9 @@ struct Renderer {
   GLuint program;
   GLint mvpLocation;
   GLint colorLocation;
+  GLint blockGridLocation;
+  Vec3 worldOrigin;
+  float blockSize;
   int framebufferWidth;
   int framebufferHeight;
   float viewDistance;

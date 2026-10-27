@@ -1,4 +1,5 @@
 /* Opt-in, serial real-context allocation capture; no per-allocation clocks. */
+#include "../world_generation.h"
 #include "renderer_test.h"
 #include <assert.h>
 #include <sys/resource.h>

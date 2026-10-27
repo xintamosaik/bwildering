@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "block_type.h"
 
 typedef struct {
   float x;
@@ -33,20 +34,6 @@ typedef struct {
   int crouch;
 } PlayerInput;
 
-typedef enum {
-  /* Zero is grass; initialize air storage to BLOCK_TYPE_EMPTY, not zero. */
-  BLOCK_TYPE_GRASS,
-  BLOCK_TYPE_STONE,
-  BLOCK_TYPE_WATER,
-  BLOCK_TYPE_SAND,
-  BLOCK_TYPE_DIRT,
-  BLOCK_TYPE_GRAVEL,
-  BLOCK_TYPE_DARK_STONE,
-  BLOCK_TYPE_SNOW,
-  BLOCK_TYPE_COUNT,
-  BLOCK_TYPE_EMPTY = UINT8_MAX
-} BlockType;
-
 typedef struct {
   float x;
   float y;
@@ -70,22 +57,6 @@ enum {
   WORLD_EDIT_CAPACITY = 65536,
   WORLD_MIN_SECTION_Y = -8,
   WORLD_SECTION_COUNT = 32,
-  TERRAIN_BASE_Y = -128,
-  TERRAIN_SEA_LEVEL = 0,
-  TERRAIN_DEEP_ROCK_Y = -64,
-  TERRAIN_SHORE_MIN = -20, TERRAIN_SHORE_MAX = 5,
-  TERRAIN_STONE_Y = 160, TERRAIN_SNOW_Y = 260,
-  TERRAIN_SOIL_MIN = 3, TERRAIN_SOIL_MAX = 6,
-  TERRAIN_SAND_MIN = 2, TERRAIN_SAND_MAX = 5,
-  TERRAIN_GRAVEL_MIN = 1, TERRAIN_GRAVEL_MAX = 3,
-  TERRAIN_SNOW_MIN = 1, TERRAIN_SNOW_MAX = 3,
-  TERRAIN_SURFACE_MIN = -85, TERRAIN_SURFACE_MAX = 370,
-  /* Horizontal feature widths in blocks; vertical relief is independent. */
-  TERRAIN_RELIEF_SCALE = 256,
-  TERRAIN_MOUNTAIN_REGION_SCALE = 512,
-  TERRAIN_RIDGE_SCALE = 128,
-  TERRAIN_HILL_SCALE = 32,
-  TERRAIN_DETAIL_SCALE = 8,
   /* Bounded storage leaves ample room for section corners and neighbours. */
   WORLD_COORD_MIN = -1048575,
   WORLD_COORD_MAX = 1048575
@@ -132,7 +103,7 @@ typedef struct {
 /* Owning type: initialize to zero, destroy explicitly, and do not copy by value.
    Missing sections read as air in ordinary worlds; streamed worlds synthesize
    missing chunks from their seed. Horizontal side is 1..WORLD_MAX_BLOCKS_PER_SIDE;
-   generated voxel Y is [-128,384); edits use WORLD_COORD_MIN..MAX.
+   generated solids occupy [-128,-32); edits use WORLD_COORD_MIN..MAX.
    Empty allocated sections remain owned retirement markers until CPU eviction
    or destruction;
    sectionCount includes them. Renderer sync must retire their GPU geometry.
@@ -214,33 +185,7 @@ BlockType world_get_block(const World *world, int x, int y, int z);
 int world_set_block(World *world, int x, int y, int z, BlockType type);
 /* Highest occupied surface, for spawn selection (not cave collision). */
 float world_surface_height(const World *world, float x, float z);
-/* Returns a value in [0, upperBound). NULL state or zero bound returns zero
-   without advancing state. For positive bounds, a zero state is replaced with
-   0x6D2B79F5 before advancing the generator. */
-uint32_t random_bounded(uint32_t *state, uint32_t upperBound);
 int block_type_color(BlockType type, Vec3 *color);
-int create_platform(World *world, int blocksPerSide, Vec3 center,
-                    float blockSize, uint32_t seed);
-typedef struct {
-  int height; /* Filled voxels are TERRAIN_BASE_Y through height-1. */
-  BlockType material; /* Highest occupied block. */
-  int deepRockY, soilDepth, sandDepth, gravelDepth, snowDepth;
-} TerrainColumn;
-
-/* Pure signed voxel sampling, independent of bounds and render transform.
-   Sampler accepts every int X/Z. Noise supports powers of two from 8 to 2048. */
-float terrain_noise(int worldX, int worldZ, int scale, uint32_t seed);
-TerrainColumn terrain_sample_column(uint32_t seed, int worldX, int worldZ);
-BlockType terrain_column_block(TerrainColumn column, int y);
-/* Transactional bounded region generation; bounds/transform as world_init_region. */
-int create_terrain_region(World *world, int minX, int minZ, int side,
-                          Vec3 origin, float blockSize, uint32_t seed);
-/* Seeded heightfield with signed basins, mountain regions and shallow layers. */
-int create_terrain(World *world, int blocksPerSide, Vec3 center,
-                   float blockSize, uint32_t seed);
-/* Same terrain and bounds, generated on demand rather than all at startup. */
-int create_terrain_streamed(World *world, int blocksPerSide, Vec3 center,
-                            float blockSize, uint32_t seed);
 /* Transactionally fill missing sections, preserving edits already in this chunk. */
 int world_materialize_chunk(World *world, int chunkX, int chunkZ);
 /* Evict procedural CPU caches; subsequent reads use seed plus session overlay.

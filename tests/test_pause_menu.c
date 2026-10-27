@@ -1,4 +1,5 @@
 /* Drive the real application update and mouse callbacks without an X11/GL context. */
+#include "../world_generation.h"
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <assert.h>

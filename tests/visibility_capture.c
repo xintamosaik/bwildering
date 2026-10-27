@@ -1,5 +1,6 @@
 /* Comparison implementations live only in this opt-in experiment.
    Record exact submitted ranges only during untimed correctness snapshots. */
+#include "../world_generation.h"
 #include <GL/glew.h>
 void __real_glDrawArrays(GLenum mode, GLint first, GLsizei count);
 #include <assert.h>

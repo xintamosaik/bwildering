@@ -1,4 +1,5 @@
 /* Fixed-seed travel benchmark with real GL resource retirement and no edits. */
+#include "../world_generation.h"
 #include "renderer_test.h"
 #include <assert.h>
 #include <sys/resource.h>

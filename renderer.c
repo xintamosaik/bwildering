@@ -54,12 +54,38 @@ RENDERER_PRIVATE GLuint create_shader_program(void) {
       "#version 330 core\n"
       "out vec4 FragColor;\n"
       "uniform vec3 color;\n"
+      "uniform vec4 blockGrid; // World origin and inverse block size; zero disables detail for UI.\n"
       "in vec3 worldPosition;\n"
+      "uint blockHash(ivec3 cell) {\n"
+      "    uvec3 p = uvec3(cell);\n"
+      "    uint h = p.x * 0x9e3779b9u ^ p.y * 0x85ebca6bu ^ p.z * 0xc2b2ae35u;\n"
+      "    h ^= h >> 16; h *= 0x7feb352du; h ^= h >> 15;\n"
+      "    return h;\n"
+      "}\n"
       "void main() {\n"
       "    vec3 normal = normalize(cross(dFdx(worldPosition), dFdy(worldPosition)));\n"
       "    if (!gl_FrontFacing) normal = -normal;\n"
       "    float light = 0.45 + 0.55 * max(dot(normal, normalize(vec3(-0.4, 1.0, 0.3))), 0.0);\n"
-      "    FragColor = vec4(color * light, 1.0);\n"
+      "    vec3 tint = color;\n"
+      "    if (blockGrid.w > 0.0) {\n"
+      "        vec3 grid = (worldPosition - blockGrid.xyz) * blockGrid.w;\n"
+      "        uint h = blockHash(ivec3(floor(grid - normal * 0.001)));\n"
+      "        float shade = float(h & 1023u) / 1023.0 - 0.5;\n"
+      "        float warmth = float((h >> 10) & 1023u) / 1023.0 - 0.5;\n"
+      "        tint = color * (1.0 + 0.05 * shade) + vec3(0.018, 0.003, -0.014) * warmth;\n"
+      "        vec3 axis = abs(normal);\n"
+      "        vec2 face = axis.x > 0.5 ? grid.zy : axis.y > 0.5 ? grid.xz : grid.xy;\n"
+      "        vec2 pixel = max(fwidth(face), vec2(0.0001));\n"
+      "        vec2 uv = fract(face);\n"
+      "        vec2 edgeDistance = min(uv, 1.0 - uv);\n"
+      "        vec2 border = 1.0 - smoothstep(vec2(0.012) - pixel, vec2(0.028) + pixel, edgeDistance);\n"
+      "        float fade = 1.0 - smoothstep(0.04, 0.18, max(pixel.x, pixel.y));\n"
+      "        float edge = max(border.x, border.y) * fade;\n"
+      "        vec2 rim = 1.0 - smoothstep(vec2(0.025) - pixel, vec2(0.055) + pixel, vec2(uv.x, 1.0 - uv.y));\n"
+      "        float accent = max(rim.x, rim.y) * fade * (1.0 - edge);\n"
+      "        tint *= 1.0 - 0.10 * edge + 0.025 * accent;\n"
+      "    }\n"
+      "    FragColor = vec4(tint * light, 1.0);\n"
       "}\n";
 
   const GLuint vertexShader = compile_shader(GL_VERTEX_SHADER, vertexShaderSource);
@@ -158,6 +184,12 @@ int renderer_init(Renderer *const renderer) {
     renderer_destroy(renderer);
     return 0;
   }
+  renderer->blockGridLocation = glGetUniformLocation(renderer->program, "blockGrid");
+  if (renderer->blockGridLocation < 0) {
+    fprintf(stderr, "Failed to locate block grid uniform\n");
+    renderer_destroy(renderer);
+    return 0;
+  }
 
   return 1;
 }
@@ -231,6 +263,8 @@ static int mesh_identity_compare(const SectionGpuMesh *const m, const int x, con
 /* Resident records follow chunk X/Z and signed section Y, allowing a linear
    merge when residency changes. GPU handles move without replacing geometry. */
 static int renderer_prepare_world(Renderer *const renderer, const World *const world) {
+  renderer->worldOrigin = world->origin;
+  renderer->blockSize = world->blockSize;
   size_t i = 0;
   int same = renderer->meshCount == world->sectionCount;
   for (size_t c = 0; same && c < world->chunkCount; c++)
@@ -526,6 +560,8 @@ void render_world(Renderer *const renderer, const View camera) {
   glUseProgram(renderer->program);
 
   mat4 proj, view, mvp;
+  glUniform4f(renderer->blockGridLocation, renderer->worldOrigin.x, renderer->worldOrigin.y,
+              renderer->worldOrigin.z, renderer->blockSize > 0.0f ? 1.0f / renderer->blockSize : 1.0f);
   const float aspectRatio =
       (float)renderer->framebufferWidth / (float)renderer->framebufferHeight;
   const float viewDistance = renderer->viewDistance > 0 ? renderer->viewDistance : DEFAULT_VIEW_DISTANCE;
@@ -616,6 +652,7 @@ UiDrawState ui_draw_begin(const UiDrawContext *const draw, const UiDrawMode mode
     glBindBuffer(GL_ARRAY_BUFFER, renderer->textVbo);
   }
   if (!menu) glDisable(GL_DEPTH_TEST);
+  glUniform4f(renderer->blockGridLocation, 0.0f, 0.0f, 0.0f, 0.0f);
   return state;
 }
 

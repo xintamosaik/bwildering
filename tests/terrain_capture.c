@@ -1,4 +1,5 @@
-/* Reproducible dry-basin/material review; writes PPM frames to /tmp. */
+/* Reproducible flat-foundation views; writes PPM frames to /tmp. */
+#include "../world_generation.h"
 #include "../application_internal.h"
 #include <stdio.h>
 #include <math.h>
@@ -27,27 +28,17 @@ int main(void) {
   r.framebufferWidth = 960;
   r.framebufferHeight = 640;
   r.viewDistance = 300;
-  const BlockType types[] = {BLOCK_TYPE_DARK_STONE, BLOCK_TYPE_SAND, BLOCK_TYPE_GRAVEL,
-                             BLOCK_TYPE_GRASS, BLOCK_TYPE_STONE, BLOCK_TYPE_SNOW};
-  const char *names[] = {"basin", "sand", "gravel", "lowland", "mountain", "snow"};
-  for (int scene = 0; scene < 6; scene++) {
-    int found = 0, wx = 0, wz = 0;
-    TerrainColumn column = {0};
-    for (int x = -2048; x <= 2048 && !found; x += 16)
-      for (int z = -2048; z <= 2048 && !found; z += 16) {
-        TerrainColumn c = terrain_sample_column(1, x, z);
-        if (c.material != types[scene]) continue;
-        if (scene == 3 && (c.height < 8 || c.height > 80)) continue;
-        if (scene == 4 && c.height < 180) continue;
-        if (scene == 5 && c.height < 300) continue;
-        wx = x; wz = z; column = c; found = 1;
-      }
-    assert(found);
-    Player p = {.position = {(float)wx + 0.5f, (float)column.height + 24.0f, (float)wz + 32.5f}, .eyeHeight = 1,
-                .aim = {.front = {0, -0.6f, -0.8f}}};
-    /* Steeper terrain can rise above the target at the camera's offset. */
-    p.position.y = fmaxf(p.position.y, world_surface_height(&world, p.position.x, p.position.z) + 12);
-    p.aim.front = vec3_normalize((Vec3){0, (float)column.height - (p.position.y + p.eyeHeight), -32});
+  const char *const names[] = {"sea-level", "seabed", "edge"};
+  const Player views[] = {
+      {.position = {0.5f, 0.0f, 0.5f}, .eyeHeight = 1.0f,
+       .aim = {.front = {0.0f, -0.6f, -0.8f}}},
+      {.position = {0.5f, -30.0f, 0.5f}, .eyeHeight = 1.0f,
+       .aim = {.front = {0.0f, -0.2f, -0.98f}}},
+      {.position = {3088.0f, -48.0f, 0.5f}, .eyeHeight = 1.0f,
+       .aim = {.front = {-0.8f, -0.6f, 0.0f}}},
+  };
+  for (size_t scene = 0; scene < sizeof(views) / sizeof(*views); scene++) {
+    const Player p = views[scene];
     assert(application_stream_view(&rStreaming, &r, &world, &p, NULL));
     glClearColor(0.62f, 0.72f, 0.80f, 1);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -62,8 +53,8 @@ int main(void) {
     fprintf(file, "P6\n960 640\n255\n");
     for (int y = 639; y >= 0; y--) assert(fwrite(pixels + y * 960 * 3, 1, 960 * 3, file) == 960 * 3);
     fclose(file);
-    printf("%s: seed 1, voxel (%d, %d, %d), camera Y %.1f -> %s\n", names[scene], wx,
-           column.height - 1, wz, p.position.y, path);
+    printf("%s: camera (%.1f, %.1f, %.1f) -> %s\n", names[scene],
+           p.position.x, p.position.y, p.position.z, path);
   }
   renderer_destroy(&r);
   world_destroy(&world);

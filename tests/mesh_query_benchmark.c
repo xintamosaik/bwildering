@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+#include "../world_generation.h"
 #include "../game_logic.h"
 #include <assert.h>
 #include <stdio.h>

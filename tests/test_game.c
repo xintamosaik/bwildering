@@ -1,3 +1,4 @@
+#include "../world_generation.h"
 #include "../game.h"
 #include "../view.h"
 #include "../storage.h"
@@ -23,15 +24,24 @@ static void test_lifetime_and_spawn(void) {
     assert(world->terrainSeed == configs[i].seed);
     assert(world->blocksPerSide == configs[i].blocksPerSide);
     assert(world->blockSize == configs[i].blockSize);
-    assert(player->grounded && game.tick == 0);
+    assert(!player->grounded && game.tick == 0);
     const Vec3 spawn = player->position;
-    assert(isfinite(spawn.y));
-    for (int tick = 0; tick < 60; tick++)
+    assert(isfinite(spawn.y) && spawn.y == configs[i].center.y);
+    game_step(&game, (GameCommand){.yaw = -90.0f});
+    assert(player->position.y < spawn.y && player->velocityY < 0.0f);
+    for (int tick = 0; tick < 600 && !player->grounded; tick++)
       game_step(&game, (GameCommand){.yaw = -90.0f});
-    assert(game.tick == 60 && player->grounded);
-    assert(fabsf(player->position.y - spawn.y) < 0.001f);
+    const float surfaceY = configs[i].center.y + (float)TERRAIN_STONE_TOP_Y * configs[i].blockSize;
+    assert(player->grounded && fabsf(player->position.y - surfaceY) < 0.001f);
     game_step(&game, (GameCommand){.yaw = -90.0f, .movement.jump = 1});
-    assert(!player->grounded && player->position.y > spawn.y);
+    assert(!player->grounded && player->position.y > surfaceY && player->velocityY > 0.0f);
+    for (int tick = 0; tick < 600 && !player->grounded; tick++)
+      game_step(&game, (GameCommand){.yaw = -90.0f});
+    assert(player->grounded && fabsf(player->position.y - surfaceY) < 0.001f);
+    const float initialZ = player->position.z;
+    for (int tick = 0; tick < 10; tick++)
+      game_step(&game, (GameCommand){.yaw = -90.0f, .movement.forward = 1.0f});
+    assert(player->position.z < initialZ);
     game_destroy(&game);
     assert(!game.world.storage && !game.world.chunks && game.tick == 0);
     game_destroy(&game);

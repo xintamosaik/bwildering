@@ -83,6 +83,7 @@ void world_destroy(World *const world) {
       Subchunk *section = world->chunks[c].sections;
       while (section) { Subchunk *const next = section->next; section_destroy(section); section = next; }
     }
+  free(world->edits);
   free(world->chunks);
   *world = (World){0};
 }
@@ -197,6 +198,34 @@ static int block_index(const int x, const int y, const int z) {
          voxel_local_coord(z);
 }
 
+static const VoxelEdit *find_edit(const World *const world, const Chunk *const chunk,
+                                   const int x, const int y, const int z) {
+  for (uint32_t i = chunk->editHead; i; i = world->edits[i - 1].next) {
+    const VoxelEdit *const edit = &world->edits[i - 1];
+    if (edit->x == x && edit->y == y && edit->z == z) return edit;
+  }
+  return NULL;
+}
+
+static BlockType baseline_block(const World *const world, const int x, const int y, const int z) {
+  return world->proceduralTerrain && y >= TERRAIN_BASE_Y &&
+      y < (WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT) * SECTION_SIZE ?
+      terrain_column_block(MESH_BENCH_SAMPLE(world->terrainSeed, x, z), y) : BLOCK_TYPE_EMPTY;
+}
+
+static void include_resident_chunk(World *const world, const int cx, const int cz) {
+  if (!world->hasMaterializedBounds) {
+    world->minMaterializedChunkX = world->maxMaterializedChunkX = cx;
+    world->minMaterializedChunkZ = world->maxMaterializedChunkZ = cz;
+    world->hasMaterializedBounds = 1;
+  } else {
+    if (cx < world->minMaterializedChunkX) world->minMaterializedChunkX = cx;
+    if (cx > world->maxMaterializedChunkX) world->maxMaterializedChunkX = cx;
+    if (cz < world->minMaterializedChunkZ) world->minMaterializedChunkZ = cz;
+    if (cz > world->maxMaterializedChunkZ) world->maxMaterializedChunkZ = cz;
+  }
+}
+
 BlockType world_get_block(const World *const world, const int x, const int y, const int z) {
   if (!in_bounds(world, x, y, z))
     return BLOCK_TYPE_EMPTY;
@@ -205,11 +234,12 @@ BlockType world_get_block(const World *const world, const int x, const int y, co
   if (section)
     return section_block(section, block_index(x, y, z));
 
-  /* Unmaterialized chunks still answer reads from procedural terrain. */
+  /* Missing cache data reads from authoritative overlay before the seed. */
   const Chunk *const chunk = find_chunk(world, voxel_section_coord(x), voxel_section_coord(z));
-  if (world->proceduralTerrain && !chunk->terrainReady &&
-      y >= TERRAIN_BASE_Y && y < (WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT) * SECTION_SIZE)
-    return terrain_column_block(MESH_BENCH_SAMPLE(world->terrainSeed, x, z), y);
+  const VoxelEdit *const edit = find_edit(world, chunk, x, y, z);
+  if (edit) return (BlockType)edit->material;
+  if (world->proceduralTerrain && !chunk->terrainReady)
+    return baseline_block(world, x, y, z);
   return BLOCK_TYPE_EMPTY;
 }
 
@@ -220,8 +250,6 @@ static Subchunk *terrain_section(const World *const world, const int cx, const i
     return NULL;
   *section = (Subchunk){.storage = SECTION_EMPTY, .material = BLOCK_TYPE_EMPTY,
       .dirty = 1, .meshCandidate = 1, .sectionY = sy};
-  if (sy < WORLD_MIN_SECTION_Y || sy >= WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT)
-    return section;
 
   /* Stack staging avoids allocating a dense payload for homogeneous terrain. */
   uint8_t blocks[SECTION_VOLUME];
@@ -235,11 +263,24 @@ static Subchunk *terrain_section(const World *const world, const int cx, const i
       const TerrainColumn column = columns ? columns[x][z] :
           MESH_BENCH_SAMPLE(world->terrainSeed, wx, wz);
       for (int y = 0; y < SECTION_SIZE; y++) {
-        const BlockType type = terrain_column_block(column, sy * SECTION_SIZE + y);
+        const int wy = sy * SECTION_SIZE + y;
+        const BlockType type = wy >= TERRAIN_BASE_Y &&
+            wy < (WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT) * SECTION_SIZE ?
+            terrain_column_block(column, wy) : BLOCK_TYPE_EMPTY;
         blocks[(x * SECTION_SIZE + y) * SECTION_SIZE + z] = (uint8_t)type;
         section->voxelCount += type != BLOCK_TYPE_EMPTY;
       }
     }
+
+  const Chunk *const chunk = find_chunk(world, cx, cz);
+  for (uint32_t i = chunk->editHead; i; i = world->edits[i - 1].next) {
+    const VoxelEdit *const edit = &world->edits[i - 1];
+    if (voxel_section_coord(edit->y) != sy) continue;
+    const int index = block_index(edit->x, edit->y, edit->z);
+    section->voxelCount -= blocks[index] != BLOCK_TYPE_EMPTY;
+    blocks[index] = edit->material;
+    section->voxelCount += blocks[index] != BLOCK_TYPE_EMPTY;
+  }
 
   /* Keep homogeneous sections compact; only mixed sections need a payload. */
   const uint8_t material = blocks[0];
@@ -307,7 +348,38 @@ int world_materialize_chunk(World *const world, const int cx, const int cz) {
     }
   }
 
+  /* Sparse edits outside generated elevations need their own staged sections. */
+  Chunk extra = {0};
+  for (uint32_t i = chunk->editHead; i; i = world->edits[i - 1].next) {
+    const int sy = voxel_section_coord(world->edits[i - 1].y);
+    Subchunk **const slot = section_slot(&extra, sy);
+    if (world_section(world, cx, sy, cz) || (*slot && (*slot)->sectionY == sy) ||
+        (sy >= WORLD_MIN_SECTION_Y && sy < WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT &&
+         pending[sy - WORLD_MIN_SECTION_Y])) continue;
+    Subchunk *const section = terrain_section(world, cx, sy, cz, columns);
+    if (!section) {
+      for (int j = 0; j < WORLD_SECTION_COUNT; j++) section_destroy(pending[j]);
+      while (extra.sections) {
+        Subchunk *const next = extra.sections->next;
+        section_destroy(extra.sections);
+        extra.sections = next;
+      }
+      return 0;
+    }
+    section->next = *slot;
+    *slot = section;
+  }
+
   /* Commit the staged sections and their counts together. */
+  while (extra.sections) {
+    Subchunk *const section = extra.sections;
+    extra.sections = section->next;
+    Subchunk **const slot = section_slot(chunk, section->sectionY);
+    section->next = *slot;
+    *slot = section;
+    world->sectionCount++;
+    world->voxelCount += section->voxelCount;
+  }
   for (int s = 0; s < WORLD_SECTION_COUNT; s++)
     if (pending[s]) {
       Subchunk **const slot = section_slot(chunk, pending[s]->sectionY);
@@ -318,22 +390,13 @@ int world_materialize_chunk(World *const world, const int cx, const int cz) {
     }
 
   chunk->terrainReady = 1;
-  if (!world->hasMaterializedBounds) {
-    world->minMaterializedChunkX = world->maxMaterializedChunkX = cx;
-    world->minMaterializedChunkZ = world->maxMaterializedChunkZ = cz;
-    world->hasMaterializedBounds = 1;
-  } else {
-    if (cx < world->minMaterializedChunkX) world->minMaterializedChunkX = cx;
-    if (cx > world->maxMaterializedChunkX) world->maxMaterializedChunkX = cx;
-    if (cz < world->minMaterializedChunkZ) world->minMaterializedChunkZ = cz;
-    if (cz > world->maxMaterializedChunkZ) world->maxMaterializedChunkZ = cz;
-  }
+  include_resident_chunk(world, cx, cz);
   return 1;
 }
 
 void world_release_chunk(World *const world, const int cx, const int cz) {
   Chunk *const chunk = find_chunk_mut(world, cx, cz);
-  if (!chunk || !world->proceduralTerrain || chunk->edited)
+  if (!chunk || !world->proceduralTerrain)
     return;
   Subchunk *section = chunk->sections;
   while (section) {
@@ -362,7 +425,7 @@ size_t world_release_chunks_outside(World *const world, const int minX, const in
         continue;
       }
       const Chunk *const chunk = find_chunk(world, x, z);
-      if (chunk && !chunk->edited && (chunk->terrainReady || chunk->sections)) {
+      if (chunk && (chunk->terrainReady || chunk->sections)) {
         world_release_chunk(world, x, z);
         released++;
       }
@@ -396,15 +459,30 @@ int world_set_block(World *const world, const int x, const int y, const int z, c
   if ((missing ? world_get_block(world, x, y, z) : section_block(*slot, index)) == type)
     return 1;
 
+  const BlockType baseline = baseline_block(world, x, y, z);
+  uint32_t *editSlot = &chunk->editHead;
+  while (*editSlot) {
+    const VoxelEdit *const edit = &world->edits[*editSlot - 1];
+    if (edit->x == x && edit->y == y && edit->z == z) break;
+    editSlot = &world->edits[*editSlot - 1].next;
+  }
+  const int insert = world->proceduralTerrain && type != baseline && !*editSlot;
+  if (insert && world->editCount == WORLD_EDIT_CAPACITY) return 0;
+  /* Reserve the whole arena once, without publishing ownership on failure. */
+  VoxelEdit *const arena = insert && !world->edits ?
+      malloc(WORLD_EDIT_CAPACITY * sizeof(*arena)) : NULL;
+  if (insert && !world->edits && !arena) return 0;
+
   /* Prepare writable storage before linking a new section into the world. */
   Subchunk *const section = missing ?
       (world->proceduralTerrain && !chunk->terrainReady ?
        terrain_section(world, cx, sy, cz, NULL) : calloc(1, sizeof(*section))) : *slot;
-  if (!section) return 0;
+  if (!section) { free(arena); return 0; }
   if (missing && section->storage == SECTION_EMPTY) section->material = BLOCK_TYPE_EMPTY;
   const BlockType old = section_block(section, index);
   if (!section_expand(section)) {
     if (missing) section_destroy(section);
+    free(arena);
     return 0;
   }
   if (missing) {
@@ -428,8 +506,28 @@ int world_set_block(World *const world, const int x, const int y, const int z, c
   section_compact(section);
   section->dirty = 1;
   section->revision++;
-  if (world->proceduralTerrain)
-    chunk->edited = 1;
+  if (world->proceduralTerrain) {
+    if (arena) world->edits = arena;
+    if (insert) {
+      const uint32_t entry = world->editFree ? world->editFree : ++world->editUsed;
+      if (world->editFree) world->editFree = world->edits[entry - 1].next;
+      world->edits[entry - 1] = (VoxelEdit){.x = x, .y = y, .z = z,
+          .material = (uint8_t)type};
+      *editSlot = entry;
+      world->editCount++;
+    } else if (*editSlot) {
+      VoxelEdit *const edit = &world->edits[*editSlot - 1];
+      if (type == baseline) {
+        const uint32_t entry = *editSlot;
+        *editSlot = edit->next;
+        edit->next = world->editFree;
+        world->editFree = entry;
+        world->editCount--;
+      } else edit->material = (uint8_t)type;
+    }
+    chunk->edited = chunk->editHead != 0;
+    include_resident_chunk(world, cx, cz);
+  }
 
   /* Only face neighbors depend on the changed voxel. Keep empty sections as
      tombstones so the renderer can retire their previous GPU meshes. */
@@ -474,11 +572,19 @@ float world_surface_height(const World *const world, const float x, const float 
     const TerrainColumn column = terrain_sample_column(world->terrainSeed, ix, iz);
     int y = column.height - 1;
     while (y >= TERRAIN_BASE_Y) {
-      const Subchunk *const section = world_section(world, voxel_section_coord(ix), voxel_section_coord(y), voxel_section_coord(iz));
-      if (!section || block_is_solid(section_block(section, block_index(ix, y, iz)))) break;
+      if (block_is_solid(world_get_block(world, ix, y, iz))) break;
       y--;
     }
     if (y >= TERRAIN_BASE_Y) { top = y + 1; found = 1; }
+  }
+
+  for (uint32_t i = chunk->editHead; i; i = world->edits[i - 1].next) {
+    const VoxelEdit *const edit = &world->edits[i - 1];
+    if (edit->x == ix && edit->z == iz && block_is_solid((BlockType)edit->material) &&
+        (!found || edit->y + 1 > top)) {
+      top = edit->y + 1;
+      found = 1;
+    }
   }
 
   /* Stored sections can contain edits above the generated surface. */
@@ -520,6 +626,10 @@ static BlockType mesh_boundary_block(const World *const world, MeshNeighbors *co
   if (!in_bounds(world, wx, wy, wz)) return BLOCK_TYPE_EMPTY;
   if (cache->sections[d])
     return section_block(cache->sections[d], block_index(x, y, z));
+  if (cache->chunks[d]) {
+    const VoxelEdit *const edit = find_edit(world, cache->chunks[d], wx, wy, wz);
+    if (edit) return (BlockType)edit->material;
+  }
   if (!world->proceduralTerrain || !cache->chunks[d] || cache->chunks[d]->terrainReady ||
       wy < TERRAIN_BASE_Y || wy >= (WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT) * SECTION_SIZE)
     return BLOCK_TYPE_EMPTY;

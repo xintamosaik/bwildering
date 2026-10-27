@@ -66,6 +66,7 @@ enum {
   WORLD_MAX_BLOCKS_PER_SIDE = 6144,
   SECTION_SIZE = 16,
   SECTION_VOLUME = 16 * 16 * 16,
+  WORLD_EDIT_CAPACITY = 65536,
   WORLD_MIN_SECTION_Y = -8,
   WORLD_SECTION_COUNT = 32,
   TERRAIN_BASE_Y = -128,
@@ -110,22 +111,34 @@ static inline BlockType section_block(const Subchunk *const section, const size_
       (BlockType)(section->storage == SECTION_UNIFORM ? section->material : section->blocks[index]);
 }
 
+/* One world-owned arena; indices are one-based, zero terminates sparse lists. */
+typedef struct {
+  int x, y, z;
+  uint32_t next;
+  uint8_t material; /* Includes explicit EMPTY removals. */
+} VoxelEdit;
+
 typedef struct {
   int x, z;
   Subchunk *sections; /* Sorted by signed sectionY; includes empty edit markers. */
   int terrainReady;
-  int edited;
+  int edited; /* Overlay presence, independent of resident sections. */
+  uint32_t editHead;
 } Chunk;
 
 /* Owning type: initialize to zero, destroy explicitly, and do not copy by value.
    Missing sections read as air in ordinary worlds; streamed worlds synthesize
    missing chunks from their seed. Horizontal side is 1..WORLD_MAX_BLOCKS_PER_SIDE;
    generated voxel Y is [-128,384); edits use WORLD_COORD_MIN..MAX.
-   Empty allocated sections remain owned retirement markers until destruction;
+   Empty allocated sections remain owned retirement markers until CPU eviction
+   or destruction;
    sectionCount includes them. Renderer sync must retire their GPU geometry.
    Voxel coordinates are signed; render positions use origin + voxel * blockSize. */
 typedef struct {
   Chunk *chunks;
+  VoxelEdit *edits; /* Lazily reserved WORLD_EDIT_CAPACITY-entry arena. */
+  size_t editCount;
+  uint32_t editUsed, editFree;
   size_t chunkCount;
   size_t sectionCount;
   size_t voxelCount;
@@ -134,11 +147,13 @@ typedef struct {
   Vec3 origin;
   float blockSize;
   /* Streamed terrain synthesizes missing chunks. Counts describe resident data.
-     Edited chunks stay resident; unedited chunks can be regenerated after eviction. */
+     Overlay entries retain only differences from the seed, including air.
+     Reads prefer resident sections, then overlay, then baseline. Edits are lost
+     on destruction; no disk persistence. A full pool rejects new differences
+     transactionally (world_set_block returns zero); restoration reclaims slots. */
   int proceduralTerrain;
   uint32_t terrainSeed;
-  /* Conservative envelope of materialized, potentially evictable columns.
-     Edited columns may lie outside it because they cannot be released. */
+  /* Conservative envelope of resident columns, including partial edit caches. */
   int hasMaterializedBounds;
   int minMaterializedChunkX, maxMaterializedChunkX;
   int minMaterializedChunkZ, maxMaterializedChunkZ;
@@ -224,9 +239,10 @@ int create_terrain_streamed(World *world, int blocksPerSide, Vec3 center,
                             float blockSize, uint32_t seed);
 /* Transactionally fill missing sections, preserving edits already in this chunk. */
 int world_materialize_chunk(World *world, int chunkX, int chunkZ);
-/* Evict only unedited procedural chunks; subsequent reads regenerate their values. */
+/* Evict procedural CPU caches; subsequent reads use seed plus session overlay.
+   Caller must retire GPU resources and cancel scheduled work before recycling. */
 void world_release_chunk(World *world, int chunkX, int chunkZ);
-/* Release unedited columns outside inclusive residency bounds (min > max is
+/* Release procedural columns outside inclusive residency bounds (min > max is
    an empty neighbourhood). Tracks actual
    materialization independently of renderer success; unchanged bounds cost O(1).
    Returns the number of previously resident columns released. */

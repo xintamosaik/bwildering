@@ -55,6 +55,8 @@ static void assert_world_equal(const World *actual, const World *expected) {
     }
 }
 
+static int evict_prepared;
+
 static void prepare_edited_stream(World *world) {
   assert(create_terrain_streamed(world, 33, (Vec3){0}, 1, 1));
   /* Existing data in both the partially generated chunk and its neighbour. */
@@ -67,7 +69,9 @@ static void prepare_edited_stream(World *world) {
   for (int y = height - 1; y >= height - 3; y--)
     assert(world_set_block(world, 1, y, 0, BLOCK_TYPE_EMPTY));
   assert(world_set_block(world, 1, TERRAIN_BASE_Y + 1, 0, BLOCK_TYPE_EMPTY));
+  assert(world_set_block(world, 0, -400, 0, BLOCK_TYPE_WATER));
   assert(world_materialize_chunk(world, -1, 0));
+  if (evict_prepared) world_release_chunk(world, 0, 0);
 }
 
 static void test_materialization_preserves_existing_ownership(void) {
@@ -81,6 +85,8 @@ static void test_materialization_preserves_existing_ownership(void) {
     World world = {0};
     prepare_edited_stream(&world);
     World original = world; /* Borrowed snapshot, never destroyed. */
+    static VoxelEdit savedEdits[WORLD_EDIT_CAPACITY];
+    memcpy(savedEdits, world.edits, world.editUsed * sizeof(*world.edits));
     Chunk *chunks = malloc(world.chunkCount * sizeof(*chunks));
     Subchunk *sections = malloc(world.sectionCount * sizeof(*sections));
     uint8_t *payloads = malloc(world.sectionCount * SECTION_VOLUME);
@@ -99,6 +105,9 @@ static void test_materialization_preserves_existing_ownership(void) {
     assert(!world_materialize_chunk(&world, 0, 0));
     fail_after = -1;
     assert(world.chunks == original.chunks);
+    assert(world.edits == original.edits && world.editCount == original.editCount);
+    assert(world.editUsed == original.editUsed && world.editFree == original.editFree);
+    assert(!memcmp(savedEdits, world.edits, world.editUsed * sizeof(*world.edits)));
     assert(world.sectionCount == original.sectionCount && world.voxelCount == original.voxelCount);
     assert(world.hasMaterializedBounds == original.hasMaterializedBounds);
     assert(world.minMaterializedChunkX == original.minMaterializedChunkX);
@@ -110,6 +119,7 @@ static void test_materialization_preserves_existing_ownership(void) {
       assert(world.chunks[c].sections == chunks[c].sections);
       assert(world.chunks[c].terrainReady == chunks[c].terrainReady);
       assert(world.chunks[c].edited == chunks[c].edited);
+      assert(world.chunks[c].editHead == chunks[c].editHead);
       for (const Subchunk *s = world.chunks[c].sections; s; s = s->next) {
         const Subchunk *saved = &sections[n++];
         assert(s->next == saved->next && s->sectionY == saved->sectionY);
@@ -225,6 +235,42 @@ static void test_storage_expansion_failure(void) {
 int main(void) {
   test_storage_expansion_failure();
   test_materialization_preserves_existing_ownership();
+  evict_prepared = 1;
+  test_materialization_preserves_existing_ownership();
+  evict_prepared = 0;
+  /* First edit reserves arena, node and dense payload; every failure is atomic. */
+  for (int failure = 0; failure < 3; failure++) {
+    World first = {0};
+    assert(create_terrain_streamed(&first, 32, (Vec3){0}, 1, 1));
+    fail_after = failure;
+    assert(!world_set_block(&first, -1, 500, -1, BLOCK_TYPE_SNOW));
+    fail_after = -1;
+    assert(!first.edits && !first.editCount && !first.editUsed && !first.editFree);
+    assert(!first.sectionCount && !first.voxelCount && !first.hasMaterializedBounds);
+    for (size_t c = 0; c < first.chunkCount; c++)
+      assert(!first.chunks[c].sections && !first.chunks[c].edited && !first.chunks[c].editHead);
+    world_destroy(&first);
+  }
+  /* Replacing and restoring an unloaded authoritative entry must also roll back. */
+  for (int restore = 0; restore < 2; restore++)
+    for (int failure = 0; failure < 2; failure++) {
+      World edited = {0};
+      assert(create_terrain_streamed(&edited, 32, (Vec3){0}, 1, 1));
+      assert(world_set_block(&edited, -1, 500, -1, BLOCK_TYPE_SNOW));
+      world_release_chunk(&edited, -1, -1);
+      const VoxelEdit original = edited.edits[0];
+      const uint32_t head = edited.chunks[0].editHead;
+      fail_after = failure;
+      assert(!world_set_block(&edited, -1, 500, -1,
+                             restore ? BLOCK_TYPE_EMPTY : BLOCK_TYPE_GRASS));
+      fail_after = -1;
+      assert(!edited.sectionCount && !edited.voxelCount);
+      assert(edited.editCount == 1 && edited.editUsed == 1 && !edited.editFree);
+      assert(edited.chunks[0].editHead == head && edited.chunks[0].edited);
+      assert(!memcmp(&original, &edited.edits[0], sizeof(original)));
+      assert(world_get_block(&edited, -1, 500, -1) == BLOCK_TYPE_SNOW);
+      world_destroy(&edited);
+    }
   test_regenerated_mesh_failure_retry();
   World world = {0};
   assert(world_init(&world, 32, (Vec3){0}, 1));

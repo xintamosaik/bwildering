@@ -112,7 +112,8 @@ static void capture_frames(Application *const a, const int baseline) {
         assert(a->world.sectionCount <= bound * bound * WORLD_SECTION_COUNT);
         assert(a->renderer.pendingCount <= STREAM_TASK_CAPACITY);
         if (scenario == 0) assert(!work->operations && !work->rebuilds && !work->uploadCalls);
-        const size_t owned = sizeof(a->world) + a->world.chunkCount * sizeof(Chunk) + a->residentVoxelBytes +
+        const size_t owned = sizeof(a->world) + a->world.chunkCount * sizeof(Chunk) +
+            (a->world.edits ? WORLD_EDIT_CAPACITY * sizeof(VoxelEdit) : 0) + a->residentVoxelBytes +
             sizeof(a->renderer) + a->renderer.meshCount * sizeof(SectionGpuMesh) +
             (a->renderer.visibleMeshCapacity + a->renderer.drawMeshCapacity) * sizeof(size_t);
         if (owned > peakCpu) peakCpu = owned;
@@ -225,6 +226,7 @@ int main(int argc, char **argv) {
     struct rusage usage;
     assert(getrusage(RUSAGE_SELF, &usage) == 0);
     size_t owned = sizeof(a.world) + a.world.chunkCount * sizeof(Chunk) +
+        (a.world.edits ? WORLD_EDIT_CAPACITY * sizeof(VoxelEdit) : 0) +
         a.residentVoxelBytes + sizeof(a.renderer) +
         a.renderer.meshCount * sizeof(SectionGpuMesh) +
         a.renderer.visibleMeshCapacity * sizeof(size_t) + a.renderer.drawMeshCapacity * sizeof(size_t);

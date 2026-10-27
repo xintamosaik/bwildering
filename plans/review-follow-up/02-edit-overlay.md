@@ -1,6 +1,6 @@
 # Edit overlay and independent terrain eviction
 
-Priority: after the streaming baseline. Status: planned.
+Priority: after the streaming baseline. Status: implemented (session-local phase).
 Related: [issue 011](../../issues/011-persistent-edit-storage.md).
 
 ## Current behavior and goal
@@ -56,3 +56,13 @@ so a small change retains only its edit data when the player leaves.
 - Complete the in-memory phase only when edited columns actually evict and edits
   survive reconstruction. Do not mark disk persistence complete without save/load
   implementation and interrupted-write/malformed-input tests.
+
+## Implementation result (27 October 2026)
+
+The session overlay uses a lazily reserved world arena of 65,536 entries with
+per-chunk sparse lists and a reusable free list (20 bytes/entry, 1.25 MiB total
+on the measured build). Edited CPU columns now evict. Reads and reconstruction
+preserve explicit removals and signed high/low edits. Baseline restoration
+reclaims entries, and exhausted capacity rejects new differences transactionally.
+See [streaming.md](../../streaming.md) for contracts, fixture measurements and
+limitations. Disk persistence remains open in issue 011.

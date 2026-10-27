@@ -338,15 +338,28 @@ static void test_streamed_exploration_revisits_edited_terrain(void) {
   assert_view_changed(&before, &edited);
   free(before.depth);
   Player originalView = player;
-  for (int visit = 1; visit <= 3; visit++) {
-    player.position.x = visit * 96 + 0.5f;
+  for (int visit = 0; visit < 60; visit++) {
+    player.position.x = (float)(visit % 8 - 4) * 96.0f + 0.5f;
+    player.position.z = (float)(visit / 8 - 4) * 96.0f + 4.5f;
     player.position.y = world_surface_height(&world, player.position.x, player.position.z) + 8;
     assert(renderer_sync_view(&renderer, &world, &player));
     DepthFrame explored = capture_world(&renderer, &player);
     assert_terrain_visible(&explored);
     free(explored.depth);
-    /* A bounded view neighbourhood plus one edited chunk stays resident. */
-    assert(world.sectionCount <= renderer.visibleMeshCount + WORLD_SECTION_COUNT);
+    const int editX = (int)floorf(player.position.x);
+    const int editZ = (int)floorf(player.position.z);
+    if (editX || editZ != 4) {
+      const int editY = terrain_sample_column(seed, editX, editZ).height;
+      assert(world_set_block(&world, editX, editY, editZ,
+                             (BlockType)(visit % BLOCK_TYPE_COUNT)));
+    }
+    size_t resident = 0;
+    for (size_t c = 0; c < world.chunkCount; c++)
+      resident += world.chunks[c].terrainReady || world.chunks[c].sections;
+    assert(resident <= 49);
+    assert(world.sectionCount <= 49 * WORLD_SECTION_COUNT);
+    if (fabsf(player.position.x) > 64.0f || fabsf(player.position.z) > 64.0f)
+      assert(!world_section(&world, 0, voxel_section_coord(height), 0));
     assert(world_get_block(&world, 0, height, 0) == BLOCK_TYPE_STONE);
   }
   player = originalView;
@@ -470,17 +483,17 @@ static void test_streamed_retirement_after_failed_sync(void) {
   assert(p.frame.retiredMeshes && p.frame.retiredBytes);
   for (size_t c = 0; c < world.chunkCount; c++) {
     const Chunk *chunk = &world.chunks[c];
-    if (!chunk->edited) assert(!chunk->sections && !chunk->terrainReady);
+    assert(!chunk->sections && !chunk->terrainReady);
   }
   assert(world_get_block(&world, 0, 400, 0) == BLOCK_TYPE_SNOW);
-  assert(world_section(&world, 0, 25, 0) == retained && retained->dirty);
-  assert(world_section(&world, 0, 26, 0) == marker && marker->dirty);
+  assert(!world_section(&world, 0, 25, 0));
+  assert(!world_section(&world, 0, 26, 0));
   assert_empty_gpu_world(&renderer);
   player.position.x = 0.5f;
   assert(renderer_sync_view(&renderer, &world, &player));
   gpu = gpu_section(&renderer, 0, 25, 0);
   assert(gpu && gpu->vertexCount[BLOCK_TYPE_SNOW] == 36);
-  assert(world_section(&world, 0, 25, 0) == retained && !retained->dirty);
+  assert(world_section(&world, 0, 25, 0) && !world_section(&world, 0, 25, 0)->dirty);
   SectionMesh rebuilt = {0};
   assert(section_mesh_build(&world, 0, 25, 0, &rebuilt));
   assert(rebuilt.vertexCount == oldMesh.vertexCount);
@@ -491,7 +504,7 @@ static void test_streamed_retirement_after_failed_sync(void) {
   }
   assert_gpu_geometry(gpu, &rebuilt);
   assert_gpu_geometry(gpu_section(&renderer, 1, baselineY, 0), &baseline);
-  assert(world_section(&world, 0, 26, 0) == marker && !marker->dirty);
+  assert(!world_section(&world, 0, 26, 0));
   assert(world_get_block(&world, 0, 416, 0) == BLOCK_TYPE_EMPTY);
   section_mesh_destroy(&rebuilt);
   section_mesh_destroy(&oldMesh);

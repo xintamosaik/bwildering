@@ -1616,6 +1616,23 @@ static void test_surface_height_survives_materialization(void) {
         assert(isnan(after));
       else
         assert_near(after, before);
+      for (int visit = 0; visit < 2; visit++) {
+        world_release_chunk(&world, voxel_section_coord(x), voxel_section_coord(z));
+        assert(!world.sectionCount && !world.voxelCount);
+        const float unloaded = world_surface_height(&world, wx, wz);
+        assert(scenario == 4 ? isnan(unloaded) : unloaded == before);
+        assert(!world.sectionCount);
+        assert(world_materialize_chunk(&world, voxel_section_coord(x), voxel_section_coord(z)));
+      }
+      /* Restoring a generated material removes its authoritative entry. */
+      const size_t retained = world.editCount;
+      const BlockType baseline = terrain_column_block(terrain_sample_column(seed, x, z), height - 1);
+      assert(world_set_block(&world, x, height - 1, z, baseline));
+      assert(world.editCount == retained - 1);
+      world_release_chunk(&world, voxel_section_coord(x), voxel_section_coord(z));
+      assert(world_get_block(&world, x, height - 1, z) == baseline);
+      assert_near(world_surface_height(&world, wx, wz),
+                  world.origin.y + (float)(scenario == 2 ? expectedTop : height) * world.blockSize);
       world_destroy(&world);
     }
   }
@@ -1715,7 +1732,7 @@ static void test_layered_generation_and_sparse_edits(void) {
   }
   assert_near(world_surface_height(&w, 0.5f, 0.5f), WORLD_COORD_MAX + 1);
   assert(world_materialize_chunk(&w, 0, 0));
-  world_release_chunk(&w, 0, 0); /* Edited chunks survive eviction. */
+  world_release_chunk(&w, 0, 0); /* Overlay survives CPU eviction. */
   for (size_t i = 0; i < 4; i++)
     assert(world_get_block(&w, 0, ys[i], 0) == BLOCK_TYPE_SNOW);
   for (size_t i = 0; i < 4; i++) assert(world_set_block(&w, 0, ys[i], 0, BLOCK_TYPE_EMPTY));
@@ -1747,7 +1764,7 @@ static void test_layered_generation_and_sparse_edits(void) {
    sections. Only successful renderer upload may mark a section clean. */
 static void assert_lifecycle_geometry(const World *actual, const World *expected) {
   for (int cx = -1; cx <= 0; cx++)
-    for (int sy = WORLD_MIN_SECTION_Y; sy <= 26; sy++) {
+    for (int sy = -26; sy <= 26; sy++) {
       SectionMesh a = {0}, b = {0};
       const Subchunk *section = world_section(actual, cx, sy, 0);
       int dirty = section ? section->dirty : 0;
@@ -1785,6 +1802,8 @@ static void test_chunk_lifecycle_invariants(void) {
   for (size_t i = 0; i < 2; i++) {
     assert(world_set_block(worlds[i], -1, top, 0, BLOCK_TYPE_EMPTY));
     assert(world_set_block(worlds[i], -1, 400, 0, BLOCK_TYPE_SNOW));
+    assert(world_set_block(worlds[i], -1, -400, 0, BLOCK_TYPE_WATER));
+    assert(world_set_block(worlds[i], -1, -32, 0, BLOCK_TYPE_EMPTY));
     /* An empty edit marker must also remain owned on departure. */
     assert(world_set_block(worlds[i], -1, 416, 0, BLOCK_TYPE_STONE));
     assert(world_set_block(worlds[i], -1, 416, 0, BLOCK_TYPE_EMPTY));
@@ -1796,11 +1815,11 @@ static void test_chunk_lifecycle_invariants(void) {
   assert_lifecycle_geometry(&world, &expected);
 
   for (int visit = 0; visit < 2; visit++) {
-    /* An empty residency neighbourhood releases only the unedited column. */
-    assert(world_release_chunks_outside(&world, 1, 0, 1, 0) == 1);
+    /* An empty residency neighbourhood releases both CPU columns. */
+    assert(world_release_chunks_outside(&world, 1, 0, 1, 0) == 2);
     assert(!world_section(&world, 0, WORLD_MIN_SECTION_Y, 0));
-    assert(world_section(&world, -1, voxel_section_coord(top), 0) == edited);
-    assert(world_section(&world, -1, 26, 0) == marker);
+    assert(!world_section(&world, -1, voxel_section_coord(top), 0));
+    assert(!world_section(&world, -1, 26, 0));
     assert(world_get_block(&world, -1, top, 0) == BLOCK_TYPE_EMPTY);
     assert(world_get_block(&world, -1, 400, 0) == BLOCK_TYPE_SNOW);
     assert(world_get_block(&world, -1, 416, 0) == BLOCK_TYPE_EMPTY);
@@ -1833,11 +1852,11 @@ static void test_residency_departing_strips(void) {
     for (int z = -2; z <= 2; z++)
       assert(world_materialize_chunk(&world, x, z));
   assert(world_set_block(&world, -32, 400, -32, BLOCK_TYPE_SNOW));
-  /* Clip both axes; retain the centre and the edited departing corner. */
-  assert(world_release_chunks_outside(&world, -1, 1, -1, 1) == 15);
+  /* Clip both axes; edits do not pin the departing corner. */
+  assert(world_release_chunks_outside(&world, -1, 1, -1, 1) == 16);
   for (int x = -2; x <= 2; x++)
     for (int z = -2; z <= 2; z++) {
-      int retained = (x >= -1 && x <= 1 && z >= -1 && z <= 1) || (x == -2 && z == -2);
+      int retained = (x >= -1 && x <= 1 && z >= -1 && z <= 1);
       assert((world_section(&world, x, WORLD_MIN_SECTION_Y, z) != NULL) == retained);
     }
   assert(world_release_chunks_outside(&world, -1, 1, -1, 1) == 0);
@@ -1934,7 +1953,60 @@ static void test_section_storage(void) {
   world_destroy(&world);
 }
 
+/* 1,024 edited columns exceed a one-column CPU working set. All retained
+   differences share one bounded arena, and restoration reuses its slots. */
+static void test_overlay_edited_travel_and_capacity(void) {
+  World world = {0};
+  assert(create_terrain_streamed(&world, 512, (Vec3){0}, 1, 1));
+  for (int cx = -16; cx < 16; cx++)
+    for (int cz = -16; cz < 16; cz++) {
+      for (int x = 0; x < 8; x++)
+        for (int z = 0; z < 8; z++) {
+          const BlockType type = (BlockType)((x + z) % BLOCK_TYPE_COUNT);
+          assert(world_set_block(&world, cx * SECTION_SIZE + x, 500,
+                                 cz * SECTION_SIZE + z, type));
+        }
+      assert(world.sectionCount == 1 && world.voxelCount == 64);
+      assert(world_release_chunks_outside(&world, 1, 0, 1, 0) == 1);
+      assert(!world.sectionCount && !world.voxelCount);
+    }
+  assert(world.editCount == WORLD_EDIT_CAPACITY);
+  const uint32_t used = world.editUsed;
+  assert(!world_set_block(&world, -248, 500, -256, BLOCK_TYPE_SNOW));
+  assert(!world.sectionCount && !world.voxelCount && world.editUsed == used);
+  assert(world.editCount == WORLD_EDIT_CAPACITY);
+  /* No-op and existing-entry replacement succeed even at capacity. */
+  assert(world_set_block(&world, -256, 500, -256, BLOCK_TYPE_GRASS));
+  assert(!world.sectionCount);
+  assert(world_set_block(&world, -256, 500, -256, BLOCK_TYPE_SNOW));
+  assert(world.editCount == WORLD_EDIT_CAPACITY);
+  assert(world_set_block(&world, -256, 500, -256, BLOCK_TYPE_EMPTY));
+  assert(world.editCount == WORLD_EDIT_CAPACITY - 1);
+  assert(world_set_block(&world, -248, 500, -256, BLOCK_TYPE_WATER));
+  assert(world.editCount == WORLD_EDIT_CAPACITY && world.editUsed == used);
+  world_release_chunks_outside(&world, 1, 0, 1, 0);
+  for (int visit = 0; visit < 2; visit++)
+    for (int cx = -16; cx < 16; cx++)
+      for (int cz = -16; cz < 16; cz++) {
+        assert(world_materialize_chunk(&world, cx, cz));
+        for (int x = 0; x < 8; x++)
+          for (int z = 0; z < 8; z++) {
+            const BlockType expected = cx == -16 && cz == -16 && !x && !z ?
+                BLOCK_TYPE_EMPTY : (BlockType)((x + z) % BLOCK_TYPE_COUNT);
+            assert(world_get_block(&world, cx * SECTION_SIZE + x, 500,
+                                   cz * SECTION_SIZE + z) == expected);
+          }
+        assert(world.sectionCount <= WORLD_SECTION_COUNT + 1);
+        world_release_chunks_outside(&world, 1, 0, 1, 0);
+        assert(!world.sectionCount && !world.voxelCount);
+      }
+  printf("Overlay travel: 1024 columns, %zu edits, %zu arena bytes, zero final resident sections\n",
+         world.editCount, WORLD_EDIT_CAPACITY * sizeof(VoxelEdit));
+  world_destroy(&world);
+}
+
 int main(void) {
+  test_overlay_edited_travel_and_capacity();
   test_section_storage();
   test_vector_normalization();
   test_matrix_multiply_identity();

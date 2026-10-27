@@ -9,34 +9,67 @@ frustum culling. Non-streamed fixture worlds use `renderer_sync_world()`.
 
 The baseline is the world bounds, transform and seed. Reads of missing terrain
 synthesize that baseline without allocating voxels. `world_materialize_chunk()`
-transactionally adds dense CPU sections. Changes are authoritative CPU block
-values; meshes are derived data. A changed procedural chunk is marked edited,
-even if a later write restores the baseline.
+transactionally stages compressed CPU sections. Resident sections take precedence;
+missing data reads the session overlay, then the procedural baseline. Collision,
+picking, surface heights, temporary mesh sections and mesh boundary reads share
+this contract. Reads never allocate resident terrain just to find an edit.
 
-On movement or view-distance reduction, synchronization first deletes departing
-VAOs/VBOs and marks retained sections dirty for rebuilding on return. It then
-releases departing unedited CPU chunks using a conservative materialized chunk
-envelope maintained by the world. It visits only departing strips; an envelope
-already inside the view requires no scan. Successful materialization expands the
-envelope even when renderer setup subsequently fails. Edited chunks outside the
-envelope remain protected by their edit flag. CPU eviction never
-relies on the existence of a GPU mesh. Current mesh records and visible indices
-are rebuilt before drawing, using the sections materialized on earlier frames. Failed metadata allocation leaves the old record
-array owned by the renderer, but departing handles have already retired and
-visible indices are rebuilt from surviving GL meshes in gameplay. Missing
-resources can be retried next frame. Each scheduled operation is synchronous:
-no worker thread or pending CPU mesh survives the call. Failed uploads retain
-the old drawable mesh and dirty flag; leaving retires that old mesh and returning
-builds from current CPU values.
+A procedural write compares against the seed rather than the cached value. Each
+retained difference is a signed voxel identity and replacement material; explicit
+air removes terrain. Restoring the baseline releases the entry, and identical
+writes leave counts, ownership and dirty flags unchanged. Outside [-128,384),
+the baseline is air. Nonprocedural fixture worlds retain their existing resident
+storage semantics.
 
-Edited CPU chunks stay resident until world destruction to preserve all edits,
-including removals and writes outside the generated vertical range. Their GPU
-meshes retire normally. There is no save/load support. There is no fixed RAM cap
-for edited terrain: each edited chunk can retain its entire generated column
-plus arbitrary edited sections, and each retained section costs `sizeof(Subchunk)` plus 4,096 bytes when dense.
-Empty and uniform sections have no block payload; see [storage measurements](section-storage.md).
-Empty edit markers and renderer metadata also remain. Persistent edit storage
-is tracked in [issue 011](issues/011-persistent-edit-storage.md).
+The first changed procedural write reserves a single world-owned arena with
+**65,536 entries**. Each chunk has a one-based sparse list index; released slots
+form a world free list. On this 64-bit build an entry is 20 bytes, so the arena
+owns **1,310,720 bytes (1.25 MiB)**; each chunk adds a four-byte head index,
+increasing the aligned `Chunk` size from 24 to 32 bytes on this build. It allocates no individual edit nodes. The arena
+stays reserved until world destruction; logical occupancy follows actual
+differences, and restoration makes slots reusable. Lists cost O(edits in the
+chunk) to query. This is a bounded initial implementation; heavy concentration
+in one chunk can make reads and staging expensive.
+
+The capacity fixture in `test_game_logic` travels through 1,024 columns, writing
+64 edits per column at Y=500 across every solid material, and releases each CPU
+cache before moving. It fills the 65,536-entry pool with only one resident section
+at a time. It then revisits every column twice, with at most 33 resident sections,
+and ends with zero resident sections/voxels and 65,536 retained edits. This gives
+room for 64 changes in each of 1,024 visited columns within 1.25 MiB. It is a
+maximum retained-difference count, not unlimited editing. A new difference at
+capacity returns zero from `world_set_block`; updates to existing entries,
+identical writes and restorations still succeed subject to resident allocation.
+The fixture checks rejection and reuse after restoration.
+
+Mutation reserves overlay and writable section capacity before publishing either.
+Allocation failure preserves counts, links, revisions, dirty flags and overlay
+ownership. Reconstruction stages all missing baseline and overlay sections,
+including separated high/low edits and empty sections, before publication.
+Resident counters exclude unloaded overlay entries. Edits and their neighbors
+conservatively participate in meshing, including buried sections exposed by
+removals.
+
+On movement or view-distance reduction, synchronization deletes departing
+VAOs/VBOs, discards scheduled identities outside the new bounds, then releases
+all departing procedural CPU columns, including edited ones. A conservative
+resident envelope includes partially cached edit columns and visits only
+departing strips; unchanged bounds require no scan. CPU eviction is independent
+of successful renderer metadata allocation. Scheduled tasks own coordinates and
+revisions rather than section pointers. Returning reconstructs seed plus overlay;
+restored-baseline empty retirement markers need not survive CPU eviction.
+The renderer tests travel through 60 edited locations with a 49-column residency
+limit and compare the original edited view on return. They also check GL deletion
+and exact rebuilt vertex bytes after leaving with a failed upload.
+
+Validation on 27 October 2026: `make all`, `make test`, the real-display
+`test_renderer` suite, and ASan/UBSan suites passed (leak detection disabled under
+tracing). Clang-Tidy `bugprone-narrowing-conversions` checked all changed C files;
+existing warnings remain in unchanged code, with no introduced warnings.
+
+These edits are session-local and are lost on world destruction. There is no
+save/load or spill-to-disk support. Disk persistence remains a separate phase:
+see [issue 011](issues/011-persistent-edit-storage.md).
 
 For unedited terrain, let `D` be the radius and `S = 16 * blockSize` the chunk
 span. At most `(ceil(2*D/S)+3)^2` chunks reside, each with at most 32 generated
@@ -144,7 +177,7 @@ record indices. Chunk and section work share this capacity. Overflow leaves
 missing columns absent and sections dirty, and rotates the next admission scan.
 Smaller block sizes and arbitrary edited sections use the same bounded queue.
 The total discovered work count can exceed queue capacity; only queue storage
-is capped. Retained edited CPU terrain still has the ownership policy above.
+is capped. Edited columns use the same CPU residency policy as baseline terrain.
 
 Collection discards tasks outside the desired bounds or already completed and
 refreshes changed revisions. Execution validates section identity/revision again

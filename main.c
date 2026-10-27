@@ -390,7 +390,7 @@ static void stream_visible_fallback(Renderer *const r, const int minX, const int
 /* Sole residency owner for streamed gameplay: a square view radius in X/Z plus
    one chunk of padding, clipped to world bounds. Retire before allocating the
    next neighbourhood, including chunks with no renderer records (failed sync).
-   Edited CPU columns remain authoritative; their derived GPU data can retire. */
+   The world overlay remains authoritative after CPU and GPU caches retire. */
 static StreamResult renderer_sync_view_work(Renderer *const renderer, World *const world, const Player *const player,
                                             const StreamBudget *const budget) {
   if (!world->proceduralTerrain)
@@ -432,6 +432,15 @@ static StreamResult renderer_sync_view_work(Renderer *const renderer, World *con
     section_gpu_mesh_destroy(m);
     m->chunkX = x; m->sectionY = y; m->chunkZ = z;
   }
+
+  /* Tasks contain identities only; discard departing work before CPU recycling. */
+  size_t retainedTasks = 0;
+  for (size_t i = 0; i < renderer->pendingCount; i++) {
+    const StreamTask task = renderer->pending[i];
+    if (task.x >= minX && task.x <= maxX && task.z >= minZ && task.z <= maxZ)
+      renderer->pending[retainedTasks++] = task;
+  }
+  renderer->pendingCount = retainedTasks;
 
   /* CPU residency must not depend on successful renderer metadata allocation. */
   const size_t evicted = world_release_chunks_outside(world, minX, maxX, minZ, maxZ);

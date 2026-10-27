@@ -78,8 +78,8 @@ exact block values, mesh vertices and material ranges across departure/revisit.
 | Materialize | Missing CPU sections commit together; existing edits, section links, counts, flags and materialized bounds survive failure. |
 | Edit/rebuild | CPU blocks are authoritative immediately. CPU meshing borrows sections and leaves dirty flags unchanged. Successful GPU upload clears dirty; failed upload preserves old VAO/VBO, buffer bytes and ranges for retry. |
 | Grow renderer storage | Failed metadata growth preserves the record array and live handles. Failed visible-index growth retains its storage and clears submission counts, even if metadata has already committed. |
-| Leave | Unedited CPU columns are released; edited sections and empty edit markers retain their identity. All departing GPU geometry retires, including an old mesh awaiting retry; retained CPU sections become dirty. |
-| Revisit | Unedited cells regenerate from the seed; edits and removals survive. Rebuilt GPU buffer bytes and material ranges match CPU snapshots, and uploaded sections become clean. |
+| Leave | All departing procedural CPU columns are released; edit differences remain in the world overlay. All departing GPU geometry retires, including an old mesh awaiting retry. |
+| Revisit | Cells regenerate from seed plus overlay; edits and removals survive. Rebuilt GPU buffer bytes and material ranges match CPU snapshots, and uploaded sections become clean. |
 
 Failures are transactional per chunk materialization or section replacement,
 not per whole renderer pass. Residency retirement and earlier successful uploads
@@ -109,3 +109,11 @@ queue exhaustion, eventual convergence, aging, nearest work, revision refresh,
 edit/upload/metadata failure retries, old drawable geometry, shrink/cancellation
 and revisits. Converged GPU bytes and material ranges match synchronous meshes;
 a stationary completed view starts no further operations.
+
+The edit-overlay capacity fixture visits 1,024 edited columns, fills all 65,536
+entries, rejects a new difference, reclaims/reuses a baseline-restoration slot,
+and reconstructs every column twice. Allocation-failure tests cover first-arena
+reservation and every materialization allocation with partial caches and after
+full edited eviction, checking overlay ownership and entry bytes as well as
+resident state. The GL travel fixture visits 60 edited locations under the same
+49-column residency bound as unedited terrain.

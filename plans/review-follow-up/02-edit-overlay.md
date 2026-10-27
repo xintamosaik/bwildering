@@ -3,10 +3,17 @@
 Priority: after the streaming baseline. Status: implemented (session-local phase).
 Related: [issue 011](../../issues/011-persistent-edit-storage.md).
 
-## Current behavior and goal
+## Problem description
 
-`Chunk.edited` permanently prevents `world_release_chunk()` from evicting a
-modified procedural column. Even restored edits retain generated sections.
+Before the session-local overlay, `Chunk.edited` permanently prevented
+`world_release_chunk()` from evicting a modified procedural column. One block
+change retained the entire generated column after the player left, and restoring
+the baseline did not release it. Editing while traveling therefore accumulated
+resident terrain beyond the normal streaming limit. Edits needed an authoritative
+representation independent of disposable generated terrain.
+
+## Goal
+
 Separate seed-derived terrain, authoritative modifications and resident caches
 so a small change retains only its edit data when the player leaves.
 

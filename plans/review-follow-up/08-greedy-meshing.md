@@ -3,6 +3,15 @@
 Priority: deferred until streaming and storage stabilize. Status: planned evaluation.
 Related: [issue 009](../../issues/009-evaluate-greedy-meshing.md).
 
+## Problem description
+
+The culled-face mesher emits six vertices for every visible unit face, even when
+adjacent faces share a plane and material. Large flat surfaces can therefore
+retain redundant geometry, increasing CPU mesh storage, upload bytes and GPU
+vertex storage. Greedy merging could reduce those costs, but its build time,
+scratch requirements and seam behavior need evaluation on representative terrain
+and edits before adoption.
+
 ## Goal
 
 Reduce coplanar face geometry only if the memory/upload/render savings justify

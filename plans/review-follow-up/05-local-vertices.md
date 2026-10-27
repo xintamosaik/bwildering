@@ -3,12 +3,19 @@
 Priority: deferred, measurement-gated. Status: planned evaluation.
 Related: [issue 007](../../issues/007-section-local-vertices.md).
 
+## Problem description
+
+`SurfaceVertex` stores three absolute floats, costing 12 bytes per vertex and
+72 bytes for each six-vertex visible face before other overhead. Large absolute
+coordinates may also limit placement precision, though a visible defect has not
+been demonstrated. Section-local floats alone do not reduce vertex size, while
+compact formats require shader changes and may add per-section draw setup.
+Measurements are needed to establish whether either change pays for itself.
+
 ## Goal and decision gate
 
-Current `SurfaceVertex` stores three absolute floats. Moving those floats to
-section-local coordinates improves precision options but still costs 12 bytes
-per vertex. Compression requires a separate format change and can add per-section
-draw setup. Adopt only after measuring that tradeoff.
+Evaluate section-local coordinates and compression separately. Adopt only for
+measured memory, rendering or precision benefits that justify the added cost.
 
 ## Implementation
 

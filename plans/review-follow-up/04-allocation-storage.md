@@ -3,12 +3,19 @@
 Priority: measure with plan 01; migrate after lifecycle contracts settle.
 Status: implemented and validated (27 October 2026).
 
-## Behavior at planning and goal
+## Problem description
 
-Uniform storage reduced live payload memory, but individual section nodes,
-dense payloads and CPU meshes still allocate separately. Renderer metadata also
-allocates a replacement array when identities change. Measure churn and replace
-costly paths with explicit-capacity storage while preserving rollback behavior.
+At planning time, uniform storage had reduced live payload memory, but section
+nodes, dense payloads and CPU meshes still allocated separately. Renderer
+metadata also allocated a replacement array when identities changed. Streaming
+and mesh replacement could therefore repeatedly allocate and release storage,
+with old and staged replacements temporarily overlapping. Live-byte totals alone
+did not show allocation churn, peak capacity or which paths justified reuse.
+
+## Goal
+
+Measure churn and replace costly paths with explicit-capacity storage while
+preserving rollback behavior.
 
 ## Implementation
 

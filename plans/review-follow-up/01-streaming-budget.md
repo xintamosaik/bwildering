@@ -4,13 +4,19 @@ Priority: first implementation work. Status: implemented and validated (27 Octob
 Related: issues [001](../../issues/001-bounded-chunk-streaming.md) and
 [010](../../issues/010-renderer-lifecycle-audit.md).
 
-## Behavior at planning and goal
+## Problem description
 
-`application_frame()` calls `renderer_sync_view()` before rendering. That call
-materializes the entire desired neighborhood and builds/uploads every dirty
-resident section synchronously. Residency is bounded for unedited terrain, but
-cold transitions can stall a frame. Preserve that ownership model while limiting
-how much new work starts per frame.
+At planning time, `application_frame()` called `renderer_sync_view()` before
+rendering, materializing the entire desired neighborhood and building/uploading
+every dirty resident section synchronously. Bounded residency did not bound the
+work in a single frame, so cold travel, teleports and radius increases could
+stall rendering. The earlier cold-travel capture reported about 78 ms mean and
+195 ms maximum synchronization time; ordinary-movement costs needed fresh
+measurements.
+
+## Goal
+
+Preserve the ownership model while limiting how much new work starts per frame.
 
 ## Implementation
 

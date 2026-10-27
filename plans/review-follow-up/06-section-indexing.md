@@ -3,12 +3,20 @@
 Priority: deferred, measurement-gated. Status: planned evaluation.
 Related: [issue 005](../../issues/005-mesh-neighbor-query-performance.md).
 
+## Problem description
+
+Section lookup traverses sparse sorted lists, so its cost can grow with column
+depth and separated high/low edits. Neighbor caching has already reduced the
+mesher to seven section resolutions per build, removing the original repeated
+lookup bottleneck. No current measurement establishes that the remaining lookup
+cost justifies an index's extra memory and invalidation work; collision and
+picking also need to be included in that assessment.
+
 ## Goal and decision gate
 
-The mesher now resolves only seven sections per build. Existing measurements do
-not justify replacing sparse sorted lists. Reconsider indexing only if profiling
-after the planned changes shows meaningful remaining lookup costs, including
-collision and picking rather than only mesh construction.
+Reconsider indexing only if profiling after the planned changes shows meaningful
+remaining lookup costs. Retain sparse sorted lists unless measured gains justify
+replacement.
 
 ## Implementation
 

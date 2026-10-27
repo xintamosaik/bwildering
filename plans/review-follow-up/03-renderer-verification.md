@@ -4,11 +4,18 @@ Priority: alongside streaming and edit changes. Status: implemented and validate
 on local accelerated OpenGL (27 October 2026).
 Related: [issue 010](../../issues/010-renderer-lifecycle-audit.md).
 
+## Problem description
+
+The original review lacked `main.c`, leaving renderer integration unverified.
+At plan creation, the renderer suite compiled but could not initialize X11
+display `:0`. CPU tests and a successful build could not establish correct GL
+handle ownership, resource retirement, culling or displayed geometry through
+edits and streaming transitions. Those paths required evidence from the full
+renderer running with an actual OpenGL context.
+
 ## Goal
 
-Close the original review's missing-`main.c` verification gap using the full
-renderer and an actual OpenGL context. Existing CPU evidence is useful but
-cannot establish GPU resource retirement or visual correctness.
+Close the verification gap using the full renderer and an actual OpenGL context.
 
 ## Implementation
 

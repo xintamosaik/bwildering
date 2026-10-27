@@ -3,6 +3,15 @@
 Priority: deferred, after hot-path measurements. Status: planned evaluation.
 Related: [issue 008](../../issues/008-validation-boundaries.md).
 
+## Problem description
+
+Mesh, collision and streaming paths may repeat input or state checks already
+established by their callers. The cost and redundancy of those checks have not
+been demonstrated. Removing them without auditing caller contracts could change
+public-input behavior or miss state invalidated by edits, movement and queued
+work. A measured candidate and an explicit validation boundary are needed before
+consolidating checks.
+
 ## Goal
 
 Remove repeated work only where an upstream contract demonstrably guarantees

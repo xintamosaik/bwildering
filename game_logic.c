@@ -193,7 +193,7 @@ float terrain_noise(const int x, const int z, const int scale,
 }
 
 static int layer_thickness(const float n, const int lo, const int hi) {
-  const int v = lo + (int)(n * (hi - lo + 1));
+  const int v = lo + (int)(n * (float)(hi - lo + 1));
   return v > hi ? hi : v;
 }
 
@@ -501,20 +501,20 @@ int player_spawn_on_surface(Player *const player, const World *const world) {
   const float loZ = (player->position.z - insetRadius - world->origin.z) / world->blockSize;
   const float hiZ = (player->position.z + insetRadius - world->origin.z) / world->blockSize;
   if (!isfinite(loX) || !isfinite(hiX) || !isfinite(loZ) || !isfinite(hiZ) ||
-      hiX <= world->minX || loX >= world->minX + world->blocksPerSide ||
-      hiZ <= world->minZ || loZ >= world->minZ + world->blocksPerSide)
+      hiX <= (float)world->minX || loX >= (float)world->minX + (float)world->blocksPerSide ||
+      hiZ <= (float)world->minZ || loZ >= (float)world->minZ + (float)world->blocksPerSide)
     return 0;
-  const int firstX = (int)floorf(fmaxf(loX, world->minX));
-  const int lastX = (int)ceilf(fminf(hiX, world->minX + world->blocksPerSide)) - 1;
-  const int firstZ = (int)floorf(fmaxf(loZ, world->minZ));
-  const int lastZ = (int)ceilf(fminf(hiZ, world->minZ + world->blocksPerSide)) - 1;
+  const int firstX = (int)floorf(fmaxf(loX, (float)world->minX));
+  const int lastX = (int)ceilf(fminf(hiX, (float)world->minX + (float)world->blocksPerSide)) - 1;
+  const int firstZ = (int)floorf(fmaxf(loZ, (float)world->minZ));
+  const int lastZ = (int)ceilf(fminf(hiZ, (float)world->minZ + (float)world->blocksPerSide)) - 1;
 
   /* Use the highest support beneath any part of the body footprint. */
   float height = -INFINITY;
   for (int x = firstX; x <= lastX; x++)
     for (int z = firstZ; z <= lastZ; z++) {
-      const float top = world_surface_height(world, world->origin.x + (x + 0.5f) * world->blockSize,
-                                       world->origin.z + (z + 0.5f) * world->blockSize);
+      const float top = world_surface_height(world, world->origin.x + ((float)x + 0.5f) * world->blockSize,
+                                       world->origin.z + ((float)z + 0.5f) * world->blockSize);
       if (isfinite(top)) height = fmaxf(height, top);
     }
   if (!isfinite(height)) return 0;
@@ -525,40 +525,40 @@ int player_spawn_on_surface(Player *const player, const World *const world) {
   return 1;
 }
 
-void update_player(Player *const player, const PlayerInput input, const float dt, const World *const world) {
-  if (!player || !isfinite(dt) || dt <= 0 || dt > 10)
+void update_player(Player *const updatedPlayer, const PlayerInput input, const float dt, const World *const world) {
+  if (!updatedPlayer || !isfinite(dt) || dt <= 0 || dt > 10)
     return;
 
   /* Resolve horizontal motion one axis at a time to slide along walls. */
-  player->crouching = input.crouch != 0;
+  updatedPlayer->crouching = input.crouch != 0;
   const float speed = 4.0f * (input.crouch ? 0.75f : input.run ? 1.5f : 1.0f);
   const Vec3 forward =
-      vec3_normalize((Vec3){.x = player->camera.front.x, .y = 0, .z = player->camera.front.z});
-  const Vec3 right = vec3_normalize(vec3_cross(forward, player->camera.up));
+      vec3_normalize((Vec3){.x = updatedPlayer->camera.front.x, .y = 0, .z = updatedPlayer->camera.front.z});
+  const Vec3 right = vec3_normalize(vec3_cross(forward, updatedPlayer->camera.up));
   Vec3 movement =
       vec3_add(vec3_scale(forward, input.forward), vec3_scale(right, input.strafe));
   if (vec3_dot(movement, movement) > 1)
     movement = vec3_normalize(movement);
-  move_axis(player, world, movement.x * speed * dt, 0);
-  move_axis(player, world, movement.z * speed * dt, 2);
+  move_axis(updatedPlayer, world, movement.x * speed * dt, 0);
+  move_axis(updatedPlayer, world, movement.z * speed * dt, 2);
 
   /* Recheck support after moving, then accept a grounded jump. */
-  Vec3 below = player->position;
+  Vec3 below = updatedPlayer->position;
   below.y -= 0.001f;
-  if (player->grounded && !player_intersects(world, below))
-    player->grounded = 0;
-  if (input.jump && player->grounded) {
-    player->velocityY = JUMP_SPEED;
-    player->grounded = 0;
+  if (updatedPlayer->grounded && !player_intersects(world, below))
+    updatedPlayer->grounded = 0;
+  if (input.jump && updatedPlayer->grounded) {
+    updatedPlayer->velocityY = JUMP_SPEED;
+    updatedPlayer->grounded = 0;
   }
-  if (player->grounded)
+  if (updatedPlayer->grounded)
     return;
 
-  const float gravity = GRAVITY * (player->velocityY <= 0 ? FALL_GRAVITY_MULTIPLIER : 1);
-  player->velocityY -= gravity * dt;
-  const int falling = player->velocityY < 0;
-  if (move_axis(player, world, player->velocityY * dt, 1)) {
-    player->velocityY = 0;
-    player->grounded = falling;
+  const float gravity = GRAVITY * (updatedPlayer->velocityY <= 0 ? FALL_GRAVITY_MULTIPLIER : 1);
+  updatedPlayer->velocityY -= gravity * dt;
+  const int falling = updatedPlayer->velocityY < 0;
+  if (move_axis(updatedPlayer, world, updatedPlayer->velocityY * dt, 1)) {
+    updatedPlayer->velocityY = 0;
+    updatedPlayer->grounded = falling;
   }
 }

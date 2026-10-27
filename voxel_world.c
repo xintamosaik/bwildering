@@ -56,6 +56,7 @@ static void section_compact(Subchunk *const section) {
     for (size_t i = 1; i < SECTION_VOLUME; i++)
       if (section->blocks[i] != material) return;
   }
+
   free(section->blocks);
   section->blocks = NULL;
   section->material = material;
@@ -102,6 +103,7 @@ int world_init_region(World *const world, const int minX, const int minZ, const 
       (int64_t)minZ + side - 1 > WORLD_COORD_MAX || !isfinite(size) ||
       size < 0.001f || !isfinite(origin.x) || !isfinite(origin.y) || !isfinite(origin.z))
     return 0;
+
   /* Keep each block at least one float ULP wide throughout the bounded world. */
   const float origins[3] = {origin.x, origin.y, origin.z};
   const float extents[3] = {
@@ -113,6 +115,7 @@ int world_init_region(World *const world, const int minX, const int minZ, const 
     if (!isfinite(limit) || nextafterf(limit, INFINITY) - limit > size)
       return 0;
   }
+
   World result = {0};
   result.minX = minX;
   result.minZ = minZ;
@@ -135,6 +138,7 @@ int world_init_region(World *const world, const int minX, const int minZ, const 
       chunk->x = result.minChunkX + x;
       chunk->z = result.minChunkZ + z;
     }
+
   world_destroy(world);
   *world = result;
   return 1;
@@ -200,6 +204,8 @@ BlockType world_get_block(const World *const world, const int x, const int y, co
                                     voxel_section_coord(z));
   if (section)
     return section_block(section, block_index(x, y, z));
+
+  /* Unmaterialized chunks still answer reads from procedural terrain. */
   const Chunk *const chunk = find_chunk(world, voxel_section_coord(x), voxel_section_coord(z));
   if (world->proceduralTerrain && !chunk->terrainReady &&
       y >= TERRAIN_BASE_Y && y < (WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT) * SECTION_SIZE)
@@ -216,6 +222,7 @@ static Subchunk *terrain_section(const World *const world, const int cx, const i
       .dirty = 1, .meshCandidate = 1, .sectionY = sy};
   if (sy < WORLD_MIN_SECTION_Y || sy >= WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT)
     return section;
+
   /* Stack staging avoids allocating a dense payload for homogeneous terrain. */
   uint8_t blocks[SECTION_VOLUME];
   memset(blocks, BLOCK_TYPE_EMPTY, sizeof(blocks));
@@ -233,6 +240,8 @@ static Subchunk *terrain_section(const World *const world, const int cx, const i
         section->voxelCount += type != BLOCK_TYPE_EMPTY;
       }
     }
+
+  /* Keep homogeneous sections compact; only mixed sections need a payload. */
   const uint8_t material = blocks[0];
   int uniform = 1;
   for (size_t i = 1; i < SECTION_VOLUME; i++)
@@ -253,6 +262,8 @@ int world_materialize_chunk(World *const world, const int cx, const int cz) {
     return 0;
   if (chunk->terrainReady)
     return 1;
+
+  /* Sample each column once for all vertical sections in this chunk. */
   TerrainColumn columns[SECTION_SIZE][SECTION_SIZE];
   int highest = TERRAIN_BASE_Y;
   for (int x = 0; x < SECTION_SIZE; x++)
@@ -266,6 +277,8 @@ int world_materialize_chunk(World *const world, const int cx, const int cz) {
           highest = columns[x][z].height;
       }
     }
+
+  /* Include the border heights when identifying potentially exposed sections. */
   int lowest = highest;
   int edge = 0;
   for (int x = -1; x <= SECTION_SIZE; x++)
@@ -277,6 +290,8 @@ int world_materialize_chunk(World *const world, const int cx, const int cz) {
           columns[x][z].height : terrain_sample_column(world->terrainSeed, wx, wz).height;
       if (h < lowest) lowest = h;
     }
+
+  /* Stage missing sections so a failed allocation leaves the chunk intact. */
   Subchunk *pending[WORLD_SECTION_COUNT] = {0};
   for (int s = 0; s < WORLD_SECTION_COUNT; s++) {
     const int sy = WORLD_MIN_SECTION_Y + s;
@@ -291,6 +306,8 @@ int world_materialize_chunk(World *const world, const int cx, const int cz) {
       return 0;
     }
   }
+
+  /* Commit the staged sections and their counts together. */
   for (int s = 0; s < WORLD_SECTION_COUNT; s++)
     if (pending[s]) {
       Subchunk **const slot = section_slot(chunk, pending[s]->sectionY);
@@ -299,6 +316,7 @@ int world_materialize_chunk(World *const world, const int cx, const int cz) {
       world->sectionCount++;
       world->voxelCount += pending[s]->voxelCount;
     }
+
   chunk->terrainReady = 1;
   if (!world->hasMaterializedBounds) {
     world->minMaterializedChunkX = world->maxMaterializedChunkX = cx;
@@ -350,6 +368,7 @@ size_t world_release_chunks_outside(World *const world, const int minX, const in
       }
     }
   }
+
   world->minMaterializedChunkX = oldMinX > minX ? oldMinX : minX;
   world->maxMaterializedChunkX = oldMaxX < maxX ? oldMaxX : maxX;
   world->minMaterializedChunkZ = oldMinZ > minZ ? oldMinZ : minZ;
@@ -362,6 +381,7 @@ size_t world_release_chunks_outside(World *const world, const int minX, const in
 int world_set_block(World *const world, const int x, const int y, const int z, const BlockType type) {
   if (!in_bounds(world, x, y, z) || (!block_is_solid(type) && type != BLOCK_TYPE_EMPTY))
     return 0;
+
   /* Generation bounds are independent of edit safety. Test float spacing at
      this edit's height; reads need only integer bounds and existing storage. */
   const float limit = fabsf(world->origin.y) + (fabsf((float)y) + 1) * world->blockSize;
@@ -375,6 +395,8 @@ int world_set_block(World *const world, const int x, const int y, const int z, c
   const int index = block_index(x, y, z);
   if ((missing ? world_get_block(world, x, y, z) : section_block(*slot, index)) == type)
     return 1;
+
+  /* Prepare writable storage before linking a new section into the world. */
   Subchunk *const section = missing ?
       (world->proceduralTerrain && !chunk->terrainReady ?
        terrain_section(world, cx, sy, cz, NULL) : calloc(1, sizeof(*section))) : *slot;
@@ -392,6 +414,7 @@ int world_set_block(World *const world, const int x, const int y, const int z, c
     world->sectionCount++;
     world->voxelCount += section->voxelCount;
   }
+
   if (old == BLOCK_TYPE_EMPTY) {
     section->voxelCount++;
     world->voxelCount++;
@@ -406,6 +429,7 @@ int world_set_block(World *const world, const int x, const int y, const int z, c
   section->dirty = 1;
   if (world->proceduralTerrain)
     chunk->edited = 1;
+
   /* Only face neighbors depend on the changed voxel. Keep empty sections as
      tombstones so the renderer can retire their previous GPU meshes. */
   const int dx[6] = {-1, 1, 0, 0, 0, 0}, dy[6] = {0, 0, -1, 1, 0, 0},
@@ -442,6 +466,8 @@ float world_surface_height(const World *const world, const float x, const float 
   const Chunk *const chunk = find_chunk(world, voxel_section_coord(ix), voxel_section_coord(iz));
   int top = WORLD_COORD_MIN;
   int found = 0;
+
+  /* Start with the generated surface, accounting for explicit removals. */
   if (world->proceduralTerrain && !chunk->terrainReady) {
     TerrainColumn column = terrain_sample_column(world->terrainSeed, ix, iz);
     int y = column.height - 1;
@@ -452,6 +478,8 @@ float world_surface_height(const World *const world, const float x, const float 
     }
     if (y >= TERRAIN_BASE_Y) { top = y + 1; found = 1; }
   }
+
+  /* Stored sections can contain edits above the generated surface. */
   for (const Subchunk *s = chunk->sections; s; s = s->next) {
     if (found && (s->sectionY + 1) * SECTION_SIZE <= top) continue;
     for (int ly = SECTION_SIZE - 1; ly >= 0; ly--)
@@ -514,6 +542,8 @@ int section_mesh_build(const World *const world, const int cx, const int sy, con
       return 0;
     section = temporary;
   }
+
+  /* Nearby edits can expose a section previously classified as buried. */
   int editedNeighbor = chunk->edited;
   const int neighborX[4] = {-1, 1, 0, 0}, neighborZ[4] = {0, 0, -1, 1};
   for (int d = 0; d < 4; d++) {
@@ -526,6 +556,8 @@ int section_mesh_build(const World *const world, const int cx, const int sy, con
     section_destroy(temporary);
     return 1;
   }
+
+  /* Cache exposed faces and count the vertices needed for each material. */
   const int dx[6] = {-1, 1, 0, 0, 0, 0}, dy[6] = {0, 0, -1, 1, 0, 0},
             dz[6] = {0, 0, 0, 0, -1, 1};
   MeshNeighbors neighbors;
@@ -557,6 +589,7 @@ int section_mesh_build(const World *const world, const int cx, const int sy, con
         }
       }
   MESH_BENCH_QUERY_END();
+
   /* Counterclockwise corners viewed from outside: -X,+X,-Y,+Y,-Z,+Z. */
   static const int corners[6][4][3] = {{{0, 0, 1}, {0, 1, 1}, {0, 1, 0}, {0, 0, 0}},
                                        {{1, 0, 0}, {1, 1, 0}, {1, 1, 1}, {1, 0, 1}},
@@ -564,6 +597,8 @@ int section_mesh_build(const World *const world, const int cx, const int sy, con
                                        {{0, 1, 0}, {0, 1, 1}, {1, 1, 1}, {1, 1, 0}},
                                        {{0, 0, 0}, {0, 1, 0}, {1, 1, 0}, {1, 0, 0}},
                                        {{1, 0, 1}, {1, 1, 1}, {0, 1, 1}, {0, 0, 1}}};
+
+  /* Reserve a contiguous vertex range for each material. */
   for (int t = 0; t < BLOCK_TYPE_COUNT; t++) {
     result.firstVertex[t] = result.vertexCount;
     result.typeVertexCount[t] = counts[t];
@@ -576,6 +611,7 @@ int section_mesh_build(const World *const world, const int cx, const int sy, con
     section_destroy(temporary);
     return 0;
   }
+
   size_t cursors[BLOCK_TYPE_COUNT];
   memcpy(cursors, result.firstVertex, sizeof(cursors));
   /* Reuse the visibility mask while emitting contiguous material ranges. */
@@ -599,6 +635,7 @@ int section_mesh_build(const World *const world, const int cx, const int sy, con
           }
         }
       }
+
   section_mesh_destroy(mesh);
   *mesh = result;
   section_destroy(temporary);

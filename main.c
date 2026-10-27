@@ -481,9 +481,12 @@ static int renderer_prepare_world(Renderer *const renderer, const World *const w
     for (const Subchunk *s = world->chunks[c].sections; s; s = s->next)
       if (mesh_identity_compare(&renderer->meshes[i++], world->chunks[c].x, s->sectionY, world->chunks[c].z)) { same = 0; break; }
   if (same) return 1;
+
   const double start = perf_clock(renderer->performance);
   SectionGpuMesh *const records = world->sectionCount ? calloc(world->sectionCount, sizeof(*records)) : NULL;
   if (world->sectionCount && !records) return 0;
+
+  /* Merge current section identities with the existing GPU records. */
   size_t old = 0, n = 0;
   for (size_t c = 0; c < world->chunkCount; c++)
     for (const Subchunk *s = world->chunks[c].sections; s; s = s->next) {
@@ -495,6 +498,7 @@ static int renderer_prepare_world(Renderer *const renderer, const World *const w
       else records[n] = (SectionGpuMesh){.chunkX = x, .sectionY = s->sectionY, .chunkZ = z};
       n++;
     }
+
   while (old < renderer->meshCount) section_gpu_mesh_destroy(&renderer->meshes[old++]);
   free(renderer->meshes);
   renderer->meshes = records;
@@ -513,6 +517,7 @@ static int renderer_sync_section(const Renderer *const renderer, World *const wo
   }
   if (!section->dirty)
     return 1;
+
   SectionMesh cpu = {0};
   Performance *const p = renderer->performance;
   double start = perf_clock(p);
@@ -523,6 +528,7 @@ static int renderer_sync_section(const Renderer *const renderer, World *const wo
     const size_t bytes = cpu.vertexCount * sizeof(*cpu.vertices);
     if (bytes > p->frame.peakMeshBytes) p->frame.peakMeshBytes = bytes;
   }
+
   if (success) {
     start = perf_clock(p);
     success = renderer_upload_section_mesh(gpu, &cpu, p);
@@ -569,9 +575,11 @@ static int renderer_sync_view(Renderer *const renderer, World *const world, cons
   const int maxX = (int)fmaxf((float)world->minChunkX - 1, fminf((float)maxChunkX, hiX));
   const int minZ = (int)fminf((float)maxChunkZ + 1, fmaxf((float)world->minChunkZ, loZ));
   const int maxZ = (int)fmaxf((float)world->minChunkZ - 1, fminf((float)maxChunkZ, hiZ));
+
   /* No indices may survive metadata replacement or an interrupted sync pass. */
   renderer->streamed = 1;
   renderer->visibleMeshCount = renderer->drawMeshCount = 0;
+
   /* Retire departing columns before collecting current section identities. */
   for (size_t i = 0; i < renderer->meshCount; i++) {
     SectionGpuMesh *const m = &renderer->meshes[i];
@@ -587,10 +595,13 @@ static int renderer_sync_view(Renderer *const renderer, World *const world, cons
     section_gpu_mesh_destroy(m);
     m->chunkX = x; m->sectionY = y; m->chunkZ = z;
   }
+
   /* CPU residency must not depend on successful renderer metadata allocation. */
   const size_t evicted = world_release_chunks_outside(world, minX, maxX, minZ, maxZ);
   if (renderer->performance && renderer->performance->enabled)
     renderer->performance->frame.evictedChunks += evicted;
+
+  /* Materialize the new neighborhood before rebuilding renderer records. */
   for (int cx = minX; cx <= maxX; cx++)
     for (int cz = minZ; cz <= maxZ; cz++) {
       const double start = perf_clock(renderer->performance);
@@ -599,6 +610,7 @@ static int renderer_sync_view(Renderer *const renderer, World *const world, cons
         renderer->performance->frame.materialize += perf_clock(renderer->performance) - start;
       if (!ready) return 0;
     }
+
   if (!renderer_prepare_world(renderer, world)) return 0;
   if (renderer->meshCount > renderer->visibleMeshCapacity) {
     size_t *const indices = malloc(renderer->meshCount * sizeof(*indices));
@@ -607,6 +619,8 @@ static int renderer_sync_view(Renderer *const renderer, World *const world, cons
     renderer->visibleMeshes = indices;
     renderer->visibleMeshCapacity = renderer->meshCount;
   }
+
+  /* Collect and synchronize only sections in the current neighborhood. */
   renderer->streamed = 1;
   renderer->visibleMeshCount = 0;
   for (size_t i = 0; i < renderer->meshCount; i++) {
@@ -977,6 +991,8 @@ static void render_world(Renderer *const renderer, const Player *const player) {
   const double start = perf_clock(p);
   const int collected = renderer_collect_draw_meshes(renderer, cameraPosition, viewDistance, mvp);
   if (p && p->enabled) p->frame.visibility += perf_clock(p) - start;
+
+  /* Draw by material so all sections sharing a color use one uniform update. */
   glUniformMatrix4fv(renderer->mvpLocation, 1, GL_FALSE, (float *)mvp);
   for (int type = 0; type < BLOCK_TYPE_COUNT; type++) {
     Vec3 color;
@@ -1190,6 +1206,7 @@ static int application_init(Application *const application) {
     return 0;
   }
   application->worldMetadataSeconds = perf_clock(&application->performance) - worldStart;
+
   /* Bounded deterministic search: prefer a grassy lowland near the start. */
   for (int ring = 0, found = 0; ring <= 64 && !found; ring++)
     for (int dx = -ring; dx <= ring && !found; dx++)
@@ -1210,6 +1227,7 @@ static int application_init(Application *const application) {
     application_shutdown(application);
     return 0;
   }
+
   const double syncStart = perf_clock(&application->performance);
   if (!renderer_sync_view(&application->renderer, &application->world, &application->player)) {
     fprintf(stderr,"Failed to build or upload section meshes\n");
@@ -1255,6 +1273,7 @@ static void application_update(Application *const application) {
     application->fpsWindowStart = currentFrame;
   }
 
+  /* Handle pause transitions before consuming gameplay input. */
   const int escapeIsDown = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
   if (escapeIsDown && !application->escapeWasDown) {
     if (application->paused && application->settingsOpen)
@@ -1273,6 +1292,7 @@ static void application_update(Application *const application) {
     return;
   }
 
+  /* Retain a new jump press until a simulation tick can consume it. */
   update_camera(&application->player.camera, &application->mouseInput);
   PlayerInput input = read_player_input(window);
   if (input.jump && !application->jumpWasDown)
@@ -1280,6 +1300,7 @@ static void application_update(Application *const application) {
   application->jumpWasDown = input.jump;
   input.jump = 0;
 
+  /* Advance physics at a fixed rate, independent of rendering frequency. */
   application->simulationAccumulator += deltaTime;
   while (application->simulationAccumulator >= FIXED_DELTA_TIME) {
     input.jump = application->jumpQueued;
@@ -1288,6 +1309,8 @@ static void application_update(Application *const application) {
     application->jumpQueued = 0;
     application->simulationAccumulator -= FIXED_DELTA_TIME;
   }
+
+  /* Apply queued block edits once per rendered frame. */
   if (application->placeQueued) {
     if (glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED)
       player_place_block(&application->world, &application->player, BLOCK_TYPE_STONE, 6.0f);
@@ -1311,6 +1334,7 @@ static void application_render(Application *const application) {
   if (application->paused)
     render_pause_menu(application);
   if (p->enabled) p->frame.render += perf_clock(p) - start;
+
   start = perf_clock(p);
   glfwSwapBuffers(application->window);
   if (p->enabled) p->frame.swap += perf_clock(p) - start;
@@ -1329,9 +1353,11 @@ static int application_frame(Application *const a) {
     p->frame.raw = a->rawFrame;
     p->frame.update = perf_clock(p) - start;
   }
+
   start = perf_clock(p);
   const int success = renderer_sync_view(&a->renderer, &a->world, &a->player);
   if (p->enabled) p->frame.sync = perf_clock(p) - start;
+
   application_render(a);
   perf_record(p);
   return success;

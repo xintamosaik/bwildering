@@ -22,7 +22,10 @@ static int perf_compare(const void *const a, const void *const b) {
 
 void perf_record(Performance *const p) {
   if (!p->enabled || p->count == PERF_SAMPLES) return;
+
   p->samples[p->count++] = p->frame.raw;
+
+  /* Accumulate work totals while retaining individual frame durations. */
 #define PERF_SUM(field) p->total.field += p->frame.field
   PERF_SUM(raw); PERF_SUM(update); PERF_SUM(sync); PERF_SUM(materialize);
   PERF_SUM(mesh); PERF_SUM(upload); PERF_SUM(render); PERF_SUM(swap);
@@ -32,15 +35,19 @@ void perf_record(Performance *const p) {
   PERF_SUM(distanceTests); PERF_SUM(frustumTests);
   PERF_SUM(materialChanges); PERF_SUM(visibilityFallbacks);
 #undef PERF_SUM
+
   if (p->frame.peakMeshBytes > p->total.peakMeshBytes)
     p->total.peakMeshBytes = p->frame.peakMeshBytes;
 }
 
 void perf_finish_window(Performance *const p) {
   if (!p->count) return;
+
+  /* Sort a copy so percentile calculation preserves the recorded samples. */
   double sorted[PERF_SAMPLES];
   memcpy(sorted, p->samples, p->count * sizeof(*sorted));
   qsort(sorted, p->count, sizeof(*sorted), perf_compare);
+
   p->average = p->total.raw / (double)p->count;
   p->p95 = sorted[(95 * p->count + 99) / 100 - 1];
   p->maximum = sorted[p->count - 1];
@@ -56,6 +63,7 @@ void perf_report(Performance *const p, const PerformanceSnapshot *const s, const
   if (!p->enabled) return;
   perf_finish_window(p);
   const double n = p->count ? (double)p->count : 1;
+
   fprintf(stdout, "PERF phase=%s samples=%zu frame_ms=%.3f/%.3f/%.3f "
       "update_ms=%.3f sync_ms=%.3f materialize_ms=%.3f mesh_ms=%.3f upload_ms=%.3f "
       "render_ms=%.3f swap_ms=%.3f visibility_ms=%.3f distance_tests_avg=%.1f "

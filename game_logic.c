@@ -37,6 +37,7 @@ uint32_t random_bounded(uint32_t *const state, const uint32_t upperBound) {
   if (*state == 0u)
     *state = UINT32_C(0x6D2B79F5);
 
+  /* Reject a partial modulo cycle to keep bounded results unbiased. */
   const uint32_t threshold = (0u - upperBound) % upperBound;
   uint32_t value;
   do {
@@ -88,6 +89,7 @@ void mat4_rotate(mat4 dest, const float angle, float x, float y, float z) {
     mat4_identity(dest);
     return;
   }
+
   x /= len;
   y /= len;
   z /= len;
@@ -174,12 +176,15 @@ float terrain_noise(const int x, const int z, const int scale,
                            const uint32_t seed) {
   if (scale < 8 || scale > 2048 || (scale & (scale - 1)) != 0)
     return NAN;
+
   const int gx = voxel_floor_div(x, scale);
   const int gz = voxel_floor_div(z, scale);
   float tx = (float)voxel_floor_mod(x, scale) / (float)scale;
   float tz = (float)voxel_floor_mod(z, scale) / (float)scale;
   tx = tx * tx * (3.0f - 2.0f * tx);
   tz = tz * tz * (3.0f - 2.0f * tz);
+
+  /* Interpolate the four lattice corners with smoothed local coordinates. */
   const float a = terrain_lattice(gx, gz, seed);
   const float b = terrain_lattice(gx + 1, gz, seed);
   const float c = terrain_lattice(gx, gz + 1, seed);
@@ -204,6 +209,8 @@ TerrainColumn terrain_sample_column(const uint32_t seed, const int x, const int 
   const float detail = terrain_noise(x, z, TERRAIN_DETAIL_SCALE, seed ^ UINT32_C(0x912AC318));
   int height = (int)floorf(TERRAIN_SURFACE_MIN + 175 * broad + 285 * mask * ridge + 18 * hills + 4 * detail);
   if (height > TERRAIN_SURFACE_MAX) height = TERRAIN_SURFACE_MAX;
+
+  /* Choose surface layers after fixing the column height. */
   const float local = terrain_noise(x, z, 64, seed ^ UINT32_C(0xFE321AB7));
   const float deposit = terrain_noise(x, z, 128, seed ^ UINT32_C(0xBC219841));
   const int offset = (int)floorf(12 * local - 6);
@@ -223,6 +230,7 @@ TerrainColumn terrain_sample_column(const uint32_t seed, const int x, const int 
       c.material = BLOCK_TYPE_GRASS;
     }
   }
+
   if (height - 1 < c.deepRockY) c.material = BLOCK_TYPE_DARK_STONE;
   return c;
 }
@@ -259,6 +267,8 @@ int create_platform(World *const world, const int side, const Vec3 center, const
     tiles[i] = tiles[j];
     tiles[j] = t;
   }
+
+  /* Apply the shuffled palette to the platform cells. */
   for (int x = 0; x < side; x++) {
     for (int z = 0; z < side; z++) {
       const int height = 0;
@@ -273,6 +283,7 @@ int create_platform(World *const world, const int side, const Vec3 center, const
     }
   }
   free(tiles);
+
   world_destroy(world);
   *world = result;
   return 1;
@@ -291,6 +302,8 @@ int create_terrain_region(World *const world, const int minX, const int minZ, co
         world_destroy(&result);
         return 0;
       }
+
+  /* Publish the replacement only after every chunk is ready. */
   result.proceduralTerrain = 0;
   world_destroy(world);
   *world = result;
@@ -324,12 +337,15 @@ static int player_view_block(const World *const world, const Player *const playe
   if (!world || !world->chunks || !player ||
       !isfinite(reach) || reach <= 0)
     return 0;
+
+  /* Normalize the ray so face-crossing distances use world units. */
   Vec3 eye = player_eye_position(player);
   Vec3 front = player->camera.front;
   const double length = sqrt((double)front.x * front.x + (double)front.y * front.y +
                        (double)front.z * front.z);
   if (!isfinite(length) || length == 0)
     return 0;
+
   double origin[3] = {(double)eye.x - world->origin.x,
                       (double)eye.y - world->origin.y,
                       (double)eye.z - world->origin.z};
@@ -351,6 +367,7 @@ static int player_view_block(const World *const world, const Player *const playe
   }
   if (block_is_solid(world_get_block(world, cell[0], cell[1], cell[2])))
     return 0;
+
   /* Traverse voxel faces exactly, so small blocks and section seams cannot be skipped. */
   for (;;) {
     int axis = next[0] <= next[1] ? 0 : 1;
@@ -377,6 +394,8 @@ int player_place_block(World *const world, const Player *const player, const Blo
   int hit[3], adjacent[3];
   if (!block_is_solid(type) || !player_view_block(world, player, reach, hit, adjacent))
     return 0;
+
+  /* Reject placement if the new block would overlap the player body. */
   double low[3] = {world->origin.x + (double)adjacent[0] * world->blockSize,
                    world->origin.y + (double)adjacent[1] * world->blockSize,
                    world->origin.z + (double)adjacent[2] * world->blockSize};
@@ -412,6 +431,8 @@ static int player_intersects(const World *const world, Vec3 p) {
   int upper[3] = {world->minX + world->blocksPerSide,
                   WORLD_COORD_MAX + 1,
                   world->minZ + world->blocksPerSide};
+
+  /* Clip the body bounds to the world before visiting overlapping cells. */
   int first[3], last[3];
   for (int i = 0; i < 3; i++) {
     if (!isfinite(lo[i]) || !isfinite(hi[i]) || hi[i] <= (float)lower[i] || lo[i] >= (float)upper[i])
@@ -419,6 +440,7 @@ static int player_intersects(const World *const world, Vec3 p) {
     first[i] = (int)floorf(fmaxf(lo[i], (float)lower[i]));
     last[i] = (int)ceilf(fminf(hi[i], (float)upper[i])) - 1;
   }
+
   for (int x = first[0]; x <= last[0]; x++)
     for (int y = first[1]; y <= last[1]; y++)
       for (int z = first[2]; z <= last[2]; z++)
@@ -440,7 +462,9 @@ static int move_axis(Player *const player, const World *const world, const float
       next.y += step;
     else
       next.z += step;
+
     if (player_intersects(world, next)) {
+      /* Refine the blocked step to the last collision-free position. */
       float low = 0, high = 1;
       for (int j = 0; j < 22; j++) {
         const float t = (low + high) * 0.5f;
@@ -450,6 +474,7 @@ static int move_axis(Player *const player, const World *const world, const float
         else
           low = t;
       }
+
       /* Leave a small separation so float rounding cannot place the body
          just beyond the contact plane on the next frame. */
       low = fmaxf(0, low - 0.000001f / fmaxf(fabsf(step), 0.000001f));
@@ -483,6 +508,8 @@ int player_spawn_on_surface(Player *const player, const World *const world) {
   const int lastX = (int)ceilf(fminf(hiX, world->minX + world->blocksPerSide)) - 1;
   const int firstZ = (int)floorf(fmaxf(loZ, world->minZ));
   const int lastZ = (int)ceilf(fminf(hiZ, world->minZ + world->blocksPerSide)) - 1;
+
+  /* Use the highest support beneath any part of the body footprint. */
   float height = -INFINITY;
   for (int x = firstX; x <= lastX; x++)
     for (int z = firstZ; z <= lastZ; z++) {
@@ -491,6 +518,7 @@ int player_spawn_on_surface(Player *const player, const World *const world) {
       if (isfinite(top)) height = fmaxf(height, top);
     }
   if (!isfinite(height)) return 0;
+
   player->position.y = height;
   player->velocityY = 0;
   player->grounded = 1;
@@ -500,6 +528,8 @@ int player_spawn_on_surface(Player *const player, const World *const world) {
 void update_player(Player *const player, PlayerInput input, const float dt, const World *const world) {
   if (!player || !isfinite(dt) || dt <= 0 || dt > 10)
     return;
+
+  /* Resolve horizontal motion one axis at a time to slide along walls. */
   player->crouching = input.crouch != 0;
   const float speed = 4.0f * (input.crouch ? 0.75f : input.run ? 1.5f : 1.0f);
   const Vec3 forward =
@@ -511,6 +541,8 @@ void update_player(Player *const player, PlayerInput input, const float dt, cons
     movement = vec3_normalize(movement);
   move_axis(player, world, movement.x * speed * dt, 0);
   move_axis(player, world, movement.z * speed * dt, 2);
+
+  /* Recheck support after moving, then accept a grounded jump. */
   Vec3 below = player->position;
   below.y -= 0.001f;
   if (player->grounded && !player_intersects(world, below))
@@ -521,6 +553,7 @@ void update_player(Player *const player, PlayerInput input, const float dt, cons
   }
   if (player->grounded)
     return;
+
   const float gravity = GRAVITY * (player->velocityY <= 0 ? FALL_GRAVITY_MULTIPLIER : 1);
   player->velocityY -= gravity * dt;
   const int falling = player->velocityY < 0;

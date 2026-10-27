@@ -1,0 +1,105 @@
+Build, shared tests and benchmark build
+gcc -Wall -Wextra -O2 -std=c99 tests/test_game_logic.c game_logic.c voxel_world.c storage.c -o test_game_logic -lm
+gcc -Wall -Wextra -O2 -std=c99 tests/test_allocation_failures.c game_logic.c voxel_world.c storage.c -o test_allocation_failures -lm
+gcc -Wall -Wextra -O2 -std=c99 tests/test_pause_menu.c game_logic.c voxel_world.c storage.c performance.c -o test_pause_menu -lGLEW -lglfw -lGL -lm -lpthread
+./test_game_logic
+Overlay travel: 1024 columns, 65536 edits, 1310720 arena bytes, zero final resident sections
+flat: 144 populated meshes, 446976 vertices, 5363712 bytes, 1152 draws, CPU 3.113 ms
+terrain: 550 populated meshes, 1060656 vertices, 12727872 bytes, 640 draws, CPU 31.152 ms
+Expanded 4608x4608 world: 4176 vertices, nearby CPU generation + meshing 2.076 ms
+Terrain relief: -79..354 blocks; underground base -128
+Layered terrain seed 1: -81..370; lowland columns 25733
+Layered terrain seed 1260202551: -81..370; lowland columns 26146
+Layered terrain seed 42: -82..370; lowland columns 27697
+Surface material 0: 113492 columns
+Surface material 1: 55808 columns
+Surface material 2: 0 columns
+Surface material 3: 10827 columns
+Surface material 4: 0 columns
+Surface material 5: 8798 columns
+Surface material 6: 1091 columns
+Surface material 7: 8131 columns
+All game logic tests passed.
+./test_allocation_failures
+All allocation failure tests passed.
+./test_pause_menu
+All pause menu interaction tests passed.
+./test_storage
+All storage tests passed.
+gcc -Wall -Wextra -O2 -std=c99 main.c game_logic.c voxel_world.c storage.c performance.c ui.c input.c -o bwildering -lGLEW -lglfw -lGL -lm -lpthread
+gcc -Wall -Wextra -O2 -std=c99 tests/test_renderer.c game_logic.c voxel_world.c storage.c performance.c ui.c input.c -o test_renderer -lGLEW -lglfw -lGL -lm -lpthread
+gcc -Wall -Wextra -O2 -std=c99 tests/allocation_capture.c game_logic.c voxel_world.c storage.c performance.c ui.c input.c -o allocation_capture -lGLEW -lglfw -lGL -lm -lpthread
+gcc -Wall -Wextra -O2 -std=c99 tests/mesh_query_benchmark.c game_logic.c storage.c -o mesh_query_benchmark -lm
+
+Shared ASan/UBSan; ASAN_OPTIONS=detect_leaks=0
+gcc -Wall -Wextra -O1 -g -std=c99 -fsanitize=address,undefined -fno-omit-frame-pointer tests/test_storage.c game_logic.c voxel_world.c storage.c -o test_storage_sanitize -lm
+./test_storage_sanitize
+All storage tests passed.
+gcc -Wall -Wextra -O1 -g -std=c99 -fsanitize=address,undefined -fno-omit-frame-pointer tests/test_game_logic.c game_logic.c voxel_world.c storage.c -o test_game_logic_sanitize -lm
+./test_game_logic_sanitize
+Overlay travel: 1024 columns, 65536 edits, 1310720 arena bytes, zero final resident sections
+flat: 144 populated meshes, 446976 vertices, 5363712 bytes, 1152 draws, CPU 30.147 ms
+terrain: 550 populated meshes, 1060656 vertices, 12727872 bytes, 640 draws, CPU 230.932 ms
+Expanded 4608x4608 world: 4176 vertices, nearby CPU generation + meshing 9.844 ms
+Terrain relief: -79..354 blocks; underground base -128
+Layered terrain seed 1: -81..370; lowland columns 25733
+Layered terrain seed 1260202551: -81..370; lowland columns 26146
+Layered terrain seed 42: -82..370; lowland columns 27697
+Surface material 0: 113492 columns
+Surface material 1: 55808 columns
+Surface material 2: 0 columns
+Surface material 3: 10827 columns
+Surface material 4: 0 columns
+Surface material 5: 8798 columns
+Surface material 6: 1091 columns
+Surface material 7: 8131 columns
+All game logic tests passed.
+gcc -Wall -Wextra -O1 -g -std=c99 -fsanitize=address,undefined -fno-omit-frame-pointer tests/test_allocation_failures.c game_logic.c voxel_world.c storage.c -o test_allocation_failures_sanitize -lm
+./test_allocation_failures_sanitize
+All allocation failure tests passed.
+gcc -Wall -Wextra -O1 -g -std=c99 -fsanitize=address,undefined -fno-omit-frame-pointer tests/test_pause_menu.c game_logic.c voxel_world.c storage.c performance.c -o test_pause_menu_sanitize -lGLEW -lglfw -lGL -lm -lpthread
+./test_pause_menu_sanitize
+All pause menu interaction tests passed.
+
+Real X11 GL suite; make test-renderer
+./test_renderer
+AUDIT compiler=16.2.1 20260810 vendor=AMD renderer=AMD Radeon HD 7800 Series (radeonsi, pitcairn, ACO, DRM 3.64, 7.3.0-4-cachyos) version=4.6 (Core Profile) Mesa 26.2.5-arch3.1 display=:0 resolution=640x480
+Unculled depth/range parity, transformed seams and GL destruction checks passed.
+Rendered pending edits, fast departure and synchronous convergence checks passed.
+Terrain submitted draws at benchmark camera: 172
+GL renderer: AMD Radeon HD 7800 Series (radeonsi, pitcairn, ACO, DRM 3.64, 7.3.0-4-cachyos); startup 72.929 ms; frame 0.298 ms
+Rendered wall sliding and jump/landing checks passed.
+Default 4608x4608 world: startup 206.5 ms, 2282 resident sections, 13.1 MiB terrain vertices
+Application spawn surface: 8.0; grounded and jump checks passed.
+All renderer and application smoke tests passed.
+
+Clang-Tidy narrowing check; -std=c99 -Wall -Wextra -O2
+[1/8] Processing file /home/ulfd/Projects/bwildering/voxel_world.c.
+[2/8] Processing file /home/ulfd/Projects/bwildering/main.c.
+[3/8] Processing file /home/ulfd/Projects/bwildering/storage.c.
+[4/8] Processing file /home/ulfd/Projects/bwildering/tests/test_storage.c.
+[5/8] Processing file /home/ulfd/Projects/bwildering/tests/test_allocation_failures.c.
+[6/8] Processing file /home/ulfd/Projects/bwildering/tests/test_renderer.c.
+[7/8] Processing file /home/ulfd/Projects/bwildering/tests/allocation_capture.c.
+[8/8] Processing file /home/ulfd/Projects/bwildering/tests/section_storage_benchmark.c.
+
+Frozen mesh baseline parity benchmark
+resident surface     baseline   721.254 us/build  2004 vertices
+resident surface     current     63.374 us/build  2004 vertices
+synthetic neighbors  baseline  1043.227 us/build  2004 vertices
+synthetic neighbors  current     78.350 us/build  2004 vertices
+synthetic target     baseline  8394.693 us/build  2004 vertices
+synthetic target     current    190.960 us/build  2004 vertices
+edited deep border   baseline   953.949 us/build  6 vertices
+edited deep border   current     66.152 us/build  6 vertices
+sparse high edit     baseline    17.824 us/build  36 vertices
+sparse high edit     current      7.500 us/build  36 vertices
+
+Section capacity/checksum benchmark
+seed=1 center=512,-448 peak=357 sections=1490 dense=423 uniform=1067 empty=0 node=64 requested=1830232 reserved=1935728 generation_ms=31.883 checksum=17463511739971487994
+seed=42 center=0,-832 peak=331 sections=1499 dense=425 uniform=1074 empty=0 node=64 requested=1839000 reserved=1935728 generation_ms=30.667 checksum=10300230677035997798
+seed=1260202551 center=-512,960 peak=288 sections=1519 dense=266 uniform=1253 empty=0 node=64 requested=1189016 reserved=1411424 generation_ms=30.996 checksum=9084346727055304112
+
+Final application/renderer build after overflow-fallback review
+gcc -Wall -Wextra -O2 -std=c99 main.c game_logic.c voxel_world.c storage.c performance.c ui.c input.c -o bwildering -lGLEW -lglfw -lGL -lm -lpthread
+gcc -Wall -Wextra -O2 -std=c99 tests/test_renderer.c game_logic.c voxel_world.c storage.c performance.c ui.c input.c -o test_renderer -lGLEW -lglfw -lGL -lm -lpthread

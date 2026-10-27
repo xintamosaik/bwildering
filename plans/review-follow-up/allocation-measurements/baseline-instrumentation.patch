@@ -1,0 +1,183 @@
+--- a/main.c
++++ b/main.c
+@@ -1,3 +1,4 @@
++#include "storage.h"
+ #include "application.h"
+ #include "ui.h"
+ #include <limits.h>
+@@ -142,9 +143,9 @@
+ static void renderer_destroy(Renderer *const renderer) {
+   for (size_t i = 0; i < renderer->meshCount; i++)
+     section_gpu_mesh_destroy(&renderer->meshes[i]);
+-  free(renderer->meshes);
+-  free(renderer->visibleMeshes);
+-  free(renderer->drawMeshes);
++  storage_free(STORAGE_RECORD, renderer->meshes, renderer->meshCount * sizeof(*renderer->meshes));
++  storage_free(STORAGE_VISIBLE, renderer->visibleMeshes, renderer->visibleMeshCapacity * sizeof(*renderer->visibleMeshes));
++  storage_free(STORAGE_DRAW, renderer->drawMeshes, renderer->drawMeshCapacity * sizeof(*renderer->drawMeshes));
+   if (renderer->textVao != 0)
+     glDeleteVertexArrays(1, &renderer->textVao);
+   if (renderer->textVbo != 0)
+@@ -268,7 +269,7 @@
+   if (same) return 1;
+ 
+   const double start = perf_clock(renderer->performance);
+-  SectionGpuMesh *const records = world->sectionCount ? calloc(world->sectionCount, sizeof(*records)) : NULL;
++  SectionGpuMesh *const records = world->sectionCount ? storage_alloc(STORAGE_RECORD, world->sectionCount * sizeof(*records)) : NULL;
+   if (world->sectionCount && !records) return 0;
+ 
+   /* Merge current section identities with the existing GPU records. */
+@@ -285,7 +286,7 @@
+     }
+ 
+   while (old < renderer->meshCount) section_gpu_mesh_destroy(&renderer->meshes[old++]);
+-  free(renderer->meshes);
++  storage_free(STORAGE_RECORD, renderer->meshes, renderer->meshCount * sizeof(*renderer->meshes));
+   renderer->meshes = records;
+   renderer->meshCount = n;
+   renderer->metadataSeconds += perf_clock(renderer->performance) - start;
+@@ -530,12 +531,12 @@
+     return STREAM_FAILED;
+   }
+   if (renderer->meshCount > renderer->visibleMeshCapacity) {
+-    size_t *const indices = malloc(renderer->meshCount * sizeof(*indices));
++    size_t *const indices = storage_alloc(STORAGE_VISIBLE, renderer->meshCount * sizeof(*indices));
+     if (!indices) {
+       if (budget) stream_visible_fallback(renderer, minX, maxX, minZ, maxZ);
+       return STREAM_FAILED;
+     }
+-    free(renderer->visibleMeshes);
++    storage_free(STORAGE_VISIBLE, renderer->visibleMeshes, renderer->visibleMeshCapacity * sizeof(*renderer->visibleMeshes));
+     renderer->visibleMeshes = indices;
+     renderer->visibleMeshCapacity = renderer->meshCount;
+   }
+@@ -666,12 +667,14 @@
+     if (renderer->drawMeshCount == renderer->drawMeshCapacity) {
+       size_t capacity = renderer->drawMeshCapacity ? renderer->drawMeshCapacity * 2 : 64;
+       if (capacity > count) capacity = count;
+-      size_t *const indices = realloc(renderer->drawMeshes, capacity * sizeof(*indices));
++      size_t *const indices = storage_alloc(STORAGE_DRAW, capacity * sizeof(*indices));
+       if (!indices) {
+         renderer->drawMeshCount = 0;
+         if (p && p->enabled) p->frame.visibilityFallbacks++;
+         return 0;
+       }
++      if (renderer->drawMeshes) memcpy(indices, renderer->drawMeshes, renderer->drawMeshCount * sizeof(*indices));
++      storage_free(STORAGE_DRAW, renderer->drawMeshes, renderer->drawMeshCapacity * sizeof(*indices));
+       renderer->drawMeshes = indices;
+       renderer->drawMeshCapacity = capacity;
+     }
+--- a/voxel_world.c
++++ b/voxel_world.c
+@@ -1,4 +1,5 @@
+ #include "game_logic.h"
++#include "storage.h"
+ 
+ #include <math.h>
+ #include <stdlib.h>
+@@ -42,8 +43,8 @@
+ 
+ static void section_destroy(Subchunk *const section) {
+   if (!section) return;
+-  free(section->blocks);
+-  free(section);
++  storage_free(STORAGE_PAYLOAD, section->blocks, SECTION_VOLUME);
++  storage_free(STORAGE_NODE, section, sizeof(*section));
+ }
+ 
+ /* Compact without allocating. Mixed full sections usually differ early. */
+@@ -57,7 +58,7 @@
+       if (section->blocks[i] != material) return;
+   }
+ 
+-  free(section->blocks);
++  storage_free(STORAGE_PAYLOAD, section->blocks, SECTION_VOLUME);
+   section->blocks = NULL;
+   section->material = material;
+   section->storage = section->voxelCount ? SECTION_UNIFORM : SECTION_EMPTY;
+@@ -66,7 +67,7 @@
+ /* Allocate first; callers commit ownership/counts only after success. */
+ static int section_expand(Subchunk *const section) {
+   if (section->storage == SECTION_DENSE) return 1;
+-  uint8_t *const blocks = malloc(SECTION_VOLUME);
++  uint8_t *const blocks = storage_alloc(STORAGE_PAYLOAD, SECTION_VOLUME);
+   if (!blocks) return 0;
+   memset(blocks, section->storage == SECTION_EMPTY ? BLOCK_TYPE_EMPTY : section->material,
+          SECTION_VOLUME);
+@@ -83,8 +84,8 @@
+       Subchunk *section = world->chunks[c].sections;
+       while (section) { Subchunk *const next = section->next; section_destroy(section); section = next; }
+     }
+-  free(world->edits);
+-  free(world->chunks);
++  storage_free(STORAGE_WORLD, world->edits, WORLD_EDIT_CAPACITY * sizeof(*world->edits));
++  storage_free(STORAGE_WORLD, world->chunks, world->chunkCount * sizeof(*world->chunks));
+   *world = (World){0};
+ }
+ 
+@@ -130,9 +131,10 @@
+   result.blocksPerSide = side;
+   result.blockSize = size;
+   result.origin = origin;
+-  result.chunks = calloc(result.chunkCount, sizeof(*result.chunks));
++  result.chunks = storage_alloc(STORAGE_WORLD, result.chunkCount * sizeof(*result.chunks));
+   if (!result.chunks)
+     return 0;
++  memset(result.chunks, 0, result.chunkCount * sizeof(*result.chunks));
+   for (int x = 0; x < result.chunksPerSide; x++)
+     for (int z = 0; z < result.chunksPerSide; z++) {
+       Chunk *const chunk = &result.chunks[x * result.chunksPerSide + z];
+@@ -243,9 +245,10 @@
+   return BLOCK_TYPE_EMPTY;
+ }
+ 
++static Subchunk *empty_section(void) { Subchunk *const s = storage_alloc(STORAGE_NODE, sizeof(*s)); if (s) *s = (Subchunk){0}; return s; }
+ static Subchunk *terrain_section(const World *const world, const int cx, const int sy, const int cz,
+                                  const TerrainColumn columns[const SECTION_SIZE][SECTION_SIZE]) {
+-  Subchunk *const section = malloc(sizeof(*section));
++  Subchunk *const section = storage_alloc(STORAGE_NODE, sizeof(*section));
+   if (!section)
+     return NULL;
+   *section = (Subchunk){.storage = SECTION_EMPTY, .material = BLOCK_TYPE_EMPTY,
+@@ -470,19 +473,19 @@
+   if (insert && world->editCount == WORLD_EDIT_CAPACITY) return 0;
+   /* Reserve the whole arena once, without publishing ownership on failure. */
+   VoxelEdit *const arena = insert && !world->edits ?
+-      malloc(WORLD_EDIT_CAPACITY * sizeof(*arena)) : NULL;
++      storage_alloc(STORAGE_WORLD, WORLD_EDIT_CAPACITY * sizeof(*arena)) : NULL;
+   if (insert && !world->edits && !arena) return 0;
+ 
+   /* Prepare writable storage before linking a new section into the world. */
+   Subchunk *const section = missing ?
+       (world->proceduralTerrain && !chunk->terrainReady ?
+-       terrain_section(world, cx, sy, cz, NULL) : calloc(1, sizeof(*section))) : *slot;
+-  if (!section) { free(arena); return 0; }
++       terrain_section(world, cx, sy, cz, NULL) : empty_section()) : *slot;
++  if (!section) { storage_free(STORAGE_WORLD, arena, WORLD_EDIT_CAPACITY * sizeof(*arena)); return 0; }
+   if (missing && section->storage == SECTION_EMPTY) section->material = BLOCK_TYPE_EMPTY;
+   const BlockType old = section_block(section, index);
+   if (!section_expand(section)) {
+     if (missing) section_destroy(section);
+-    free(arena);
++    storage_free(STORAGE_WORLD, arena, WORLD_EDIT_CAPACITY * sizeof(*arena));
+     return 0;
+   }
+   if (missing) {
+@@ -604,7 +607,7 @@
+ void section_mesh_destroy(SectionMesh *const mesh) {
+   if (!mesh)
+     return;
+-  free(mesh->vertices);
++  storage_free(STORAGE_MESH, mesh->vertices, mesh->vertexCount * sizeof(*mesh->vertices));
+   *mesh = (SectionMesh){0};
+ }
+ 
+@@ -718,7 +721,7 @@
+   }
+   /* A section has at most 4096*6*6 vertices. */
+   result.vertices = result.vertexCount
+-                        ? malloc(result.vertexCount * sizeof(*result.vertices)) : NULL;
++                        ? storage_alloc(STORAGE_MESH, result.vertexCount * sizeof(*result.vertices)) : NULL;
+   if (result.vertexCount && !result.vertices) {
+     section_destroy(temporary);
+     return 0;

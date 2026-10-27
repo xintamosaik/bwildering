@@ -1,5 +1,5 @@
 #include "ui.h"
-#include "application.h"
+#include "application_internal.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -34,9 +34,9 @@ typedef struct {
 static int menu_buttons(const Application *const application, MenuButton buttons[const 3]) {
   if (application->settingsOpen) {
     buttons[0] = (MenuButton){.action = MENU_DISTANCE_DOWN, .label = "-", .centerX = -116, .top = -24, .width = 48,
-        .enabled = application->renderer.viewDistance > MIN_VIEW_DISTANCE};
+        .enabled = renderer_view_distance(&application->renderer) > MIN_VIEW_DISTANCE};
     buttons[1] = (MenuButton){.action = MENU_DISTANCE_UP, .label = "+", .centerX = 116, .top = -24, .width = 48,
-        .enabled = application->renderer.viewDistance < MAX_VIEW_DISTANCE};
+        .enabled = renderer_view_distance(&application->renderer) < MAX_VIEW_DISTANCE};
     buttons[2] = (MenuButton){.action = MENU_BACK, .label = "BACK", .centerX = 0, .top = 40, .width = 280, .enabled = 1};
   } else {
     buttons[0] = (MenuButton){.action = MENU_RESUME, .label = "RESUME", .centerX = 0, .top = -88, .width = 280, .enabled = 1};
@@ -84,10 +84,10 @@ void ui_click(Application *const application) {
   else if (selected == MENU_BACK)
     application->settingsOpen = 0;
   else if (selected == MENU_DISTANCE_DOWN || selected == MENU_DISTANCE_UP) {
-    float distance = application->renderer.viewDistance;
+    float distance = renderer_view_distance(&application->renderer);
     distance += selected == MENU_DISTANCE_UP ? VIEW_DISTANCE_STEP : -VIEW_DISTANCE_STEP;
-    application->renderer.viewDistance = fmaxf(MIN_VIEW_DISTANCE,
-                                               fminf(MAX_VIEW_DISTANCE, distance));
+    renderer_set_view_distance(&application->renderer, fmaxf(MIN_VIEW_DISTANCE,
+                                               fminf(MAX_VIEW_DISTANCE, distance)));
   }
 }
 
@@ -234,70 +234,55 @@ static int build_text_vertices(const char *const text, const float shadowOffset,
   return vertexCount;
 }
 
-static void render_fps(const Renderer *const renderer, const int fps) {
-  if (renderer->framebufferWidth <= 0 || renderer->framebufferHeight <= 0)
+static void render_fps(const UiDrawContext *const draw, const int fps) {
+  if (draw->framebufferWidth <= 0 || draw->framebufferHeight <= 0)
     return;
 
   char text[16];
   snprintf(text, sizeof(text), "FPS: %d", fps);
   float vertices[16 * 5 * 7 * 6 * 3];
-  mat4 identity;
-  mat4_identity(identity);
-
-  glUseProgram(renderer->program);
-  glUniformMatrix4fv(renderer->mvpLocation, 1, GL_FALSE, (float *)identity);
-  glBindVertexArray(renderer->textVao);
-  glBindBuffer(GL_ARRAY_BUFFER, renderer->textVbo);
-  glDisable(GL_DEPTH_TEST);
+  const UiDrawState state = ui_draw_begin(draw, UI_DRAW_FPS);
 
   int vertexCount = build_text_vertices(
-      text, 1.0f, renderer->framebufferWidth, renderer->framebufferHeight,
+      text, 1.0f, draw->framebufferWidth, draw->framebufferHeight,
       vertices, 16, 16, 1);
-  glBufferSubData(GL_ARRAY_BUFFER, 0,
-                  (GLsizeiptr)(vertexCount * 3 * sizeof(float)), vertices);
-  glUniform3f(renderer->colorLocation, 0.02f, 0.03f, 0.02f);
-  glDrawArrays(GL_TRIANGLES, 0, vertexCount);
+  ui_draw_vertices(draw, vertices, vertexCount, (Vec3){0.02f, 0.03f, 0.02f});
 
   vertexCount = build_text_vertices(
-      text, 0.0f, renderer->framebufferWidth, renderer->framebufferHeight,
+      text, 0.0f, draw->framebufferWidth, draw->framebufferHeight,
       vertices, 16, 16, 1);
-  glBufferSubData(GL_ARRAY_BUFFER, 0,
-                  (GLsizeiptr)(vertexCount * 3 * sizeof(float)), vertices);
-  glUniform3f(renderer->colorLocation, 0.95f, 0.98f, 0.92f);
-  glDrawArrays(GL_TRIANGLES, 0, vertexCount);
+  ui_draw_vertices(draw, vertices, vertexCount, (Vec3){0.95f, 0.98f, 0.92f});
 
-  glEnable(GL_DEPTH_TEST);
+  ui_draw_end(state);
 }
 
-static void draw_menu_vertices(const Renderer *const renderer, const float *const vertices,
+static void draw_menu_vertices(const UiDrawContext *const draw, const float *const vertices,
                                 const int count, const Vec3 color) {
-  glBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr)(count * 3 * sizeof(float)), vertices);
-  glUniform3f(renderer->colorLocation, color.x, color.y, color.z);
-  glDrawArrays(GL_TRIANGLES, 0, count);
+  ui_draw_vertices(draw, vertices, count, color);
 }
 
-static void draw_menu_rectangle(const Renderer *const renderer, const float x, const float y,
+static void draw_menu_rectangle(const UiDrawContext *const draw, const float x, const float y,
                                  const float width, const float height, const Vec3 color) {
-  const float left = 2 * x / (float)renderer->framebufferWidth - 1;
-  const float right = 2 * (x + width) / (float)renderer->framebufferWidth - 1;
-  const float top = 1 - 2 * y / (float)renderer->framebufferHeight;
-  const float bottom = 1 - 2 * (y + height) / (float)renderer->framebufferHeight;
+  const float left = 2 * x / (float)draw->framebufferWidth - 1;
+  const float right = 2 * (x + width) / (float)draw->framebufferWidth - 1;
+  const float top = 1 - 2 * y / (float)draw->framebufferHeight;
+  const float bottom = 1 - 2 * (y + height) / (float)draw->framebufferHeight;
   const float vertices[] = {left, top, 0, right, top, 0, right, bottom, 0,
                        left, top, 0, right, bottom, 0, left, bottom, 0};
-  draw_menu_vertices(renderer, vertices, 6, color);
+  draw_menu_vertices(draw, vertices, 6, color);
 }
 
-static void draw_menu_text(const Renderer *const renderer, const char *const text,
+static void draw_menu_text(const UiDrawContext *const draw, const char *const text,
                             const float centerX, const float y, const float scale, const Vec3 color) {
   float vertices[UI_TEXT_MAX_CHARS * 5 * 7 * 6 * 3];
   const float width = ((float)strlen(text) * 18 - 4) * scale;
-  const int count = build_text_vertices(text, 0, renderer->framebufferWidth,
-                                  renderer->framebufferHeight, vertices,
+  const int count = build_text_vertices(text, 0, draw->framebufferWidth,
+                                  draw->framebufferHeight, vertices,
                                   centerX - width / 2, y, scale);
-  draw_menu_vertices(renderer, vertices, count, color);
+  draw_menu_vertices(draw, vertices, count, color);
 }
 
-static void render_performance(const Application *const a) {
+static void render_performance(const Application *const a, const UiDrawContext *const draw) {
   const Performance *const p = &a->performance;
   if (!p->overlay) return;
   char lines[5][96];
@@ -305,29 +290,28 @@ static void render_performance(const Application *const a) {
   snprintf(lines[1], 96, "CHUNKS %zu SECTIONS %zu EDITED %zu DIRTY %zu", a->residentChunks, a->world.sectionCount, a->editedChunks, a->dirtySections);
   snprintf(lines[2], 96, "REBUILDS %zu UPLOAD BYTES %zu", p->total.rebuilds, p->total.uploadBytes);
   snprintf(lines[3], 96, "DRAWS %zu TRIANGLES %zu", p->frame.draws, p->frame.triangles);
-  snprintf(lines[4], 96, "NEIGHBORHOOD SLOTS %zu GPU REQUESTED BYTES %zu", a->renderer.visibleMeshCount, a->gpuBytes);
-  glDisable(GL_DEPTH_TEST);
+  snprintf(lines[4], 96, "NEIGHBORHOOD SLOTS %zu GPU REQUESTED BYTES %zu", renderer_neighborhood_slots(&a->renderer), a->gpuBytes);
+  const UiDrawState state = ui_draw_begin(draw, UI_DRAW_OVERLAY);
   for (int i = 0; i < 5; i++)
-    draw_menu_text(&a->renderer, lines[i], (float)a->renderer.framebufferWidth * 0.5f,
+    draw_menu_text(draw, lines[i], (float)draw->framebufferWidth * 0.5f,
                    48.0f + (float)i * 18.0f, 0.6f, (Vec3){.x = 0.95f, .y = 0.98f, .z = 0.92f});
-  glEnable(GL_DEPTH_TEST);
+  ui_draw_end(state);
 }
 
-static void draw_menu_button(const Renderer *const renderer, const char *const label,
+static void draw_menu_button(const UiDrawContext *const draw, const char *const label,
                               const float centerX, const float top, const float width, const float scale,
                               const int hovered, const int enabled) {
   const Vec3 color = !enabled ? (Vec3){.x = 0.15f, .y = 0.18f, .z = 0.15f} :
       hovered ? (Vec3){.x = 0.46f, .y = 0.58f, .z = 0.38f} : (Vec3){.x = 0.25f, .y = 0.32f, .z = 0.24f};
-  draw_menu_rectangle(renderer, centerX - width * scale / 2, top,
+  draw_menu_rectangle(draw, centerX - width * scale / 2, top,
                        width * scale, 48 * scale, color);
-  draw_menu_text(renderer, label, centerX, top + 14 * scale, scale,
+  draw_menu_text(draw, label, centerX, top + 14 * scale, scale,
                    enabled ? (Vec3){.x = 0.95f, .y = 0.98f, .z = 0.92f} : (Vec3){.x = 0.4f, .y = 0.45f, .z = 0.4f});
 }
 
-static void render_pause_menu(const Application *const application) {
-  const Renderer *const renderer = &application->renderer;
-  const int width = renderer->framebufferWidth;
-  const int height = renderer->framebufferHeight;
+static void render_pause_menu(const Application *const application, const UiDrawContext *const draw) {
+  const int width = draw->framebufferWidth;
+  const int height = draw->framebufferHeight;
   if (width <= 0 || height <= 0)
     return;
   const float scale = fminf((float)width / 640.0f, (float)height / 480.0f);
@@ -340,49 +324,37 @@ static void render_pause_menu(const Application *const application) {
   const int hovered = windowWidth > 0 && windowHeight > 0 ?
       pause_menu_button(application, cursorX * width / windowWidth, cursorY * height / windowHeight,
                          width, height) : 0;
-  const GLboolean depthEnabled = glIsEnabled(GL_DEPTH_TEST);
-  const GLboolean cullEnabled = glIsEnabled(GL_CULL_FACE);
-  glDisable(GL_DEPTH_TEST);
-  glDisable(GL_CULL_FACE);
-  mat4 identity;
-  mat4_identity(identity);
-  glUseProgram(renderer->program);
-  glUniformMatrix4fv(renderer->mvpLocation, 1, GL_FALSE, identity);
-  glBindVertexArray(renderer->textVao);
-  glBindBuffer(GL_ARRAY_BUFFER, renderer->textVbo);
-  draw_menu_rectangle(renderer, centerX - 180 * scale, centerY - 160 * scale,
+  const UiDrawState state = ui_draw_begin(draw, UI_DRAW_MENU);
+  draw_menu_rectangle(draw, centerX - 180 * scale, centerY - 160 * scale,
                        360 * scale, 300 * scale, (Vec3){.x = 0.09f, .y = 0.12f, .z = 0.10f});
-  draw_menu_text(renderer, application->settingsOpen ? "SETTINGS" : "PAUSED",
+  draw_menu_text(draw, application->settingsOpen ? "SETTINGS" : "PAUSED",
                  centerX, centerY - 130 * scale, scale * 1.2f,
                  (Vec3){.x = 0.95f, .y = 0.98f, .z = 0.92f});
   if (application->settingsOpen) {
     char value[16];
-    snprintf(value, sizeof(value), "%.0f UNITS", renderer->viewDistance);
-    draw_menu_text(renderer, "VIEW DISTANCE", centerX, centerY - 65 * scale,
+    snprintf(value, sizeof(value), "%.0f UNITS", renderer_view_distance(&application->renderer));
+    draw_menu_text(draw, "VIEW DISTANCE", centerX, centerY - 65 * scale,
                    scale, (Vec3){.x = 0.95f, .y = 0.98f, .z = 0.92f});
-    draw_menu_text(renderer, value, centerX, centerY - 9 * scale,
+    draw_menu_text(draw, value, centerX, centerY - 9 * scale,
                    scale * 0.85f, (Vec3){.x = 0.95f, .y = 0.98f, .z = 0.92f});
   }
   MenuButton buttons[3];
   const int count = menu_buttons(application, buttons);
   for (int i = 0; i < count; i++) {
     const MenuButton *const button = &buttons[i];
-    draw_menu_button(renderer, button->label, centerX + button->centerX * scale,
+    draw_menu_button(draw, button->label, centerX + button->centerX * scale,
                        centerY + button->top * scale, button->width, scale,
                        hovered == button->action, button->enabled);
   }
-  draw_menu_text(renderer, application->settingsOpen ? "ESC TO PAUSE" : "ESC TO RESUME",
+  draw_menu_text(draw, application->settingsOpen ? "ESC TO PAUSE" : "ESC TO RESUME",
                  centerX, centerY + 110 * scale,
                  scale * 0.7f, (Vec3){.x = 0.65f, .y = 0.73f, .z = 0.62f});
-  if (depthEnabled)
-    glEnable(GL_DEPTH_TEST);
-  if (cullEnabled)
-    glEnable(GL_CULL_FACE);
+  ui_draw_end(state);
 }
 
-void ui_render(const Application *const application) {
-  render_fps(&application->renderer, application->fps);
-  render_performance(application);
+void ui_render(const Application *const application, const UiDrawContext *const draw) {
+  render_fps(draw, application->fps);
+  render_performance(application, draw);
   if (application->paused)
-    render_pause_menu(application);
+    render_pause_menu(application, draw);
 }

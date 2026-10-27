@@ -1,4 +1,4 @@
-#include "application.h"
+#include "application_internal.h"
 #include "ui.h"
 
 void input_init(InputState *const input) {

@@ -2,9 +2,10 @@
    or development controls to the game. */
 #include <stdlib.h>
 #include <assert.h>
-#include "../application.h"
+#include "../application_internal.h"
+void __real_glDrawArrays(GLenum mode, GLint first, GLsizei count);
 #include "../storage.h"
-static void checked_draw_arrays(GLenum mode, GLint first, GLsizei count);
+void __wrap_glDrawArrays(GLenum mode, GLint first, GLsizei count);
 static int scratch_reservations_before_failure = -1;
 static int draw_allocations_before_failure = -1;
 static int metadata_allocations_before_failure = -1;
@@ -19,11 +20,7 @@ static int reject_storage(const StorageCategory category) {
   (*remaining)--;
   return 0;
 }
-#define glDrawArrays checked_draw_arrays
-#define main bwildering_application_main
-#include "../main.c"
-#undef main
-#undef glDrawArrays
+#include "renderer_test.h"
 
 /* Record real submissions only while a verification capture is active. */
 typedef struct { GLuint vao; GLint first; GLsizei count; } AuditRange;
@@ -32,7 +29,7 @@ static AuditRange auditRanges[AUDIT_RANGE_CAPACITY];
 static size_t auditRangeCount;
 static const Renderer *auditRenderer;
 
-static void checked_draw_arrays(const GLenum mode, const GLint first, const GLsizei count) {
+void __wrap_glDrawArrays(const GLenum mode, const GLint first, const GLsizei count) {
   if (auditRenderer) {
     GLint vao = 0, vbo = 0;
     glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
@@ -52,7 +49,7 @@ static void checked_draw_arrays(const GLenum mode, const GLint first, const GLsi
     assert(auditRangeCount < AUDIT_RANGE_CAPACITY);
     auditRanges[auditRangeCount++] = (AuditRange){(GLuint)vao, first, count};
   }
-  glDrawArrays(mode, first, count);
+  __real_glDrawArrays(mode, first, count);
 }
 
 static PFNGLBUFFERDATAPROC real_buffer_upload;
@@ -218,7 +215,7 @@ static void render_unculled(const Renderer *const renderer, const Player *const 
       if (!mesh->vertexCount[t] || !block_type_color((BlockType)t, &color)) continue;
       glUniform3f(renderer->colorLocation, color.x, color.y, color.z);
       glBindVertexArray(mesh->vao);
-      checked_draw_arrays(GL_TRIANGLES, mesh->firstVertex[t], mesh->vertexCount[t]);
+      __wrap_glDrawArrays(GL_TRIANGLES, mesh->firstVertex[t], mesh->vertexCount[t]);
     }
   }
 }

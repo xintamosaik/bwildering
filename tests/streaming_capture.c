@@ -1,7 +1,5 @@
 /* Fixed-seed travel benchmark with real GL resource retirement and no edits. */
-#define main bwildering_application_main
-#include "../main.c"
-#undef main
+#include "renderer_test.h"
 #include <assert.h>
 #include <sys/resource.h>
 

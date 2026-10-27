@@ -1,8 +1,8 @@
 /* Reproducible CPU/submission capture. No glFinish; swaps remain interval zero.
    Run BW_PERF=1 ./performance_capture, then BW_PERF=0 with the same arguments. */
-#define main bwildering_application_main
-#include "../main.c"
-#undef main
+#include "../application_internal.h"
+#include <stdio.h>
+#include <math.h>
 #include <assert.h>
 
 static void capture(Application *a, const char *label, int traversal, int edits) {
@@ -13,8 +13,8 @@ static void capture(Application *a, const char *label, int traversal, int edits)
   for (int frame = 0; frame < 30; frame++) {
     double start = glfwGetTime();
     if (traversal) {
-      int step = frame < 15 ? frame : 29 - frame;
-      a->player.position.x = 0.5f + step * SECTION_SIZE;
+      const int step = frame < 15 ? frame : 29 - frame;
+      a->player.position.x = 0.5f + (float)step * SECTION_SIZE;
       assert(player_spawn_on_surface(&a->player, &a->world));
     }
     if (edits && frame % 5 == 0) {

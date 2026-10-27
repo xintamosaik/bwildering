@@ -11,53 +11,51 @@ static double now, cursorX, cursorY;
 static int closeRequested, pendingClick;
 static int windowWidth = 640, windowHeight = 480, pixelScale = 1;
 static void *windowUser;
-static int test_get_key(GLFWwindow *window, int key) { (void)window; return keys[key]; }
-static int test_get_mouse_button(GLFWwindow *const window, const int button) {
+int __wrap_glfwGetKey(GLFWwindow *window, int key) { (void)window; return keys[key]; }
+int __wrap_glfwGetMouseButton(GLFWwindow *const window, const int button) {
   (void)window;
   return mouseButtons[button];
 }
-static int test_get_input_mode(GLFWwindow *window, int mode) {
+int __wrap_glfwGetInputMode(GLFWwindow *window, int mode) {
   (void)window; (void)mode; return cursorMode;
 }
-static void test_set_input_mode(GLFWwindow *window, int mode, int value) {
+void __wrap_glfwSetInputMode(GLFWwindow *window, int mode, int value) {
   (void)window; (void)mode; cursorMode = value;
 }
-static double test_get_time(void) { return now; }
-static void *test_get_user(GLFWwindow *window) { (void)window; return windowUser; }
-static void test_get_cursor(GLFWwindow *window, double *x, double *y) {
+double __wrap_glfwGetTime(void) { return now; }
+void *__wrap_glfwGetWindowUserPointer(GLFWwindow *window) { (void)window; return windowUser; }
+void __wrap_glfwGetCursorPos(GLFWwindow *window, double *x, double *y) {
   (void)window; *x = cursorX; *y = cursorY;
 }
-static void test_get_size(GLFWwindow *window, int *width, int *height) {
+void __wrap_glfwGetWindowSize(GLFWwindow *window, int *width, int *height) {
   (void)window; *width = windowWidth; *height = windowHeight;
 }
-static void test_get_framebuffer_size(GLFWwindow *window, int *width, int *height) {
-  test_get_size(window, width, height);
+void __wrap_glfwGetFramebufferSize(GLFWwindow *window, int *width, int *height) {
+  __wrap_glfwGetWindowSize(window, width, height);
   *width *= pixelScale; *height *= pixelScale;
 }
-static void test_set_close(GLFWwindow *window, int value) {
+void __wrap_glfwSetWindowShouldClose(GLFWwindow *window, int value) {
   (void)window; closeRequested = value;
 }
-static void test_poll_events(void);
+void __wrap_glfwPollEvents(void);
 
-#define glfwGetKey test_get_key
-#define glfwGetMouseButton test_get_mouse_button
-#define glfwGetInputMode test_get_input_mode
-#define glfwSetInputMode test_set_input_mode
-#define glfwGetTime test_get_time
-#define glfwGetWindowUserPointer test_get_user
-#define glfwGetCursorPos test_get_cursor
-#define glfwGetWindowSize test_get_size
-#define glfwGetFramebufferSize test_get_framebuffer_size
-#define glfwSetWindowShouldClose test_set_close
-#define glfwPollEvents test_poll_events
-#define main bwildering_application_main
-#include "../main.c"
-#undef main
+#define glfwGetKey __wrap_glfwGetKey
+#define glfwGetMouseButton __wrap_glfwGetMouseButton
+#define glfwGetInputMode __wrap_glfwGetInputMode
+#define glfwSetInputMode __wrap_glfwSetInputMode
+#define glfwGetTime __wrap_glfwGetTime
+#define glfwGetWindowUserPointer __wrap_glfwGetWindowUserPointer
+#define glfwGetCursorPos __wrap_glfwGetCursorPos
+#define glfwGetWindowSize __wrap_glfwGetWindowSize
+#define glfwGetFramebufferSize __wrap_glfwGetFramebufferSize
+#define glfwSetWindowShouldClose __wrap_glfwSetWindowShouldClose
+#define glfwPollEvents __wrap_glfwPollEvents
+#include "renderer_test.h"
 /* Compile the UI with the same GLFW stubs and inspect its shared layout. */
 #include "../ui.c"
 #include "../input.c"
 
-static void test_poll_events(void) {
+void __wrap_glfwPollEvents(void) {
   if (pendingClick) {
     int button = pendingClick - 1;
     pendingClick = 0;

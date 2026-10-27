@@ -1,4 +1,4 @@
-#include "application.h"
+#include "application_internal.h"
 
 #include <stdio.h>
 #include <stdlib.h>

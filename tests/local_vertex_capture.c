@@ -1,7 +1,5 @@
 /* Opt-in representation experiment. Production meshing/upload/drawing is unchanged. */
-#define main bwildering_application_main
-#include "../main.c"
-#undef main
+#include "renderer_test.h"
 #include <assert.h>
 
 enum { WIDTH = 320, HEIGHT = 240, MESH_CAPACITY = 4096, MODES = 5, SAMPLES = 60 };

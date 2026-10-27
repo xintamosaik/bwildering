@@ -1,24 +1,22 @@
 /* Comparison implementations live only in this opt-in experiment.
    Record exact submitted ranges only during untimed correctness snapshots. */
 #include <GL/glew.h>
+void __real_glDrawArrays(GLenum mode, GLint first, GLsizei count);
 #include <assert.h>
 typedef struct { GLint vao, first, count; } SubmittedRange;
 static SubmittedRange ranges[16384];
 static size_t rangeCount;
 static int recordRanges;
-static void capture_draw_arrays(GLenum mode, GLint first, GLsizei count) {
+void __wrap_glDrawArrays(const GLenum mode, const GLint first, const GLsizei count) {
   if (recordRanges) {
     assert(rangeCount < sizeof(ranges) / sizeof(*ranges));
     GLint vao;
     glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
     ranges[rangeCount++] = (SubmittedRange){vao, first, count};
   }
-  glDrawArrays(mode, first, count);
+  __real_glDrawArrays(mode, first, count);
 }
-#define glDrawArrays capture_draw_arrays
-#define main bwildering_application_main
-#include "../main.c"
-#undef main
+#include "renderer_test.h"
 #include <assert.h>
 
 static void render_reference(Renderer *renderer, const Player *player) {
@@ -106,7 +104,6 @@ static void render_section_first(Renderer *renderer, const Player *player) {
   }
 }
 
-#undef glDrawArrays
 static int compare_range(const void *a, const void *b) {
   const SubmittedRange *x = a, *y = b;
   if (x->vao != y->vao) return (x->vao > y->vao) - (x->vao < y->vao);

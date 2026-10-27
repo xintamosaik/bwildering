@@ -3,13 +3,18 @@ CFLAGS = -Wall -Wextra -O2 -std=c99
 LDFLAGS = -lGLEW -lglfw -lGL -lm -lpthread
 
 TARGET = bwildering
-SRC = main.c game_logic.c voxel_world.c storage.c performance.c ui.c input.c
+COMMON_SRC = game_logic.c voxel_world.c storage.c performance.c ui.c input.c renderer.c
+SRC = main.c application.c $(COMMON_SRC)
+APP_HEADERS = application.h application_internal.h renderer.h renderer_internal.h ui_draw.h view_settings.h ui.h input.h performance.h storage.h game_logic.h
+FIXTURE_FLAGS = -DBW_RENDERER_TEST
+# Pause fixture keeps UI layout/callback access local; application links normally.
+PAUSE_WRAP = -Wl,--wrap=glfwGetKey -Wl,--wrap=glfwGetMouseButton -Wl,--wrap=glfwGetInputMode -Wl,--wrap=glfwSetInputMode -Wl,--wrap=glfwGetTime -Wl,--wrap=glfwGetWindowUserPointer -Wl,--wrap=glfwGetCursorPos -Wl,--wrap=glfwGetWindowSize -Wl,--wrap=glfwGetFramebufferSize -Wl,--wrap=glfwSetWindowShouldClose -Wl,--wrap=glfwPollEvents
 TEST_TARGET = test_game_logic
 TEST_SRC = tests/test_game_logic.c game_logic.c voxel_world.c storage.c
 
 all: $(TARGET)
 
-$(TARGET): $(SRC) storage.h game_logic.h performance.h application.h ui.h input.h
+$(TARGET): $(SRC) $(APP_HEADERS)
 	$(CC) $(CFLAGS) $(SRC) -o $(TARGET) $(LDFLAGS)
 
 $(TEST_TARGET): $(TEST_SRC) game_logic.h storage.h storage.c
@@ -18,11 +23,11 @@ $(TEST_TARGET): $(TEST_SRC) game_logic.h storage.h storage.c
 test_allocation_failures: tests/test_allocation_failures.c game_logic.c voxel_world.c game_logic.h storage.h storage.c
 	$(CC) $(CFLAGS) tests/test_allocation_failures.c game_logic.c voxel_world.c storage.c -o $@ -lm
 
-test_renderer: tests/test_renderer.c $(SRC) storage.h game_logic.h performance.h application.h ui.h input.h
-	$(CC) $(CFLAGS) tests/test_renderer.c game_logic.c voxel_world.c storage.c performance.c ui.c input.c -o $@ $(LDFLAGS)
+test_renderer: tests/test_renderer.c $(SRC) $(APP_HEADERS) tests/renderer_test.h
+	$(CC) $(CFLAGS) tests/test_renderer.c application.c $(COMMON_SRC) $(FIXTURE_FLAGS) -Wl,--wrap=glDrawArrays -o $@ $(LDFLAGS)
 
-test_pause_menu: tests/test_pause_menu.c $(SRC) storage.h game_logic.h performance.h application.h ui.h input.h
-	$(CC) $(CFLAGS) tests/test_pause_menu.c game_logic.c voxel_world.c storage.c performance.c -o $@ $(LDFLAGS)
+test_pause_menu: tests/test_pause_menu.c $(SRC) $(APP_HEADERS) tests/renderer_test.h
+	$(CC) $(CFLAGS) tests/test_pause_menu.c application.c game_logic.c voxel_world.c storage.c performance.c renderer.c $(FIXTURE_FLAGS) $(PAUSE_WRAP) -o $@ $(LDFLAGS)
 
 test: $(TEST_TARGET) test_allocation_failures test_pause_menu test_storage
 	./$(TEST_TARGET)
@@ -41,7 +46,7 @@ test-sanitize:
 	./test_game_logic_sanitize
 	$(CC) -Wall -Wextra -O1 -g -std=c99 -fsanitize=address,undefined -fno-omit-frame-pointer tests/test_allocation_failures.c game_logic.c voxel_world.c storage.c -o test_allocation_failures_sanitize -lm
 	./test_allocation_failures_sanitize
-	$(CC) -Wall -Wextra -O1 -g -std=c99 -fsanitize=address,undefined -fno-omit-frame-pointer tests/test_pause_menu.c game_logic.c voxel_world.c storage.c performance.c -o test_pause_menu_sanitize $(LDFLAGS)
+	$(CC) -Wall -Wextra -O1 -g -std=c99 -fsanitize=address,undefined -fno-omit-frame-pointer tests/test_pause_menu.c application.c game_logic.c voxel_world.c storage.c performance.c renderer.c $(FIXTURE_FLAGS) $(PAUSE_WRAP) -o test_pause_menu_sanitize $(LDFLAGS)
 	./test_pause_menu_sanitize
 
 clean:
@@ -52,17 +57,17 @@ run: all
 
 .PHONY: all clean run test test-renderer test-sanitize
 
-performance_capture: tests/performance_capture.c $(SRC) storage.h game_logic.h performance.h application.h ui.h input.h
-	$(CC) $(CFLAGS) tests/performance_capture.c game_logic.c voxel_world.c storage.c performance.c ui.c input.c -o $@ $(LDFLAGS)
+performance_capture: tests/performance_capture.c $(SRC) $(APP_HEADERS)
+	$(CC) $(CFLAGS) tests/performance_capture.c application.c $(COMMON_SRC) -o $@ $(LDFLAGS)
 
-streaming_capture: tests/streaming_capture.c $(SRC) storage.h game_logic.h performance.h application.h ui.h input.h
-	$(CC) $(CFLAGS) tests/streaming_capture.c game_logic.c voxel_world.c storage.c performance.c ui.c input.c -o $@ $(LDFLAGS)
+streaming_capture: tests/streaming_capture.c $(SRC) $(APP_HEADERS) tests/renderer_test.h
+	$(CC) $(CFLAGS) tests/streaming_capture.c application.c $(COMMON_SRC) $(FIXTURE_FLAGS) -o $@ $(LDFLAGS)
 
-visibility_capture: tests/visibility_capture.c $(SRC) storage.h game_logic.h performance.h application.h ui.h input.h
-	$(CC) $(CFLAGS) tests/visibility_capture.c game_logic.c voxel_world.c storage.c performance.c ui.c input.c -o $@ $(LDFLAGS)
+visibility_capture: tests/visibility_capture.c $(SRC) $(APP_HEADERS) tests/renderer_test.h
+	$(CC) $(CFLAGS) tests/visibility_capture.c application.c $(COMMON_SRC) $(FIXTURE_FLAGS) -Wl,--wrap=glDrawArrays -o $@ $(LDFLAGS)
 
-terrain_capture: tests/terrain_capture.c $(SRC) storage.h game_logic.h performance.h application.h ui.h input.h
-	$(CC) $(CFLAGS) tests/terrain_capture.c game_logic.c voxel_world.c storage.c performance.c ui.c input.c -o $@ $(LDFLAGS)
+terrain_capture: tests/terrain_capture.c $(SRC) $(APP_HEADERS)
+	$(CC) $(CFLAGS) tests/terrain_capture.c application.c $(COMMON_SRC) -o $@ $(LDFLAGS)
 
 # Headless CPU benchmark; profile timings include instrumentation overhead.
 mesh_query_benchmark: tests/mesh_query_benchmark.c tests/mesh_query_baseline.inc voxel_world.c game_logic.c game_logic.h storage.h storage.c
@@ -75,12 +80,12 @@ mesh_query_profile: tests/mesh_query_benchmark.c tests/mesh_query_baseline.inc v
 section_storage_benchmark: tests/section_storage_benchmark.c game_logic.c voxel_world.c game_logic.h storage.h storage.c
 	$(CC) $(CFLAGS) tests/section_storage_benchmark.c game_logic.c voxel_world.c storage.c -o $@ -lm
 
-allocation_capture: tests/allocation_capture.c $(SRC) storage.h game_logic.h application.h
-	$(CC) $(CFLAGS) tests/allocation_capture.c game_logic.c voxel_world.c storage.c performance.c ui.c input.c -o $@ $(LDFLAGS)
+allocation_capture: tests/allocation_capture.c $(SRC) $(APP_HEADERS) tests/renderer_test.h
+	$(CC) $(CFLAGS) tests/allocation_capture.c application.c $(COMMON_SRC) $(FIXTURE_FLAGS) -o $@ $(LDFLAGS)
 
 test_storage: tests/test_storage.c game_logic.c voxel_world.c storage.c storage.h game_logic.h
 	$(CC) $(CFLAGS) tests/test_storage.c game_logic.c voxel_world.c storage.c -o $@ -lm
 
 # Opt-in real-GL representation/precision comparison; run serially.
-local_vertex_capture: tests/local_vertex_capture.c $(SRC) storage.h game_logic.h performance.h application.h ui.h input.h
-	$(CC) $(CFLAGS) tests/local_vertex_capture.c game_logic.c voxel_world.c storage.c performance.c ui.c input.c -o $@ $(LDFLAGS)
+local_vertex_capture: tests/local_vertex_capture.c $(SRC) $(APP_HEADERS) tests/renderer_test.h
+	$(CC) $(CFLAGS) tests/local_vertex_capture.c application.c $(COMMON_SRC) $(FIXTURE_FLAGS) -o $@ $(LDFLAGS)

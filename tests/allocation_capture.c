@@ -1,7 +1,5 @@
 /* Opt-in, serial real-context allocation capture; no per-allocation clocks. */
-#define main bwildering_application_main
-#include "../main.c"
-#undef main
+#include "renderer_test.h"
 #include <assert.h>
 #include <sys/resource.h>
 static int compare(const void *const a, const void *const b) {

@@ -1,7 +1,7 @@
 /* Reproducible dry-basin/material review; writes PPM frames to /tmp. */
-#define main bwildering_application_main
-#include "../main.c"
-#undef main
+#include "../application_internal.h"
+#include <stdio.h>
+#include <math.h>
 #include <assert.h>
 
 int main(void) {
@@ -42,11 +42,11 @@ int main(void) {
         wx = x; wz = z; column = c; found = 1;
       }
     assert(found);
-    Player p = {.position = {wx + 0.5f, column.height + 24, wz + 32.5f}, .eyeHeight = 1,
+    Player p = {.position = {(float)wx + 0.5f, (float)column.height + 24.0f, (float)wz + 32.5f}, .eyeHeight = 1,
                 .camera = {.front = {0, -0.6f, -0.8f}, .up = {0, 1, 0}}};
     /* Steeper terrain can rise above the target at the camera's offset. */
     p.position.y = fmaxf(p.position.y, world_surface_height(&world, p.position.x, p.position.z) + 12);
-    p.camera.front = vec3_normalize((Vec3){0, column.height - (p.position.y + p.eyeHeight), -32});
+    p.camera.front = vec3_normalize((Vec3){0, (float)column.height - (p.position.y + p.eyeHeight), -32});
     assert(renderer_sync_view(&r, &world, &p));
     glClearColor(0.62f, 0.72f, 0.80f, 1);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);

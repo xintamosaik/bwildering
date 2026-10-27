@@ -369,7 +369,7 @@ static int renderer_sync_section(Renderer *const renderer, const World *const wo
   return 1;
 }
 
-static int renderer_sync_world(Renderer *const renderer, World *const world) {
+static int renderer_sync_world(Renderer *const renderer, const World *const world) {
   if (!renderer_prepare_world(renderer, world))
     return 0;
   for (size_t i = 0; i < renderer->meshCount; i++)
@@ -399,7 +399,7 @@ static int stream_priority_compare(const void *const a, const void *const b) {
 
 static void stream_admit(Renderer *const r, const StreamTask task, const size_t retained,
                          const size_t ordinal, const int pass, size_t *const nextCursor) {
-  if ((ordinal < r->scanCursor) != (pass != 0) || r->pendingCount == STREAM_TASK_CAPACITY) return;
+  if (ordinal < r->scanCursor != (pass != 0) || r->pendingCount == STREAM_TASK_CAPACITY) return;
   if (bsearch(&task, r->pending, retained, sizeof(task), stream_identity_compare)) return;
   r->pending[r->pendingCount++] = task;
   *nextCursor = ordinal + 1;
@@ -502,7 +502,7 @@ static StreamResult renderer_sync_view_work(Renderer *const renderer, World *con
       if (task.x < minX || task.x > maxX || task.z < minZ || task.z > maxZ) continue;
       const Chunk *const chunk = stream_chunk(world, task.x, task.z);
       const Subchunk *const section = task.materialize ? NULL : world_section(world, task.x, task.y, task.z);
-      if (task.materialize ? chunk->terrainReady : (!section || !section->dirty)) continue;
+      if (task.materialize ? chunk->terrainReady : !section || !section->dirty) continue;
       if (section) task.revision = section->revision;
       renderer->pending[n++] = task;
     }
@@ -760,10 +760,10 @@ static void render_world(Renderer *const renderer, const Player *const player) {
     glUniform3f(renderer->colorLocation, color.x, color.y, color.z);
     if (p && p->enabled) p->frame.materialChanges++;
     const size_t count = collected ? renderer->drawMeshCount :
-        (renderer->streamed ? renderer->visibleMeshCount : renderer->meshCount);
+        renderer->streamed ? renderer->visibleMeshCount : renderer->meshCount;
     for (size_t n = 0; n < count; n++) {
       const size_t i = collected ? renderer->drawMeshes[n] :
-          (renderer->streamed ? renderer->visibleMeshes[n] : n);
+          renderer->streamed ? renderer->visibleMeshes[n] : n;
       const SectionGpuMesh *const mesh = &renderer->meshes[i];
       if (!mesh->vertexCount[type]) continue;
       if (!collected) {

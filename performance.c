@@ -17,8 +17,8 @@ typedef struct {
 } PerformanceSnapshot;
 
 void perf_configure(Performance *const p) {
-  p->enabled = getenv("BW_PERF") && strcmp(getenv("BW_PERF"), "0");
-  p->overlay = getenv("BW_DEBUG") && strcmp(getenv("BW_DEBUG"), "0");
+  p->enabled = getenv("BW_PERF") && strcmp(getenv("BW_PERF"), "0") != 0;
+  p->overlay = getenv("BW_DEBUG") && strcmp(getenv("BW_DEBUG"), "0") != 0;
   if (p->overlay) p->enabled = 1;
 }
 

@@ -1,0 +1,10 @@
+./test_renderer
+AUDIT compiler=16.2.1 20260810 vendor=AMD renderer=AMD Radeon HD 7800 Series (radeonsi, pitcairn, ACO, DRM 3.64, 7.3.0-4-cachyos) version=4.6 (Core Profile) Mesa 26.2.5-arch3.1 display=:0 resolution=640x480
+Unculled depth/range parity, transformed seams and GL destruction checks passed.
+Rendered pending edits, fast departure and synchronous convergence checks passed.
+Terrain submitted draws at benchmark camera: 172
+GL renderer: AMD Radeon HD 7800 Series (radeonsi, pitcairn, ACO, DRM 3.64, 7.3.0-4-cachyos); startup 72.040 ms; frame 0.216 ms
+Rendered wall sliding and jump/landing checks passed.
+Default 4608x4608 world: startup 193.3 ms, 2282 resident sections, 13.1 MiB terrain vertices
+Application spawn surface: 8.0; grounded and jump checks passed.
+All renderer and application smoke tests passed.

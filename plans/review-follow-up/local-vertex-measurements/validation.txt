@@ -1,0 +1,56 @@
+Validation: 27 October 2026
+
+make local_vertex_capture
+  GCC 16.2.1, -Wall -Wextra -O2 -std=c99, no warnings.
+
+clang-tidy tests/local_vertex_capture.c -checks='-*,bugprone-narrowing-conversions' -- -Wall -Wextra -O2 -std=c99
+  Exit 0; no diagnostics (output below).
+
+make all test
+make: Nothing to be done for 'all'.
+./test_game_logic
+Overlay travel: 1024 columns, 65536 edits, 1310720 arena bytes, zero final resident sections
+flat: 144 populated meshes, 446976 vertices, 5363712 bytes, 1152 draws, CPU 3.252 ms
+terrain: 550 populated meshes, 1060656 vertices, 12727872 bytes, 640 draws, CPU 31.595 ms
+Expanded 4608x4608 world: 4176 vertices, nearby CPU generation + meshing 2.219 ms
+Terrain relief: -79..354 blocks; underground base -128
+Layered terrain seed 1: -81..370; lowland columns 25733
+Layered terrain seed 1260202551: -81..370; lowland columns 26146
+Layered terrain seed 42: -82..370; lowland columns 27697
+Surface material 0: 113492 columns
+Surface material 1: 55808 columns
+Surface material 2: 0 columns
+Surface material 3: 10827 columns
+Surface material 4: 0 columns
+Surface material 5: 8798 columns
+Surface material 6: 1091 columns
+Surface material 7: 8131 columns
+All game logic tests passed.
+./test_allocation_failures
+All allocation failure tests passed.
+./test_pause_menu
+All pause menu interaction tests passed.
+./test_storage
+All storage tests passed.
+
+Three serial accelerated-GL captures:
+  for trial in 1 2 3; do ./local_vertex_capture > "plans/review-follow-up/local-vertex-measurements/run-${trial}.csv" || exit; done
+  Exit 0. Every capture completed all geometry/range, actual buffer readback,
+  local-vs-baseline depth/coverage, relative-vs-double-reference depth/coverage,
+  culled-vs-unculled depth and GL error assertions.
+  Timings are diagnostic; no machine-specific performance pass thresholds.
+
+make test-renderer
+  Exit 0. See renderer-validation.txt for output and exact GL device.
+
+The sandbox could not initialize X11 display :0; accelerated GL checks were
+run with approved sandbox escalation. No debugger router tools were available;
+the harness's per-pixel depth diagnostics established that the initial strict
+absolute-vs-double-reference threshold encountered a single terrain pixel above
+1e-5. Correctness instead requires local absolute-translation prototypes to
+match the existing absolute renderer within 1e-6 and the relative prototype to
+match the double reference within 1e-5. Absolute-vs-reference differences are
+reported as evaluation results, including the distant precision discrepancy.
+
+No production ownership/storage paths changed; ASan/UBSan storage suites were
+not rerun for this opt-in experiment. Production real-GL lifecycle suites passed.

@@ -550,18 +550,19 @@ static void test_signed_terrain_sampling(void) {
     for (size_t j = 0; j < sizeof(values) / sizeof(*values); j++)
       for (uint32_t seed = 0; seed < 3; seed++) {
         const TerrainColumn column = terrain_sample_column(seed, x, values[j]);
-        assert(column.height == -32 && column.deepRockY == -64);
-        assert(column.material == BLOCK_TYPE_STONE);
-        size_t dark = 0, stone = 0;
-        for (int y = -129; y <= 1; y++) {
-          const BlockType expected = y < -128 || y >= -32 ? BLOCK_TYPE_EMPTY :
-              y < -64 ? BLOCK_TYPE_DARK_STONE : BLOCK_TYPE_STONE;
+        assert(column.height == 1 && column.stoneTopY == -32 && column.deepRockY == -64);
+        assert(column.material == BLOCK_TYPE_WATER);
+        size_t dark = 0, stone = 0, water = 0;
+        for (int y = -129; y <= 2; y++) {
+          const BlockType expected = y < -128 || y > 0 ? BLOCK_TYPE_EMPTY :
+              y < -64 ? BLOCK_TYPE_DARK_STONE : y < -32 ? BLOCK_TYPE_STONE : BLOCK_TYPE_WATER;
           const BlockType actual = terrain_column_block(column, y);
           assert(actual == expected);
           dark += actual == BLOCK_TYPE_DARK_STONE;
           stone += actual == BLOCK_TYPE_STONE;
+          water += actual == BLOCK_TYPE_WATER;
         }
-        assert(dark == 64 && stone == 32);
+        assert(dark == 64 && stone == 32 && water == 33);
         assert(terrain_column_block(column, INT_MIN) == BLOCK_TYPE_EMPTY);
         assert(terrain_column_block(column, INT_MAX) == BLOCK_TYPE_EMPTY);
       }
@@ -654,8 +655,7 @@ static void test_generator_behaviour(void) {
         materials[index] = (uint8_t)world_get_block(&world, x - FIXTURE_SIDE / 2, height - 1, z - FIXTURE_SIDE / 2);
         for (int y = bottom; y < height; y++) {
           BlockType block = world_get_block(&world, x - FIXTURE_SIDE / 2, y, z - FIXTURE_SIDE / 2);
-          assert(block_is_solid(block));
-          assert(block != BLOCK_TYPE_WATER || !terrain);
+          assert(block_is_material(block));
         }
         assert(world_get_block(&world, x - FIXTURE_SIDE / 2, bottom - 1, z - FIXTURE_SIDE / 2) == BLOCK_TYPE_EMPTY);
         assert(world_get_block(&world, x - FIXTURE_SIDE / 2, height, z - FIXTURE_SIDE / 2) == BLOCK_TYPE_EMPTY);
@@ -687,7 +687,7 @@ static void test_generator_behaviour(void) {
       }
     if (terrain) {
       assert(changedColumns == 0);
-      assert(minHeight == -32 && maxHeight == -32);
+      assert(minHeight == 1 && maxHeight == 1);
     } else {
       assert(changedColumns > 0);
       assert(minHeight == 0 && maxHeight == 0);
@@ -699,13 +699,16 @@ static void test_generator_behaviour(void) {
     for (int x = 0; x < FIXTURE_SIDE; x++)
       for (int z = 0; z < FIXTURE_SIDE; z++) {
         int height = heights[x * FIXTURE_SIDE + z];
-        expectedQuads += 2; /* Top and bottom. */
+        expectedQuads += terrain ? 3 : 2; /* Water top, seabed, bottom; platform top/bottom. */
         for (int d = 0; d < 4; d++) {
           int nx = x + dx[d], nz = z + dz[d];
           int neighbor =
               nx < 0 || nx >= FIXTURE_SIDE || nz < 0 || nz >= FIXTURE_SIDE ? bottom : heights[nx * FIXTURE_SIDE + nz];
           if (height > neighbor)
             expectedQuads += (size_t)(height - neighbor);
+          if (!terrain && nx >= 0 && nx < FIXTURE_SIDE && nz >= 0 && nz < FIXTURE_SIDE &&
+              materials[x * FIXTURE_SIDE + z] != BLOCK_TYPE_WATER &&
+              materials[nx * FIXTURE_SIDE + nz] == BLOCK_TYPE_WATER) expectedQuads++;
         }
       }
     size_t draws, sections;
@@ -833,7 +836,7 @@ static void test_section_faces_and_replacement(void) {
     assert(one.vertexCount == 36);
     assert(world_set_block(&world, b[0], b[1], b[2], BLOCK_TYPE_WATER));
     size_t draws, nonempty;
-    assert(mesh_world(&world, &draws, &nonempty) == 60);
+    assert(mesh_world(&world, &draws, &nonempty) == 66);
     assert(world_set_block(&world, a[0], a[1], a[2], BLOCK_TYPE_EMPTY));
     assert(world_set_block(&world, b[0], b[1], b[2], BLOCK_TYPE_EMPTY));
     /* Retain the empty CPU section so synchronization can retire its GPU mesh. */
@@ -920,7 +923,9 @@ static size_t assert_reference_section_faces(const World *world, int cx, int sy,
         assert(type >= BLOCK_TYPE_GRASS && type < BLOCK_TYPE_COUNT);
         for (int d = 0; d < 6; d++)
           if (world_get_block(world, wx + step[d][0], wy + step[d][1],
-                              wz + step[d][2]) == BLOCK_TYPE_EMPTY) {
+                              wz + step[d][2]) == BLOCK_TYPE_EMPTY ||
+              (type != BLOCK_TYPE_WATER && world_get_block(world, wx + step[d][0],
+                  wy + step[d][1], wz + step[d][2]) == BLOCK_TYPE_WATER)) {
             expected[(x * SECTION_SIZE + y) * SECTION_SIZE + z][d] = type;
             remaining++;
           }
@@ -1068,13 +1073,14 @@ static void test_hidden_section_neighbor_edits(void) {
           assert_reference_section_faces(&world, edited[0] + (n < 0 ? 0 : step[n][0]),
                                           edited[1] + (n < 0 ? 0 : step[n][1]),
                                           edited[2] + (n < 0 ? 0 : step[n][2]));
-        /* Change the exposed face through every material, including opaque
+        /* Change the exposed face through every material, including translucent
            water; counts alone would miss a wrong material or draw range. */
         int exposed[3] = {cell[0] - step[d][0], cell[1] - step[d][1], cell[2] - step[d][2]};
         BlockType original = world_get_block(&world, exposed[0], exposed[1], exposed[2]);
         for (int t = 0; t < BLOCK_TYPE_COUNT; t++) {
           assert(world_set_block(&world, exposed[0], exposed[1], exposed[2], (BlockType)t));
-          assert(assert_reference_section_faces(&world, target[0], target[1], target[2]) == 1);
+          assert(assert_reference_section_faces(&world, target[0], target[1], target[2]) ==
+                 (t == BLOCK_TYPE_WATER ? 6u : 1u));
         }
         assert(world_set_block(&world, exposed[0], exposed[1], exposed[2], original));
         clear_dirty(&world);
@@ -1405,18 +1411,11 @@ static void test_generated_terrain_spawn(void) {
     assert(create_terrain(&world, 32, center, sizes[s], UINT32_C(0x4B1D2A37)));
     Player player = make_player((Vec3){center.x, 0, center.z}, 0);
     assert(player_spawn_on_surface(&player, &world));
-    float spawnY = player.position.y;
-    assert(isfinite(spawnY));
-    for (int frame = 0; frame < 60; frame++)
-      update_player(&player, (PlayerInput){0}, 1.0f / 60, &world);
-    assert(player.grounded);
-    assert_near(player.position.y, spawnY);
-    update_player(&player, (PlayerInput){.jump = 1}, 1.0f / 60, &world);
+    const float spawnY = player.position.y;
+    assert_near(spawnY, center.y + (float)TERRAIN_STONE_TOP_Y * sizes[s]);
+    for (int frame = 0; frame < 120; frame++)
+      update_player(&player, (PlayerInput){.swimUp = 1}, 1.0f / 60.0f, &world);
     assert(!player.grounded && player.position.y > spawnY);
-    for (int frame = 0; frame < 60; frame++)
-      update_player(&player, (PlayerInput){0}, 1.0f / 60, &world);
-    assert(player.grounded);
-    assert_near(player.position.y, spawnY);
     world_destroy(&world);
   }
 }
@@ -1463,12 +1462,10 @@ static void test_default_world_terrain_and_boundaries(void) {
   assert(!world_set_block(&world, last + 1, 0, 0, BLOCK_TYPE_STONE));
   assert(!world_set_block(&world, 0, 0, -side / 2 - 1, BLOCK_TYPE_STONE));
   assert(!world_set_block(&world, 0, 0, last + 1, BLOCK_TYPE_STONE));
-  float spawnY = world_surface_height(&world, 0.5f, 0.5f);
-  Player player = make_player((Vec3){0.5f, spawnY, 0.5f}, 0);
-  for (int frame = 0; frame < 60; frame++)
-    update_player(&player, (PlayerInput){0}, 1.0f / 60, &world);
-  assert(player.grounded);
-  assert_near(player.position.y, spawnY);
+  Player player = make_player((Vec3){0.5f, 0.0f, 0.5f}, 0);
+  for (int frame = 0; frame < 600; frame++)
+    update_player(&player, (PlayerInput){0}, 1.0f / 60.0f, &world);
+  assert(!player.grounded && player.position.y > 0.0f && player.position.y < 1.0f);
   assert(world_materialize_chunk(&world, 0, 0));
   size_t vertices = 0;
   for (int sy = WORLD_MIN_SECTION_Y; sy < WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT; sy++) {
@@ -1493,20 +1490,21 @@ static void test_terrain_relief_and_underground_depth(void) {
       if (column.height < lowest) lowest = column.height;
       if (column.height > highest) highest = column.height;
       assert(column.height < (WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT) * SECTION_SIZE - 8);
-      assert(column.material != BLOCK_TYPE_WATER);
+      assert(column.material == BLOCK_TYPE_WATER);
       assert(terrain_column_block(column, column.height - 1) == column.material);
       assert(terrain_column_block(column, column.height) == BLOCK_TYPE_EMPTY);
       assert(terrain_column_block(column, TERRAIN_BASE_Y) == BLOCK_TYPE_DARK_STONE);
-      assert(terrain_column_block(column, column.height - 9) == (column.height - 9 < column.deepRockY ? BLOCK_TYPE_DARK_STONE : BLOCK_TYPE_STONE));
+      assert(terrain_column_block(column, -33) == BLOCK_TYPE_STONE);
+      assert(terrain_column_block(column, 0) == BLOCK_TYPE_WATER);
       assert(terrain_column_block(column, TERRAIN_BASE_Y - 1) == BLOCK_TYPE_EMPTY);
     }
-  assert(lowest == -32 && highest == -32);
+  assert(lowest == 1 && highest == 1);
   printf("Terrain relief: %d..%d blocks; underground base %d\n", lowest, highest, TERRAIN_BASE_Y);
   World world = {0};
   assert(create_terrain_streamed(&world, 1, (Vec3){0}, 1, seed));
   TerrainColumn column = terrain_sample_column(seed, 0, 0);
   for (int y = column.height - 1; y >= TERRAIN_BASE_Y; y--) {
-    assert(block_is_solid(world_get_block(&world, 0, y, 0)));
+    assert(block_is_material(world_get_block(&world, 0, y, 0)));
     assert(world_set_block(&world, 0, y, 0, BLOCK_TYPE_EMPTY));
     if (y > TERRAIN_BASE_Y)
       assert_near(world_surface_height(&world, 0, 0), y);
@@ -1583,7 +1581,7 @@ static void test_surface_height_survives_materialization(void) {
         int gapY = voxel_section_coord(height - removed - 1) - 1;
         assert(gapY > voxel_section_coord(deepY));
         assert(!world_section(&world, voxel_section_coord(x), gapY, voxel_section_coord(z)));
-        assert(block_is_solid(world_get_block(&world, x, gapY * SECTION_SIZE, z)));
+        assert(block_is_material(world_get_block(&world, x, gapY * SECTION_SIZE, z)));
         int highY = (voxel_section_coord(height) + 3) * SECTION_SIZE;
         assert(world_set_block(&world, x, highY, z, BLOCK_TYPE_SNOW));
         assert(!world_section(&world, voxel_section_coord(x),

@@ -29,9 +29,10 @@ typedef struct {
 typedef struct {
   float forward;
   float strafe;
-  int jump;
+  int jump; /* Pressed once for a land jump. */
+  int swimUp; /* Held continuously in water; does not repeat land jumps. */
   int run;
-  int crouch;
+  int crouch; /* Held: crouch on land, dive in water. */
 } PlayerInput;
 
 typedef struct {
@@ -103,7 +104,7 @@ typedef struct {
 /* Owning type: initialize to zero, destroy explicitly, and do not copy by value.
    Missing sections read as air in ordinary worlds; streamed worlds synthesize
    missing chunks from their seed. Horizontal side is 1..WORLD_MAX_BLOCKS_PER_SIDE;
-   generated solids occupy [-128,-32); edits use WORLD_COORD_MIN..MAX.
+   generated solids occupy [-128,-32), water [-32,1); edits use WORLD_COORD_MIN..MAX.
    Empty allocated sections remain owned retirement markers until CPU eviction
    or destruction;
    sectionCount includes them. Renderer sync must retire their GPU geometry.
@@ -128,6 +129,8 @@ typedef struct {
      transactionally (world_set_block returns zero); restoration reclaims slots. */
   int proceduralTerrain;
   uint32_t terrainSeed;
+  int hasOcean;
+  int waterTopY; /* Exclusive water top in voxel coordinates for the flat ocean. */
   /* Conservative envelope of resident columns, including partial edit caches. */
   int hasMaterializedBounds;
   int minMaterializedChunkX, maxMaterializedChunkX;
@@ -153,6 +156,8 @@ int voxel_floor_div(int coordinate, int divisor);
 int voxel_floor_mod(int coordinate, int divisor);
 int voxel_section_coord(int coordinate);
 int voxel_local_coord(int coordinate);
+/* Material validity includes water; solid blocks alone support/collide with players. */
+int block_is_material(BlockType type);
 int block_is_solid(BlockType type);
 int block_face_visible(BlockType type, BlockType neighbor);
 /* Initialization/generation replace an existing initialized world only on success.
@@ -183,8 +188,10 @@ BlockType world_get_block(const World *world, int x, int y, int z);
    failure retains that section's old mesh and dirty flag for retry, but earlier
    sections in the pass may already have updated. CPU edits are not rolled back. */
 int world_set_block(World *world, int x, int y, int z, BlockType type);
-/* Highest occupied surface, for spawn selection (not cave collision). */
+/* Highest occupied surface, including water (not cave collision). */
 float world_surface_height(const World *world, float x, float z);
+/* Highest solid surface, ignoring water; used for grounded spawning. */
+float world_support_height(const World *world, float x, float z);
 int block_type_color(BlockType type, Vec3 *color);
 /* Transactionally fill missing sections, preserving edits already in this chunk. */
 int world_materialize_chunk(World *world, int chunkX, int chunkZ);

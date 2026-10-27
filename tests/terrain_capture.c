@@ -28,14 +28,16 @@ int main(void) {
   r.framebufferWidth = 960;
   r.framebufferHeight = 640;
   r.viewDistance = 300;
-  const char *const names[] = {"sea-level", "seabed", "edge"};
+  const char *const names[] = {"sea-level", "seabed", "edge", "underwater"};
   const Player views[] = {
-      {.position = {0.5f, 0.0f, 0.5f}, .eyeHeight = 1.0f,
+      {.position = {0.5f, 6.0f, 0.5f}, .eyeHeight = 1.0f,
        .aim = {.front = {0.0f, -0.6f, -0.8f}}},
       {.position = {0.5f, -30.0f, 0.5f}, .eyeHeight = 1.0f,
        .aim = {.front = {0.0f, -0.2f, -0.98f}}},
       {.position = {3088.0f, -48.0f, 0.5f}, .eyeHeight = 1.0f,
        .aim = {.front = {-0.8f, -0.6f, 0.0f}}},
+      {.position = {0.5f, -4.0f, 0.5f}, .eyeHeight = 1.0f,
+       .aim = {.front = {0.0f, 0.6f, -0.8f}}},
   };
   for (size_t scene = 0; scene < sizeof(views) / sizeof(*views); scene++) {
     const Player p = views[scene];

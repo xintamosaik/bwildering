@@ -35,6 +35,10 @@ struct Renderer {
   GLint mvpLocation;
   GLint colorLocation;
   GLint blockGridLocation;
+  GLint waterPassLocation;
+  GLint waterViewLocation;
+  GLint waterSurfaceLocation;
+  float waterSurface;
   Vec3 worldOrigin;
   float blockSize;
   int framebufferWidth;

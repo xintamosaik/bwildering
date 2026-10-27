@@ -253,7 +253,7 @@ static void assert_unique_gpu_owners(const Renderer *const renderer) {
 
 static void assert_unculled_parity(Renderer *const renderer, const Player *const player,
                                   const int expectCoverage) {
-  static float depths[2][AUDIT_WIDTH * AUDIT_HEIGHT];
+  static float depths[3][AUDIT_WIDTH * AUDIT_HEIGHT];
   static AuditRange optimized[AUDIT_RANGE_CAPACITY];
   size_t optimizedCount = 0;
   assert_unique_gpu_owners(renderer);
@@ -614,7 +614,7 @@ static void test_streamed_exploration_revisits_edited_terrain(void) {
   renderer.framebufferWidth = 640;
   renderer.framebufferHeight = 480;
   renderer.viewDistance = 25;
-  int height = terrain_sample_column(seed, 0, 0).height;
+  int height = terrain_sample_column(seed, 0, 0).stoneTopY;
   Player player = {.position = {0.5f, (float)height + 8.0f, 4.5f}, .eyeHeight = 1,
       .aim = {.front = {0, -0.8944272f, -0.4472136f}}};
   assert(application_stream_view(&rendererStreaming, &renderer, &world, &player, NULL));
@@ -629,7 +629,7 @@ static void test_streamed_exploration_revisits_edited_terrain(void) {
   for (int visit = 0; visit < 60; visit++) {
     player.position.x = (float)(visit % 8 - 4) * 96.0f + 0.5f;
     player.position.z = (float)(visit / 8 - 4) * 96.0f + 4.5f;
-    player.position.y = world_surface_height(&world, player.position.x, player.position.z) + 8;
+    player.position.y = world_support_height(&world, player.position.x, player.position.z) + 8.0f;
     assert(application_stream_view(&rendererStreaming, &renderer, &world, &player, NULL));
     DepthFrame explored = capture_world(&renderer, &player);
     assert_terrain_visible(&explored);
@@ -1088,6 +1088,65 @@ static void test_reusable_renderer_storage(void) {
   storage_accounting(0);
 }
 
+/* Water changes the color behind its surface without replacing opaque depth,
+   and the transparent pass restores state before UI or subsequent world draws. */
+static void test_water_transparency(void) {
+  static unsigned char colors[3][AUDIT_WIDTH * AUDIT_HEIGHT * 3];
+  static float depths[3][AUDIT_WIDTH * AUDIT_HEIGHT];
+  World world = {0};
+  Renderer renderer = {0};
+  assert(world_init_region(&world, -8, -8, 16, (Vec3){0}, 1.0f));
+  assert(renderer_init(&renderer));
+  renderer.framebufferWidth = AUDIT_WIDTH;
+  renderer.framebufferHeight = AUDIT_HEIGHT;
+  const Player player = {.position = {0.5f, 4.0f, 4.5f}, .eyeHeight = 1.0f,
+      .aim = {.front = {0.0f, -0.8944272f, -0.4472136f}}};
+  glViewport(0, 0, AUDIT_WIDTH, AUDIT_HEIGHT);
+  glEnable(GL_DEPTH_TEST);
+  glEnable(GL_CULL_FACE);
+  glDisable(GL_BLEND);
+  glDepthMask(GL_TRUE);
+  glBlendFunc(GL_ONE, GL_ZERO);
+  for (int phase = 0; phase < 3; phase++) {
+    for (int x = -8; x < 8; x++)
+      for (int z = -8; z < 8; z++)
+        assert(world_set_block(&world, x, phase == 1 ? -1 : -2, z,
+                               phase == 1 ? BLOCK_TYPE_WATER : phase == 2 ? BLOCK_TYPE_SNOW : BLOCK_TYPE_STONE));
+    assert(renderer_sync_world(&renderer, &world));
+    glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    render_world(&renderer, player_committed_view(&player));
+    glReadPixels(0, 0, AUDIT_WIDTH, AUDIT_HEIGHT, GL_RGB, GL_UNSIGNED_BYTE, colors[phase]);
+    glReadPixels(0, 0, AUDIT_WIDTH, AUDIT_HEIGHT, GL_DEPTH_COMPONENT, GL_FLOAT, depths[phase]);
+    assert(!glIsEnabled(GL_BLEND) && glIsEnabled(GL_CULL_FACE));
+    GLboolean depthWrite = GL_FALSE;
+    GLint src = 0, dst = 0;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWrite);
+    glGetIntegerv(GL_BLEND_SRC_RGB, &src);
+    glGetIntegerv(GL_BLEND_DST_RGB, &dst);
+    assert(depthWrite && src == GL_ONE && dst == GL_ZERO);
+    assert(glGetError() == GL_NO_ERROR);
+  }
+  size_t changed = 0, covered = 0, transmitted = 0;
+  for (size_t i = 0; i < AUDIT_WIDTH * AUDIT_HEIGHT; i++) {
+    assert(fabsf(depths[0][i] - depths[1][i]) < 0.000001f);
+    assert(fabsf(depths[0][i] - depths[2][i]) < 0.000001f);
+    int maxDelta = 0;
+    for (size_t c = 0; c < 3; c++) {
+      const int delta = abs((int)colors[1][i * 3 + c] - (int)colors[2][i * 3 + c]);
+      if (delta > maxDelta) maxDelta = delta;
+    }
+    transmitted += depths[0][i] < 1.0f && maxDelta > 10;
+    covered += depths[0][i] < 1.0f;
+    changed += memcmp(&colors[0][i * 3], &colors[1][i * 3], 3) != 0;
+  }
+  assert(covered > 1000 && changed > 1000 && transmitted > 1000);
+  renderer_destroy(&renderer);
+  world_destroy(&world);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  puts("Water transparency, opaque depth and GL state restoration checks passed.");
+}
+
 int main(void) {
   storage_reject = reject_storage;
   test_frustum();
@@ -1113,6 +1172,7 @@ int main(void) {
   test_stream_budget();
   test_performance_counters();
   test_sparse_vertical_renderer();
+  test_water_transparency();
   Renderer renderer = {0};
   World world = {0};
   assert(renderer_init(&renderer));
@@ -1126,7 +1186,7 @@ int main(void) {
   assert(renderer_sync_world(&renderer, &world));
   SectionGpuMesh *left = gpu_section(&renderer, -1, 0, 0);
   SectionGpuMesh *right = gpu_section(&renderer, 0, 0, 0);
-  assert(left && right && vertex_count(left) == 30 && vertex_count(right) == 30);
+  assert(left && right && vertex_count(left) == 36 && vertex_count(right) == 30);
   GLuint oldVao = left->vao, oldVbo = left->vbo;
   assert(world_set_block(&world, -1, 0, 0, BLOCK_TYPE_GRASS));
   real_buffer_upload = __glewBufferData;
@@ -1136,13 +1196,13 @@ int main(void) {
   __glewBufferData = real_buffer_upload;
   assert(left->vao == oldVao && left->vbo == oldVbo);
   assert(glIsVertexArray(oldVao) && glIsBuffer(oldVbo));
-  assert(left->vertexCount[BLOCK_TYPE_STONE] == 30);
+  assert(left->vertexCount[BLOCK_TYPE_STONE] == 36);
   assert(left->vertexCount[BLOCK_TYPE_GRASS] == 0);
   assert(world_get_block(&world, -1, 0, 0) == BLOCK_TYPE_GRASS);
   assert(world_section(&world, -1, 0, 0)->dirty);
   assert(renderer_sync_world(&renderer, &world));
   assert(!world_section(&world, -1, 0, 0)->dirty);
-  assert(left->vertexCount[BLOCK_TYPE_GRASS] == 30);
+  assert(left->vertexCount[BLOCK_TYPE_GRASS] == 36);
   assert(left->vertexCount[BLOCK_TYPE_STONE] == 0);
   /* GL may immediately reuse the retired names for the neighbor's upload. */
   assert(!glIsVertexArray(oldVao) || right->vao == oldVao);
@@ -1279,23 +1339,20 @@ int main(void) {
   assert(application.game.world.blocksPerSide == PLATFORM_BLOCKS_PER_SIDE);
   const float spawnY = application.game.player.position.y;
   assert(spawnY == 0.0f && !application.game.player.grounded);
-  /* Look down from sea level to assess the foundation while water is absent. */
+  /* Look down through water at the stone seabed. */
   Player foundationView = application.game.player;
   foundationView.aim = game_aim(-90.0f, -45.0f);
   DepthFrame spawnView = capture_world(&application.renderer, &foundationView);
   assert_terrain_visible(&spawnView);
   free(spawnView.depth);
-  game_step(&application.game, (GameCommand){.yaw = -90.0f});
-  assert(application.game.player.position.y < spawnY);
-  for (int i = 0; i < 600 && !application.game.player.grounded; i++)
+  for (int i = 0; i < 600; i++)
     game_step(&application.game, (GameCommand){.yaw = -90.0f});
-  const float surfaceY = world_surface_height(&application.game.world,
-      application.game.player.position.x, application.game.player.position.z);
-  assert(application.game.player.grounded &&
-         fabsf(application.game.player.position.y - surfaceY) < 0.001f);
-  game_step(&application.game, (GameCommand){.yaw = -90.0f, .movement.jump = 1});
-  assert(!application.game.player.grounded && application.game.player.position.y > surfaceY);
-  printf("Application spawn: sea-level start, falling, landing, jump and foundation visibility checks passed.\n");
+  const float floatingY = application.game.player.position.y;
+  assert(!application.game.player.grounded && floatingY > spawnY && floatingY < 1.0f);
+  for (int i = 0; i < 30; i++)
+    game_step(&application.game, (GameCommand){.yaw = -90.0f, .movement.swimUp = 1});
+  assert(!application.game.player.grounded && application.game.player.position.y > floatingY);
+  printf("Application spawn: sea-level start, floating, swimming and foundation visibility checks passed.\n");
   /* A pending resize is applied exactly once, without polling window sizes. */
   const GLFWframebuffersizefun resize = glfwSetFramebufferSizeCallback(application.window, NULL);
   assert(resize);

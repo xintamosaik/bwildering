@@ -4,13 +4,15 @@ TerrainColumn terrain_sample_column(const uint32_t seed, const int worldX, const
   (void)seed;
   (void)worldX;
   (void)worldZ;
-  return (TerrainColumn){.height = TERRAIN_STONE_TOP_Y, .material = BLOCK_TYPE_STONE,
+  return (TerrainColumn){.height = TERRAIN_SEA_LEVEL + 1, .stoneTopY = TERRAIN_STONE_TOP_Y,
+                         .material = BLOCK_TYPE_WATER,
                          .deepRockY = TERRAIN_DEEP_ROCK_Y};
 }
 
 BlockType terrain_column_block(const TerrainColumn column, const int y) {
   if (y < TERRAIN_BASE_Y || y >= column.height) return BLOCK_TYPE_EMPTY;
-  return y < column.deepRockY ? BLOCK_TYPE_DARK_STONE : BLOCK_TYPE_STONE;
+  if (y < column.deepRockY) return BLOCK_TYPE_DARK_STONE;
+  return y < column.stoneTopY ? BLOCK_TYPE_STONE : BLOCK_TYPE_WATER;
 }
 
 static uint32_t next_random(uint32_t *const state) {
@@ -86,6 +88,8 @@ int create_terrain_region(World *const world, const int minX, const int minZ, co
     return 0;
   result.proceduralTerrain = 1;
   result.terrainSeed = seed;
+  result.hasOcean = 1;
+  result.waterTopY = TERRAIN_SEA_LEVEL + 1;
   for (int x = 0; x < result.chunksPerSide; x++)
     for (int z = 0; z < result.chunksPerSide; z++)
       if (!world_materialize_chunk(&result, result.minChunkX + x, result.minChunkZ + z)) {
@@ -113,6 +117,8 @@ int create_terrain_streamed(World *const world, const int blocksPerSide, const V
     return 0;
   result.proceduralTerrain = 1;
   result.terrainSeed = seed;
+  result.hasOcean = 1;
+  result.waterTopY = TERRAIN_SEA_LEVEL + 1;
   world_destroy(world);
   *world = result;
   return 1;

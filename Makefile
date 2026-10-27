@@ -5,7 +5,7 @@ LDFLAGS = -lGLEW -lglfw -lGL -lm -lpthread
 TARGET = bwildering
 COMMON_SRC = world_streaming.c game.c game_logic.c world_generation.c voxel_world.c storage.c performance.c ui.c input.c renderer.c
 SRC = main.c application.c $(COMMON_SRC)
-APP_HEADERS = world_streaming.h game.h view.h application.h application_internal.h renderer.h renderer_internal.h ui_draw.h view_settings.h ui.h input.h performance.h storage.h game_logic.h world_generation.h block_type.h
+APP_HEADERS = world_streaming.h game.h view.h application.h application_internal.h renderer.h renderer_internal.h water_shader.h ui_draw.h view_settings.h ui.h input.h performance.h storage.h game_logic.h world_generation.h block_type.h
 FIXTURE_FLAGS = -DBW_RENDERER_TEST
 # Headless routing fixture links production modules and captures registered callbacks.
 PAUSE_WRAP = -Wl,--wrap=glfwSetFramebufferSizeCallback -Wl,--wrap=glfwSetWindowUserPointer -Wl,--wrap=glfwSetMouseButtonCallback -Wl,--wrap=glfwSetCursorPosCallback -Wl,--wrap=glfwSetKeyCallback -Wl,--wrap=glfwGetKey -Wl,--wrap=glfwGetMouseButton -Wl,--wrap=glfwGetInputMode -Wl,--wrap=glfwSetInputMode -Wl,--wrap=glfwGetTime -Wl,--wrap=glfwGetWindowUserPointer -Wl,--wrap=glfwGetCursorPos -Wl,--wrap=glfwGetWindowSize -Wl,--wrap=glfwGetFramebufferSize -Wl,--wrap=glfwSetWindowShouldClose -Wl,--wrap=glfwPollEvents

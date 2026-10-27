@@ -11,7 +11,8 @@ enum {
 };
 
 typedef struct {
-  int height; /* Exclusive solid top; water is not generated yet. */
+  int height; /* Exclusive occupied top, including water. */
+  int stoneTopY; /* Exclusive solid top underneath water; later the land surface. */
   BlockType material;
   int deepRockY; /* Exclusive dark-stone top. */
 } TerrainColumn;
@@ -28,7 +29,7 @@ int create_platform(World *world, int blocksPerSide, Vec3 center,
 /* Transactional bounded region generation; bounds/transform as world_init_region. */
 int create_terrain_region(World *world, int minX, int minZ, int side,
                           Vec3 origin, float blockSize, uint32_t seed);
-/* Flat foundation; subsequent generation stages add water and landmasses. */
+/* Flat stone foundation with static water through TERRAIN_SEA_LEVEL inclusive. */
 int create_terrain(World *world, int blocksPerSide, Vec3 center,
                    float blockSize, uint32_t seed);
 /* Same terrain and bounds, generated on demand rather than all at startup. */

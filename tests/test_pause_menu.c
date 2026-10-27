@@ -156,13 +156,13 @@ static void test_virtual_actions(void) {
   input.mouseBindings[GLFW_MOUSE_BUTTON_LEFT] = INPUT_JUMP;
   keys[GLFW_KEY_J] = GLFW_PRESS;
   input_poll(&input, NULL);
-  assert(input_player(&input).jump && input_player(&input).crouch);
+  assert(input_player(&input).jump && input_player(&input).swimUp && input_player(&input).crouch);
   mouseButtons[GLFW_MOUSE_BUTTON_LEFT] = GLFW_PRESS;
   input_poll(&input, NULL);
   assert(!input_player(&input).jump);
   keys[GLFW_KEY_J] = GLFW_RELEASE;
   input_poll(&input, NULL);
-  assert((input.held & INPUT_JUMP) && !input_player(&input).jump);
+  assert((input.held & INPUT_JUMP) && !input_player(&input).jump && input_player(&input).swimUp);
   mouseButtons[GLFW_MOUSE_BUTTON_LEFT] = GLFW_RELEASE;
   input_poll(&input, NULL);
   assert(!(input.held & INPUT_JUMP));

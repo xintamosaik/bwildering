@@ -197,7 +197,7 @@ static int player_view_block(const World *const world, const Player *const playe
 
 int player_place_block(World *const world, const Player *const player, const BlockType type, const float reach) {
   int hit[3], adjacent[3];
-  if (!block_is_solid(type) || !player_view_block(world, player, reach, hit, adjacent))
+  if (!block_is_material(type) || !player_view_block(world, player, reach, hit, adjacent))
     return 0;
 
   /* Reject placement if the new block would overlap the player body. */
@@ -252,6 +252,42 @@ static int player_intersects(const World *const world, const Vec3 p) {
         if (block_is_solid(world_get_block(world, x, y, z)))
           return 1;
   return 0;
+}
+
+/* Measure actual water overlapping the body, including partial immersion,
+   edited pools, translated/scaled worlds and signed chunk boundaries. */
+static float player_water_fraction(const World *const world, const Vec3 p) {
+  if (!world || !world->chunks) return 0.0f;
+  const float size = world->blockSize;
+  const float lo[3] = {(p.x - PLAYER_RADIUS - world->origin.x) / size,
+                       (p.y - world->origin.y) / size,
+                       (p.z - PLAYER_RADIUS - world->origin.z) / size};
+  const float hi[3] = {(p.x + PLAYER_RADIUS - world->origin.x) / size,
+                       (p.y + PLAYER_HEIGHT - world->origin.y) / size,
+                       (p.z + PLAYER_RADIUS - world->origin.z) / size};
+  const int lower[3] = {world->minX, WORLD_COORD_MIN, world->minZ};
+  const int upper[3] = {world->minX + world->blocksPerSide, WORLD_COORD_MAX + 1,
+                        world->minZ + world->blocksPerSide};
+  int first[3], last[3];
+  for (int axis = 0; axis < 3; axis++) {
+    if (!isfinite(lo[axis]) || !isfinite(hi[axis]) ||
+        hi[axis] <= (float)lower[axis] || lo[axis] >= (float)upper[axis]) return 0.0f;
+    first[axis] = (int)floorf(fmaxf(lo[axis], (float)lower[axis]));
+    last[axis] = (int)ceilf(fminf(hi[axis], (float)upper[axis])) - 1;
+  }
+  const float bodyVolume = (hi[0] - lo[0]) * (hi[1] - lo[1]) * (hi[2] - lo[2]);
+  if (bodyVolume <= 0.0f) return 0.0f;
+  float waterVolume = 0.0f;
+  for (int x = first[0]; x <= last[0]; x++)
+    for (int y = first[1]; y <= last[1]; y++)
+      for (int z = first[2]; z <= last[2]; z++) {
+        if (world_get_block(world, x, y, z) != BLOCK_TYPE_WATER) continue;
+        const float dx = fminf(hi[0], (float)x + 1.0f) - fmaxf(lo[0], (float)x);
+        const float dy = fminf(hi[1], (float)y + 1.0f) - fmaxf(lo[1], (float)y);
+        const float dz = fminf(hi[2], (float)z + 1.0f) - fmaxf(lo[2], (float)z);
+        waterVolume += dx * dy * dz;
+      }
+  return fmaxf(0.0f, fminf(1.0f, waterVolume / bodyVolume));
 }
 
 static int move_axis(Player *const player, const World *const world, const float distance, const int axis) {
@@ -318,7 +354,7 @@ int player_spawn_on_surface(Player *const player, const World *const world) {
   float height = -INFINITY;
   for (int x = firstX; x <= lastX; x++)
     for (int z = firstZ; z <= lastZ; z++) {
-      const float top = world_surface_height(world, world->origin.x + ((float)x + 0.5f) * world->blockSize,
+      const float top = world_support_height(world, world->origin.x + ((float)x + 0.5f) * world->blockSize,
                                        world->origin.z + ((float)z + 0.5f) * world->blockSize);
       if (isfinite(top)) height = fmaxf(height, top);
     }
@@ -330,15 +366,18 @@ int player_spawn_on_surface(Player *const player, const World *const world) {
   return 1;
 }
 
-void update_player(Player *const updatedPlayer, const PlayerInput input, const float deltaTime, const World *const world) {
-  if (!updatedPlayer || !isfinite(deltaTime) || deltaTime <= 0 || deltaTime > 10)
-    return;
-
+static void player_step(Player *const updatedPlayer, const PlayerInput input, const float deltaTime, const World *const world) {
   /* Resolve horizontal motion one axis at a time to slide along walls. */
-  updatedPlayer->crouching = input.crouch != 0;
-  const float speed = 4.0f * (input.crouch ? 0.75f : input.run ? 1.5f : 1.0f);
-  const Vec3 forward =
-      vec3_normalize((Vec3){.x = updatedPlayer->aim.front.x, .y = 0, .z = updatedPlayer->aim.front.z});
+  const float immersion = player_water_fraction(world, updatedPlayer->position);
+  updatedPlayer->crouching = input.crouch && immersion <= 0.001f;
+  const float drySpeed = 4.0f * (updatedPlayer->crouching ? 0.75f : input.run ? 1.5f : 1.0f);
+  const float swimSpeed = input.run ? 2.8f : 2.0f;
+  const float wetWeight = fminf(1.0f, immersion * 2.0f);
+  const float speed = drySpeed + (swimSpeed - drySpeed) * wetWeight;
+  /* Fully immersed forward movement follows the view; at the surface it stays
+     horizontal so looking around does not force the player underwater. */
+  const Vec3 forward = immersion > 0.8f ? updatedPlayer->aim.front :
+      vec3_normalize((Vec3){.x = updatedPlayer->aim.front.x, .y = 0.0f, .z = updatedPlayer->aim.front.z});
   const Vec3 right = vec3_normalize(vec3_cross(forward, (Vec3){0.0f, 1.0f, 0.0f}));
   Vec3 movement =
       vec3_add(vec3_scale(forward, input.forward), vec3_scale(right, input.strafe));
@@ -346,6 +385,29 @@ void update_player(Player *const updatedPlayer, const PlayerInput input, const f
     movement = vec3_normalize(movement);
   move_axis(updatedPlayer, world, movement.x * speed * deltaTime, 0);
   move_axis(updatedPlayer, world, movement.z * speed * deltaTime, 2);
+
+  const float submerged = player_water_fraction(world, updatedPlayer->position);
+  if (submerged > 0.001f) {
+    /* Buoyancy balances at about 40% immersion, leaving the eyes above water.
+       Exponential drag damps incoming falls and avoids locking a fixed height. */
+    const float drag = 5.0f;
+    const float neutralTarget = (15.0f * submerged - 6.0f) / drag;
+    const int up = input.swimUp || input.jump;
+    const float vertical = up || input.crouch ?
+        (float)up - (float)(input.crouch != 0) : movement.y;
+    const float target = fabsf(vertical) > 0.001f ?
+        vertical * (vertical > 0.0f ? 3.0f : 2.5f) : neutralTarget;
+    updatedPlayer->crouching = 0;
+    updatedPlayer->grounded = 0;
+    updatedPlayer->velocityY = target + (updatedPlayer->velocityY - target) * expf(-drag * deltaTime);
+    updatedPlayer->velocityY = fmaxf(-4.0f, fminf(3.0f, updatedPlayer->velocityY));
+    const int falling = updatedPlayer->velocityY < 0.0f;
+    if (move_axis(updatedPlayer, world, updatedPlayer->velocityY * deltaTime, 1)) {
+      updatedPlayer->velocityY = 0.0f;
+      updatedPlayer->grounded = falling;
+    }
+    return;
+  }
 
   /* Recheck support after moving, then accept a grounded jump. */
   Vec3 below = updatedPlayer->position;
@@ -365,5 +427,19 @@ void update_player(Player *const updatedPlayer, const PlayerInput input, const f
   if (move_axis(updatedPlayer, world, updatedPlayer->velocityY * deltaTime, 1)) {
     updatedPlayer->velocityY = 0;
     updatedPlayer->grounded = falling;
+  }
+}
+
+void update_player(Player *const player, const PlayerInput input, const float deltaTime, const World *const world) {
+  if (!player || !isfinite(deltaTime) || deltaTime <= 0.0f || deltaTime > 10.0f) return;
+  /* Keep the established land timestep. Wet motion uses bounded steps so a
+     long update cannot propel the player far above the surface in one step. */
+  const int steps = player_water_fraction(world, player->position) > 0.001f ?
+      (int)ceilf(deltaTime * 60.0f) : 1;
+  const float step = deltaTime / (float)steps;
+  for (int i = 0; i < steps; i++) {
+    PlayerInput sampled = input;
+    if (i) sampled.jump = 0;
+    player_step(player, sampled, step, world);
   }
 }

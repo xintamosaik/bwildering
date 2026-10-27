@@ -20,7 +20,7 @@ int game_init(Game *const game, const GameConfig config) {
       .position = {game->world.origin.x + 0.5f * config.blockSize, config.center.y,
                    game->world.origin.z + 0.5f * config.blockSize},
       .eyeHeight = 1.0f, .aim = game_aim(-90.0f, 0.0f)};
-  /* Start at sea level; normal gravity carries the player to the seabed. */
+  /* Start at sea level; immersion determines buoyancy and movement. */
   game->tick = 0;
   return 1;
 }

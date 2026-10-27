@@ -112,6 +112,7 @@ PlayerInput input_player(const InputState *const input) {
       .forward = (float)(((held & INPUT_FORWARD) != 0) - ((held & INPUT_BACKWARD) != 0)),
       .strafe = (float)(((held & INPUT_STRAFE_RIGHT) != 0) - ((held & INPUT_STRAFE_LEFT) != 0)),
       .jump = (input->pressed & INPUT_JUMP) != 0,
+      .swimUp = (held & INPUT_JUMP) != 0,
       .run = (held & INPUT_RUN) != 0,
       .crouch = (held & INPUT_CROUCH) != 0,
   };

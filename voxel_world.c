@@ -3,6 +3,7 @@
 #include "storage.h"
 
 #include <math.h>
+#include <limits.h>
 #include <string.h>
 
 /* Benchmark hooks compile away in normal builds. */
@@ -109,13 +110,18 @@ int voxel_local_coord(const int coordinate) {
   return voxel_floor_mod(coordinate, SECTION_SIZE);
 }
 
-int block_is_solid(const BlockType type) {
+int block_is_material(const BlockType type) {
   return type >= BLOCK_TYPE_GRASS && type < BLOCK_TYPE_COUNT;
 }
 
+int block_is_solid(const BlockType type) {
+  return block_is_material(type) && type != BLOCK_TYPE_WATER;
+}
+
 int block_face_visible(const BlockType type, const BlockType neighbor) {
-  /* All current materials are opaque, including the water placeholder. */
-  return block_is_solid(type) && !block_is_solid(neighbor);
+  if (!block_is_material(type)) return 0;
+  if (type == BLOCK_TYPE_WATER) return neighbor == BLOCK_TYPE_EMPTY;
+  return neighbor == BLOCK_TYPE_EMPTY || neighbor == BLOCK_TYPE_WATER;
 }
 
 static void section_destroy(Subchunk *const section) {
@@ -406,6 +412,7 @@ int world_materialize_chunk(World *const world, const int chunkX, const int chun
   /* Sample each column once for all vertical sections in this chunk. */
   TerrainColumn columns[SECTION_SIZE][SECTION_SIZE];
   int highest = TERRAIN_BASE_Y;
+  int lowestStone = INT_MAX, highestStone = TERRAIN_BASE_Y;
   for (int x = 0; x < SECTION_SIZE; x++)
     for (int z = 0; z < SECTION_SIZE; z++) {
       const int wx = chunkX * SECTION_SIZE + x, wz = chunkZ * SECTION_SIZE + z;
@@ -413,6 +420,8 @@ int world_materialize_chunk(World *const world, const int chunkX, const int chun
       if (wx >= world->minX && wx < world->minX + world->blocksPerSide &&
           wz >= world->minZ && wz < world->minZ + world->blocksPerSide) {
         columns[x][z] = terrain_sample_column(world->terrainSeed, wx, wz);
+        if (columns[x][z].stoneTopY < lowestStone) lowestStone = columns[x][z].stoneTopY;
+        if (columns[x][z].stoneTopY > highestStone) highestStone = columns[x][z].stoneTopY;
         if (columns[x][z].height > highest)
           highest = columns[x][z].height;
       }
@@ -440,7 +449,8 @@ int world_materialize_chunk(World *const world, const int chunkX, const int chun
       continue;
     pending[s] = terrain_section(world, chunkX, sy, chunkZ, columns);
     if (pending[s]) pending[s]->meshCandidate = edge || sy == WORLD_MIN_SECTION_Y ||
-        (sy + 1) * SECTION_SIZE >= lowest;
+        (sy + 1) * SECTION_SIZE >= lowest ||
+        ((sy + 1) * SECTION_SIZE >= lowestStone && sy * SECTION_SIZE < highestStone);
     if (!pending[s]) {
       for (int j = 0; j < WORLD_SECTION_COUNT; j++) section_destroy(pending[j]);
       return 0;
@@ -541,7 +551,7 @@ size_t world_release_chunks_outside(World *const world, const int minX, const in
 }
 
 int world_set_block(World *const world, const int x, const int y, const int z, const BlockType type) {
-  if (!in_bounds(world, x, y, z) || (!block_is_solid(type) && type != BLOCK_TYPE_EMPTY))
+  if (!in_bounds(world, x, y, z) || (!block_is_material(type) && type != BLOCK_TYPE_EMPTY))
     return 0;
 
   /* Generation bounds are independent of edit safety. Test float spacing at
@@ -649,7 +659,12 @@ int world_set_block(World *const world, const int x, const int y, const int z, c
   return 1;
 }
 
-float world_surface_height(const World *const world, const float x, const float z) {
+static int surface_material(const BlockType type, const int includeWater) {
+  return includeWater ? block_is_material(type) : block_is_solid(type);
+}
+
+static float surface_height(const World *const world, const float x, const float z,
+                            const int includeWater) {
   if (!world || !world->chunks || !isfinite(x) || !isfinite(z))
     return NAN;
   const float vx = (x - world->origin.x) / world->blockSize;
@@ -672,7 +687,7 @@ float world_surface_height(const World *const world, const float x, const float 
     const TerrainColumn column = terrain_sample_column(world->terrainSeed, ix, iz);
     int y = column.height - 1;
     while (y >= TERRAIN_BASE_Y) {
-      if (block_is_solid(world_get_block(world, ix, y, iz))) break;
+      if (surface_material(world_get_block(world, ix, y, iz), includeWater)) break;
       y--;
     }
     if (y >= TERRAIN_BASE_Y) { top = y + 1; found = 1; }
@@ -680,7 +695,7 @@ float world_surface_height(const World *const world, const float x, const float 
 
   for (uint32_t i = chunk->editHead; i; i = world->edits[i - 1].next) {
     const VoxelEdit *const edit = &world->edits[i - 1];
-    if (edit->x == ix && edit->z == iz && block_is_solid((BlockType)edit->material) &&
+    if (edit->x == ix && edit->z == iz && surface_material((BlockType)edit->material, includeWater) &&
         (!found || edit->y + 1 > top)) {
       top = edit->y + 1;
       found = 1;
@@ -691,7 +706,7 @@ float world_surface_height(const World *const world, const float x, const float 
   for (const Subchunk *s = chunk->sections; s; s = s->next) {
     if (found && (s->sectionY + 1) * SECTION_SIZE <= top) continue;
     for (int ly = SECTION_SIZE - 1; ly >= 0; ly--)
-      if (block_is_solid(section_block(s, block_index(ix, ly, iz)))) {
+      if (surface_material(section_block(s, block_index(ix, ly, iz)), includeWater)) {
         const int h = s->sectionY * SECTION_SIZE + ly + 1;
         if (!found || h > top) top = h;
         found = 1;
@@ -699,6 +714,14 @@ float world_surface_height(const World *const world, const float x, const float 
       }
   }
   return found ? world->origin.y + (float)top * world->blockSize : NAN;
+}
+
+float world_surface_height(const World *const world, const float x, const float z) {
+  return surface_height(world, x, z, 1);
+}
+
+float world_support_height(const World *const world, const float x, const float z) {
+  return surface_height(world, x, z, 0);
 }
 
 void section_mesh_destroy(SectionMesh *const mesh) {
@@ -790,7 +813,7 @@ static int mesh_build(const World *const world, const int cx, const int sy, cons
         const int index = (x * SECTION_SIZE + y) * SECTION_SIZE + z;
         const BlockType type = section_block(section, index);
         if (type == BLOCK_TYPE_EMPTY) continue;
-        if (!block_is_solid(type)) { section_destroy(temporary); return 0; }
+        if (!block_is_material(type)) { section_destroy(temporary); return 0; }
         for (int d = 0; d < 6; d++) {
           const int nx = x + dx[d], ny = y + dy[d], nz = z + dz[d];
           const BlockType other = nx >= 0 && nx < SECTION_SIZE &&

@@ -21,7 +21,7 @@ typedef struct {
 
 /* Values for one tick. Aim is in degrees; no device or presentation state.
    Direct/replay commands are already assigned to ticks. Each call consumes
-   jump/place/remove once; held movement/run/crouch must be supplied every tick.
+   jump/place/remove once; held movement/run/crouch/swimUp must be supplied every tick.
    The live application coalesces presses until a tick, sampling latest held
    state and pending aim without reconstructing event timestamps. */
 typedef struct {

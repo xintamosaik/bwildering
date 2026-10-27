@@ -1,7 +1,8 @@
 # World generation and persistence masterplan
 
 Status: agreed direction, 27 October 2026. The first flat-foundation step is
-implemented; hierarchical landmasses, water, and disk persistence remain planned.
+implemented, followed by static water; hierarchical landmasses and disk persistence
+remain planned.
 Dimensions below are experimental presets, not settled world constants.
 
 ## First playable step: flat foundation
@@ -17,9 +18,9 @@ separate shuffle buffer for each call.
 
 - Dark stone: -128 <= y < -64 (64 blocks, voxel indices -128 through -65).
 - Stone: -64 <= y < -32 (32 blocks, voxel indices -64 through -33).
-- Air everywhere else; water is deferred to step 2 or 3.
-- Player starts at the configured sea-level origin (normally y=0), falls to the
-  seabed under normal gravity, and can jump after landing.
+- Water: -32 <= y <= 0 (33 blocks); air above y=0 and below the foundation.
+- Player starts at the configured sea-level origin (normally y=0). Water now
+  provides buoyancy and swimming; land retains normal gravity and jumping.
 - Remove old noise relief, mountain/surface rules, and the grassy spawn search.
 - Keep block edits, eager/streamed agreement, and normal movement/collision.
 
@@ -41,6 +42,64 @@ and `make test` passed again, as did the renderer/application smoke tests run
 through the IDE on the real X11/AMD OpenGL context. Updated spawn tests verify
 falling from sea level, landing, jumping, and landing again. Clang-Tidy reported
 no narrowing warnings in the changed movement/game/renderer test files.
+
+## Static water step
+
+Water uses ordinary stored block IDs. It fills empty columns above the seabed
+through voxel y=0 inclusive, so the top face is at y=1. `TerrainColumn` separates
+the solid surface from the occupied water surface. A future landmass replaces
+water with stone; dark stone and the stone seabed remain underneath.
+
+Material validity, collision, and face visibility are distinct: water is valid
+and passable, water/water faces are hidden, and opaque faces beside water remain
+visible. `world_surface_height` includes water; `world_support_height` ignores it
+for grounded spawning. The initial static-water step left movement unchanged;
+the swimming step below now handles immersion. Flowing water, drowning, and
+water-level propagation remain outside this step.
+
+The small GLSL 330 shader in `water_shader.h` adds blue-green transparency,
+animated ripple normals, grazing-angle sky color, and a soft sun highlight.
+Geometry remains fixed to voxel boundaries. The renderer draws opaque materials
+first, then water sorted by section distance, without depth writes; it restores
+blend, cull, and depth-write state before UI drawing. Underwater opaque geometry
+receives distance fog based on the current flat ocean plane. Complex intersecting
+transparent shapes and cave-specific water volumes need further work when those
+features exist; section sorting is sufficient for the current flat ocean.
+
+Water-step verification: `make all` and `make test` passed. The real-GL renderer
+suite passed, including a water test that changes the submerged floor material
+to verify transmission, compares opaque depth, and checks restored GL state.
+Targeted game and streaming runs passed ASan/UBSan with leak detection disabled.
+Clang-Tidy checked all changed C files; no new narrowing warnings were introduced.
+Surface and underwater captures were reviewed on the X11/AMD context.
+
+## Swimming movement
+
+Movement measures actual water intersecting the player's body rather than using
+only the global ocean plane. Partial immersion blends land and swimming speeds.
+Fully submerged travel starts at 2 world units/second (2.8 with the run binding),
+and forward/back movement follows the view underwater. Near the surface it stays
+horizontal. These speeds are initial tuning values, not final travel dimensions.
+
+- Hold Space/the jump action to swim up; hold Shift/the crouch action to dive.
+- Release vertical controls to let buoyancy and drag settle the body partially
+  submerged, with eyes above the surface. Height is not locked.
+- Water damps incoming falls. Floors and ceilings still collide normally.
+- Outside water, the existing gravity, jumping, running and crouching remain.
+- Held `swimUp` is distinct from the transient land-jump press. The live input
+  path and tick commands preserve that distinction, including pause and rebinding.
+- Wet updates use bounded steps for buoyancy stability on long updates. No water
+  movement path allocates memory. Buoyancy, drag and controls do not simulate flow.
+
+Checks cover seeded/edited water, partial immersion at signed chunk boundaries,
+scaled/translated worlds, swimming speed, view-directed diving, held ascent/descent,
+incoming falls, floor/ceiling collision, return to surface, normal air gravity,
+and agreement at 30/60/144 updates per second and during a long wet update.
+
+Swimming verification: build, headless tests, input/pause tests, and the real-GL
+renderer/application suite passed. The focused swimming/game tests also passed
+ASan/UBSan with leak detection disabled. Clang-Tidy found no introduced narrowing
+warnings. Dry jump/landing and held-key timing checks remain in the existing suites.
 
 ## Intended world
 
@@ -193,11 +252,12 @@ starting hypotheses; the final configuration must enforce valid layer ordering.
   fixed; then compare visibility independently before changing island spacing.
 - Current walking speed is 4 world units/second. At block size 1, a flat
   256-block route takes about 64 seconds; 1,024 blocks about 4 minutes 16 seconds.
-  Ocean travel mechanics remain undecided. Do not treat walking speed as swimming
-  or boat speed. A debug flight route can assess scale without defining gameplay.
-- Water currently behaves as an opaque solid placeholder. Water rendering,
-  collision, swimming, and boats are separate decisions; ocean playability cannot
-  be concluded from the first shape experiment.
+  Basic swimming now uses 2 world units/second when fully submerged, with speed
+  blending near the surface; boats and final ocean travel tuning remain undecided.
+  Do not treat walking speed as swimming speed.
+- Water is now translucent and passable, with basic buoyancy and swimming.
+  Evaluate swimming routes separately from walking; boats and final ocean travel
+  tuning still need their own experiments.
 - The current horizontal world limit is 6,144 blocks per side and generated
   vertical range is [-128, 384). These constrain current playtests, not the
   intended hierarchy. Sample larger planning maps without materializing them;

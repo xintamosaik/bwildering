@@ -8,14 +8,14 @@ invalidation, or recovery is the behaviour under test.
 | --- | --- |
 | World size | Test the smallest supported size, the documented maximum, and the first invalid sizes. Rejected replacement must preserve the old world. Keep these separate from the default gameplay size. |
 | Application startup | Check configured bounds, safe spawn, grounding/jumping, and visible terrain. Mesh-slot counts do not establish that terrain renders. |
-| Terrain generation | Check same-seed repeatability, different-seed variation, continuous regions, filled columns, valid materials, and non-flat hills. Check exposed mesh surface area rather than a fixed vertex total. Exact hashes would impose a separate terrain-format compatibility requirement that this game does not currently have. |
+| Terrain generation | Check seed independence of the current flat layers, continuous regions, exact dark-stone/stone/water boundaries, valid materials, and hidden water/water faces. Add different-seed variation and relief checks when landmasses are implemented. Check exposed mesh surface area rather than a fixed vertex total. Exact hashes would impose a separate terrain-format compatibility requirement that this game does not currently have. |
 | Palette | Check valid, distinct colours and invalid-input behaviour. Exact RGB values are an art choice. |
 | Meshing | Use small, explicitly constructed shapes for exact geometry assertions. Counts such as 36 vertices for one cube belong here, rather than in application smoke tests. |
 | Dirty sections | Check the identities of affected sections, including unaffected neighbours and identical writes. The right number of wrong neighbours is still a bug. |
 | Allocation failure | Discover allocation points from a successful run. Each injected failure must leave either the complete new world or the intact old world. Check contents as well as transactional ownership. |
 | Menu interaction | Find the displayed control by label, then dispatch a real mouse callback at its position. Exercise different window sizes and pixel densities. Keep reachable terrain in the fixture so leaked gameplay clicks would change it. |
 | Pausing | Compare gameplay values explicitly, rather than raw struct bytes. Verify frozen movement/view, input isolation, and resumed movement. |
-| Rendering | Inspect depth coverage to distinguish geometry from a coloured background. Compare views during movement/jumping and after landing, without storing driver-specific screenshots. |
+| Rendering | Inspect depth coverage to distinguish geometry from a coloured background. Compare views during movement/jumping and after landing, without storing driver-specific screenshots. Water tests compare color changes while preserving opaque depth and restoring GL blend/cull/depth-write state. |
 | Streaming | Compare procedural reads and meshes with fully generated terrain. Verify edits made before materialization, eviction/regeneration, revisits, allocation-failure retries, and bounded residency as the view moves or shrinks. |
 
 Named fixture sizes, such as the 192-block generator scenario, are independent of
@@ -64,7 +64,7 @@ layout used to locate displayed controls. It does not verify GLFW's delivery of 
 keyboard/mouse events or the visual appearance of menu text.
 
 Tick timing is checked in `test_game` and the headless menu suite. Live input
-samples latest held movement/run/crouch and pending aim for every catch-up tick.
+samples latest held movement/run/crouch/swimUp and pending aim for every catch-up tick.
 Jump/place/remove each occupy one pending flag: repeated presses coalesce, zero-tick
 frames retain them, and the next tick consumes them once. Commands supplied directly
 to Game are already assigned to ticks. Tick order is aim, movement/collision,
@@ -169,3 +169,8 @@ GPU query timings. Precision fixtures cover distant signed coordinates, section
 seams, translated origins, scale 2.5, camera movement and edits. See
 [issue 007](../issues/007-section-local-vertices.md) for raw captures, limits and
 the completed defer decision. This experiment does not change production vertices.
+
+Water movement checks in `test_game` cover buoyancy, slower travel, view-directed
+swimming, held Space ascent, Shift diving, drag on entry, solid floor/ceiling
+collision, leaving water, and stable floating at several update rates. Input
+checks keep held swimming separate from a one-shot land jump.

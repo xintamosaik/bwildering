@@ -24,20 +24,25 @@ static void test_lifetime_and_spawn(void) {
     assert(world->terrainSeed == configs[i].seed);
     assert(world->blocksPerSide == configs[i].blocksPerSide);
     assert(world->blockSize == configs[i].blockSize);
+    assert(world_get_block(world, 0, 0, 0) == BLOCK_TYPE_WATER);
+    assert(!block_is_solid(BLOCK_TYPE_WATER));
+    assert(world_support_height(world, world->origin.x, world->origin.z) ==
+           configs[i].center.y + (float)TERRAIN_STONE_TOP_Y * configs[i].blockSize);
     assert(!player->grounded && game.tick == 0);
     const Vec3 spawn = player->position;
     assert(isfinite(spawn.y) && spawn.y == configs[i].center.y);
-    game_step(&game, (GameCommand){.yaw = -90.0f});
-    assert(player->position.y < spawn.y && player->velocityY < 0.0f);
-    for (int tick = 0; tick < 600 && !player->grounded; tick++)
+    for (int tick = 0; tick < 600; tick++)
       game_step(&game, (GameCommand){.yaw = -90.0f});
-    const float surfaceY = configs[i].center.y + (float)TERRAIN_STONE_TOP_Y * configs[i].blockSize;
-    assert(player->grounded && fabsf(player->position.y - surfaceY) < 0.001f);
-    game_step(&game, (GameCommand){.yaw = -90.0f, .movement.jump = 1});
-    assert(!player->grounded && player->position.y > surfaceY && player->velocityY > 0.0f);
-    for (int tick = 0; tick < 600 && !player->grounded; tick++)
+    const float waterY = configs[i].center.y + (float)(TERRAIN_SEA_LEVEL + 1) * configs[i].blockSize;
+    assert(!player->grounded && player->position.y > waterY - 1.0f && player->position.y < waterY);
+    assert(fabsf(player->velocityY) < 0.01f);
+    const float floatingY = player->position.y;
+    for (int tick = 0; tick < 60; tick++)
+      game_step(&game, (GameCommand){.yaw = -90.0f, .movement.swimUp = 1});
+    assert(!player->grounded && player->position.y > floatingY);
+    for (int tick = 0; tick < 600; tick++)
       game_step(&game, (GameCommand){.yaw = -90.0f});
-    assert(player->grounded && fabsf(player->position.y - surfaceY) < 0.001f);
+    assert(fabsf(player->position.y - floatingY) < 0.04f);
     const float initialZ = player->position.z;
     for (int tick = 0; tick < 10; tick++)
       game_step(&game, (GameCommand){.yaw = -90.0f, .movement.forward = 1.0f});
@@ -63,6 +68,94 @@ static void setup_flat(Game *const game) {
       assert(world_set_block(&game->world, x, -1, z, BLOCK_TYPE_STONE));
   game->player = (Player){.position = {0.5f, 0.0f, 0.5f},
       .eyeHeight = 1.0f, .grounded = 1, .aim = game_aim(-90.0f, 0.0f)};
+}
+
+static void setup_pool(Game *const game) {
+  setup_flat(game);
+  for (int x = -8; x < 8; x++)
+    for (int y = 0; y < 4; y++)
+      for (int z = -8; z < 8; z++)
+        assert(world_set_block(&game->world, x, y, z, BLOCK_TYPE_WATER));
+  game->player.position.y = 1.0f;
+  game->player.grounded = 0;
+}
+
+static void test_water_movement(void) {
+  Game wet = {0}, dry = {0};
+  setup_pool(&wet);
+  setup_flat(&dry);
+  const float startZ = wet.player.position.z;
+  for (int tick = 0; tick < 60; tick++) {
+    const GameCommand command = {.yaw = -90.0f, .movement.forward = 1.0f};
+    game_step(&wet, command);
+    game_step(&dry, command);
+  }
+  assert(startZ - wet.player.position.z > 1.5f);
+  assert(startZ - wet.player.position.z < (startZ - dry.player.position.z) * 0.65f);
+
+  wet.player = (Player){.position = {0.5f, 2.0f, 0.5f}, .eyeHeight = 1.0f};
+  for (int tick = 0; tick < 30; tick++)
+    game_step(&wet, (GameCommand){.yaw = -90.0f, .pitch = -60.0f, .movement.forward = 1.0f});
+  assert(wet.player.position.y < 1.8f && wet.player.position.z < 0.3f);
+
+  wet.player = (Player){.position = {0.5f, 1.0f, 0.5f}, .eyeHeight = 1.0f};
+  for (int tick = 0; tick < 60; tick++)
+    game_step(&wet, (GameCommand){.yaw = -90.0f, .movement.swimUp = 1});
+  assert(wet.player.position.y > 2.5f);
+  for (int tick = 0; tick < 120; tick++)
+    game_step(&wet, (GameCommand){.yaw = -90.0f, .movement.crouch = 1});
+  assert(wet.player.position.y < 0.01f && wet.player.position.y >= -0.001f);
+  assert(wet.player.grounded && !wet.player.crouching);
+  game_step(&wet, (GameCommand){.yaw = -90.0f, .movement.swimUp = 1});
+  assert(!wet.player.grounded && wet.player.position.y > 0.0f);
+
+  wet.player.position.y = 5.0f;
+  wet.player.velocityY = -20.0f;
+  for (int tick = 0; tick < 10; tick++)
+    game_step(&wet, (GameCommand){.yaw = -90.0f});
+  assert(wet.player.velocityY > -5.0f && wet.player.position.y > 2.5f);
+  wet.player.position.y = 1.0f;
+  wet.player.velocityY = 0.0f;
+
+  /* Solid ceilings still stop swimming, and holding Space in air cannot fly. */
+  for (int x = -8; x < 8; x++)
+    for (int z = -8; z < 8; z++)
+      assert(world_set_block(&wet.world, x, 3, z, BLOCK_TYPE_STONE));
+  for (int tick = 0; tick < 120; tick++)
+    game_step(&wet, (GameCommand){.yaw = -90.0f, .movement.swimUp = 1});
+  assert(wet.player.position.y <= 1.501f);
+  wet.player.position.y = 5.0f;
+  wet.player.velocityY = 0.0f;
+  game_step(&wet, (GameCommand){.yaw = -90.0f, .movement.swimUp = 1});
+  assert(wet.player.position.y < 5.0f && wet.player.velocityY < 0.0f);
+  game_destroy(&wet);
+  game_destroy(&dry);
+}
+
+static void test_water_float_at_different_rates(void) {
+  Game game = {0};
+  setup_pool(&game);
+  const int rates[] = {30, 60, 144};
+  float previousY = 0.0f;
+  for (size_t rate = 0; rate < sizeof(rates) / sizeof(*rates); rate++) {
+    Player player = {.position = {-0.1f, 1.0f, -0.1f}, .velocityY = -20.0f,
+                     .eyeHeight = 1.0f, .aim = game_aim(-90.0f, 0.0f)};
+    for (int tick = 0; tick < rates[rate] * 12; tick++)
+      update_player(&player, (PlayerInput){0}, 1.0f / (float)rates[rate], &game.world);
+    assert(!player.grounded && player.position.y > 3.0f && player.position.y < 4.0f);
+    assert(player_eye_position(&player).y > 4.0f && fabsf(player.velocityY) < 0.01f);
+    if (rate) assert(fabsf(player.position.y - previousY) < 0.03f);
+    previousY = player.position.y;
+  }
+  Player longFrame = {.position = {0.5f, 1.0f, 0.5f}, .eyeHeight = 1.0f,
+                      .aim = game_aim(-90.0f, 0.0f)};
+  Player shortFrames = longFrame;
+  update_player(&longFrame, (PlayerInput){.swimUp = 1}, 2.0f, &game.world);
+  for (int tick = 0; tick < 120; tick++)
+    update_player(&shortFrames, (PlayerInput){.swimUp = 1}, GAME_TICK_SECONDS, &game.world);
+  assert(longFrame.position.y < 4.5f);
+  assert(fabsf(longFrame.position.y - shortFrames.position.y) < 0.03f);
+  game_destroy(&game);
 }
 
 static void test_commands_and_view(void) {
@@ -179,6 +272,8 @@ int main(void) {
   test_movement_before_edit();
   test_replay_schedules();
   test_lifetime_and_spawn();
+  test_water_movement();
+  test_water_float_at_different_rates();
   test_commands_and_view();
   puts("Headless game ownership tests passed.");
   return 0;

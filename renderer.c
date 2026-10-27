@@ -1,6 +1,7 @@
 #include "renderer_internal.h"
 #include "storage.h"
 #include "view_settings.h"
+#include "water_shader.h"
 #include <GLFW/glfw3.h>
 #include <limits.h>
 #include <math.h>
@@ -16,14 +17,15 @@
 #endif
 
 #pragma region Rendering
-RENDERER_PRIVATE GLuint compile_shader(const GLenum type, const char *const source) {
+static GLuint compile_shader_sources(const GLenum type, const char *const *const sources,
+                                      const GLsizei count) {
   const GLuint shader = glCreateShader(type);
   if (shader == 0) {
     fprintf(stderr, "Failed to create shader\n");
     return 0;
   }
 
-  glShaderSource(shader, 1, &source, NULL);
+  glShaderSource(shader, count, sources, NULL);
   glCompileShader(shader);
 
   GLint success;
@@ -37,6 +39,10 @@ RENDERER_PRIVATE GLuint compile_shader(const GLenum type, const char *const sour
   }
 
   return shader;
+}
+
+RENDERER_PRIVATE GLuint compile_shader(const GLenum type, const char *const source) {
+  return compile_shader_sources(type, &source, 1);
 }
 
 RENDERER_PRIVATE GLuint create_shader_program(void) {
@@ -54,6 +60,10 @@ RENDERER_PRIVATE GLuint create_shader_program(void) {
       "#version 330 core\n"
       "out vec4 FragColor;\n"
       "uniform vec3 color;\n"
+      "uniform int waterPass;\n"
+      "uniform vec4 waterView;\n"
+      "uniform float waterSurface;\n"
+      "vec4 shadeWater(vec3 position, vec3 normal, vec4 cameraTime);\n"
       "uniform vec4 blockGrid; // World origin and inverse block size; zero disables detail for UI.\n"
       "in vec3 worldPosition;\n"
       "uint blockHash(ivec3 cell) {\n"
@@ -65,6 +75,7 @@ RENDERER_PRIVATE GLuint create_shader_program(void) {
       "void main() {\n"
       "    vec3 normal = normalize(cross(dFdx(worldPosition), dFdy(worldPosition)));\n"
       "    if (!gl_FrontFacing) normal = -normal;\n"
+      "    if (waterPass != 0) { FragColor = shadeWater(worldPosition, normal, waterView); return; }\n"
       "    float light = 0.45 + 0.55 * max(dot(normal, normalize(vec3(-0.4, 1.0, 0.3))), 0.0);\n"
       "    vec3 tint = color;\n"
       "    if (blockGrid.w > 0.0) {\n"
@@ -85,14 +96,20 @@ RENDERER_PRIVATE GLuint create_shader_program(void) {
       "        float accent = max(rim.x, rim.y) * fade * (1.0 - edge);\n"
       "        tint *= 1.0 - 0.10 * edge + 0.025 * accent;\n"
       "    }\n"
-      "    FragColor = vec4(tint * light, 1.0);\n"
+      "    vec3 shaded = tint * light;\n"
+      "    if (waterView.y < waterSurface && worldPosition.y < waterSurface) {\n"
+      "        float fog = 1.0 - exp(-length(waterView.xyz - worldPosition) * blockGrid.w * 0.035);\n"
+      "        shaded = mix(shaded, vec3(0.075, 0.28, 0.33), fog);\n"
+      "    }\n"
+      "    FragColor = vec4(shaded, 1.0);\n"
       "}\n";
 
   const GLuint vertexShader = compile_shader(GL_VERTEX_SHADER, vertexShaderSource);
   if (vertexShader == 0)
     return 0;
 
-  const GLuint fragmentShader = compile_shader(GL_FRAGMENT_SHADER, fragmentShaderSource);
+  const char *const fragmentSources[] = {fragmentShaderSource, WATER_SHADER_GLSL};
+  const GLuint fragmentShader = compile_shader_sources(GL_FRAGMENT_SHADER, fragmentSources, 2);
   if (fragmentShader == 0) {
     glDeleteShader(vertexShader);
     return 0;
@@ -190,6 +207,14 @@ int renderer_init(Renderer *const renderer) {
     renderer_destroy(renderer);
     return 0;
   }
+  renderer->waterPassLocation = glGetUniformLocation(renderer->program, "waterPass");
+  renderer->waterViewLocation = glGetUniformLocation(renderer->program, "waterView");
+  renderer->waterSurfaceLocation = glGetUniformLocation(renderer->program, "waterSurface");
+  if (renderer->waterPassLocation < 0 || renderer->waterViewLocation < 0 || renderer->waterSurfaceLocation < 0) {
+    fprintf(stderr, "Failed to locate water uniforms\n");
+    renderer_destroy(renderer);
+    return 0;
+  }
 
   return 1;
 }
@@ -265,6 +290,8 @@ static int mesh_identity_compare(const SectionGpuMesh *const m, const int x, con
 static int renderer_prepare_world(Renderer *const renderer, const World *const world) {
   renderer->worldOrigin = world->origin;
   renderer->blockSize = world->blockSize;
+  renderer->waterSurface = world->hasOcean ?
+      world->origin.y + (float)world->waterTopY * world->blockSize : -1.0e30f;
   size_t i = 0;
   int same = renderer->meshCount == world->sectionCount;
   for (size_t c = 0; same && c < world->chunkCount; c++)
@@ -552,12 +579,82 @@ RENDERER_PRIVATE int renderer_collect_draw_meshes(Renderer *const renderer, cons
   return 1;
 }
 
+static float water_distance(const Renderer *const renderer, const size_t index, const Vec3 eye) {
+  const SectionGpuMesh *const mesh = &renderer->meshes[index];
+  const Vec3 center = vec3_scale(vec3_add(mesh->boundsMin, mesh->boundsMax), 0.5f);
+  const Vec3 delta = vec3_sub(center, eye);
+  return vec3_dot(delta, delta);
+}
+
+/* Min-heap sorting gives far-to-near water submission without another buffer. */
+static void water_sift(Renderer *const renderer, size_t root, const size_t count, const Vec3 eye) {
+  size_t *const indices = renderer->drawMeshes;
+  while (root < count / 2) {
+    size_t child = root * 2 + 1;
+    if (child + 1 < count && water_distance(renderer, indices[child + 1], eye) <
+                            water_distance(renderer, indices[child], eye)) child++;
+    if (water_distance(renderer, indices[root], eye) <= water_distance(renderer, indices[child], eye)) break;
+    const size_t swap = indices[root]; indices[root] = indices[child]; indices[child] = swap;
+    root = child;
+  }
+}
+
+static size_t water_sort(Renderer *const renderer, const Vec3 eye) {
+  size_t count = 0;
+  for (size_t i = 0; i < renderer->drawMeshCount; i++) {
+    if (!renderer->meshes[renderer->drawMeshes[i]].vertexCount[BLOCK_TYPE_WATER]) continue;
+    const size_t swap = renderer->drawMeshes[count];
+    renderer->drawMeshes[count++] = renderer->drawMeshes[i];
+    renderer->drawMeshes[i] = swap;
+  }
+  for (size_t root = count / 2; root > 0; root--) water_sift(renderer, root - 1, count, eye);
+  for (size_t end = count; end > 1; end--) {
+    const size_t swap = renderer->drawMeshes[0];
+    renderer->drawMeshes[0] = renderer->drawMeshes[end - 1];
+    renderer->drawMeshes[end - 1] = swap;
+    water_sift(renderer, 0, end - 1, eye);
+  }
+  return count;
+}
+
+typedef struct {
+  GLboolean blend, cull, depthWrite;
+  GLint srcRGB, dstRGB, srcAlpha, dstAlpha, equationRGB, equationAlpha;
+} WaterDrawState;
+
+static WaterDrawState water_begin(void) {
+  WaterDrawState state = {.blend = glIsEnabled(GL_BLEND), .cull = glIsEnabled(GL_CULL_FACE)};
+  glGetBooleanv(GL_DEPTH_WRITEMASK, &state.depthWrite);
+  glGetIntegerv(GL_BLEND_SRC_RGB, &state.srcRGB);
+  glGetIntegerv(GL_BLEND_DST_RGB, &state.dstRGB);
+  glGetIntegerv(GL_BLEND_SRC_ALPHA, &state.srcAlpha);
+  glGetIntegerv(GL_BLEND_DST_ALPHA, &state.dstAlpha);
+  glGetIntegerv(GL_BLEND_EQUATION_RGB, &state.equationRGB);
+  glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &state.equationAlpha);
+  glEnable(GL_BLEND);
+  glBlendEquation(GL_FUNC_ADD);
+  glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+  glDepthMask(GL_FALSE);
+  glDisable(GL_CULL_FACE); /* Exposed water faces are also visible from underwater. */
+  return state;
+}
+
+static void water_end(const WaterDrawState state) {
+  glDepthMask(state.depthWrite);
+  glBlendFuncSeparate((GLenum)state.srcRGB, (GLenum)state.dstRGB,
+                      (GLenum)state.srcAlpha, (GLenum)state.dstAlpha);
+  glBlendEquationSeparate((GLenum)state.equationRGB, (GLenum)state.equationAlpha);
+  if (!state.blend) glDisable(GL_BLEND);
+  if (state.cull) glEnable(GL_CULL_FACE);
+}
+
 void render_world(Renderer *const renderer, const View camera) {
   renderer->drawMeshCount = 0;
   if (renderer->framebufferWidth <= 0 || renderer->framebufferHeight <= 0)
     return;
 
   glUseProgram(renderer->program);
+  glUniform1i(renderer->waterPassLocation, 0);
 
   mat4 proj, view, mvp;
   glUniform4f(renderer->blockGridLocation, renderer->worldOrigin.x, renderer->worldOrigin.y,
@@ -567,6 +664,9 @@ void render_world(Renderer *const renderer, const View camera) {
   const float viewDistance = renderer->viewDistance > 0 ? renderer->viewDistance : DEFAULT_VIEW_DISTANCE;
   mat4_perspective(75.0f * (3.14159f / 180.0f), aspectRatio, 0.05f, viewDistance, proj);
   const Vec3 cameraPosition = camera.eye;
+  glUniform4f(renderer->waterViewLocation, cameraPosition.x, cameraPosition.y,
+              cameraPosition.z, (float)fmod(glfwGetTime(), 4096.0));
+  glUniform1f(renderer->waterSurfaceLocation, renderer->waterSurface);
   const Vec3 target = vec3_add(cameraPosition, camera.front);
   mat4_lookat(cameraPosition, target, camera.up, view);
   mat4_multiply(proj, view, mvp);
@@ -576,16 +676,24 @@ void render_world(Renderer *const renderer, const View camera) {
   const int collected = renderer_collect_draw_meshes(renderer, cameraPosition, viewDistance, mvp);
   if (p && p->enabled) p->frame.visibility += perf_clock(p) - start;
 
-  /* Draw by material so all sections sharing a color use one uniform update. */
+  /* Opaque materials first; translucent water is the final material pass. */
   glUniformMatrix4fv(renderer->mvpLocation, 1, GL_FALSE, (float *)mvp);
-  for (int type = 0; type < BLOCK_TYPE_COUNT; type++) {
+  for (int pass = 0; pass < BLOCK_TYPE_COUNT; pass++) {
+    const int type = pass == BLOCK_TYPE_COUNT - 1 ? BLOCK_TYPE_WATER :
+        pass >= BLOCK_TYPE_WATER ? pass + 1 : pass;
     Vec3 color;
     if (!block_type_color((BlockType)type, &color))
       continue;
     glUniform3f(renderer->colorLocation, color.x, color.y, color.z);
     if (p && p->enabled) p->frame.materialChanges++;
-    const size_t count = collected ? renderer->drawMeshCount :
+    const size_t count = collected ? (type == BLOCK_TYPE_WATER ?
+        water_sort(renderer, cameraPosition) : renderer->drawMeshCount) :
         renderer->streamed ? renderer->visibleMeshCount : renderer->meshCount;
+    WaterDrawState waterState = {0};
+    if (type == BLOCK_TYPE_WATER && count) {
+      waterState = water_begin();
+      glUniform1i(renderer->waterPassLocation, 1);
+    }
     for (size_t n = 0; n < count; n++) {
       const size_t i = collected ? renderer->drawMeshes[n] :
           renderer->streamed ? renderer->visibleMeshes[n] : n;
@@ -603,6 +711,10 @@ void render_world(Renderer *const renderer, const View camera) {
         renderer->performance->frame.draws++;
         renderer->performance->frame.triangles += (size_t)mesh->vertexCount[type] / 3;
       }
+    }
+    if (type == BLOCK_TYPE_WATER && count) {
+      water_end(waterState);
+      glUniform1i(renderer->waterPassLocation, 0);
     }
   }
 }
@@ -653,6 +765,7 @@ UiDrawState ui_draw_begin(const UiDrawContext *const draw, const UiDrawMode mode
   }
   if (!menu) glDisable(GL_DEPTH_TEST);
   glUniform4f(renderer->blockGridLocation, 0.0f, 0.0f, 0.0f, 0.0f);
+  glUniform1f(renderer->waterSurfaceLocation, -1.0e30f);
   return state;
 }
 

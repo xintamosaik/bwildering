@@ -21,7 +21,7 @@ static const Vec3 BLOCK_TYPE_COLORS[BLOCK_TYPE_COUNT] = {
   [BLOCK_TYPE_SAND] = {.x = 0.68f, .y = 0.60f, .z = 0.44f},
 };
 
-static uint32_t next_random(uint32_t *state) {
+static uint32_t next_random(uint32_t *const state) {
   uint32_t value = *state;
   value ^= value << 13;
   value ^= value >> 17;
@@ -30,7 +30,7 @@ static uint32_t next_random(uint32_t *state) {
   return value;
 }
 
-uint32_t random_bounded(uint32_t *state, uint32_t upperBound) {
+uint32_t random_bounded(uint32_t *const state, const uint32_t upperBound) {
   if (state == NULL || upperBound == 0u)
     return 0u;
 
@@ -72,7 +72,7 @@ Vec3 vec3_cross(const Vec3 a, const Vec3 b) {
 
 float vec3_dot(const Vec3 a, const Vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
 
-int block_type_color(const BlockType type, Vec3 *color) {
+int block_type_color(const BlockType type, Vec3 *const color) {
   if (color == NULL || type < BLOCK_TYPE_GRASS || type >= BLOCK_TYPE_COUNT)
     return 0;
 
@@ -187,26 +187,26 @@ float terrain_noise(const int x, const int z, const int scale,
   return (a + (b - a) * tx) * (1.0f - tz) + (c + (d - c) * tx) * tz;
 }
 
-static int layer_thickness(float n, int lo, int hi) {
-  int v = lo + (int)(n * (hi - lo + 1));
+static int layer_thickness(const float n, const int lo, const int hi) {
+  const int v = lo + (int)(n * (hi - lo + 1));
   return v > hi ? hi : v;
 }
 
-TerrainColumn terrain_sample_column(uint32_t seed, int x, int z) {
+TerrainColumn terrain_sample_column(const uint32_t seed, const int x, const int z) {
   /* Compact relief: the main shapes are four times narrower than the initial
      tuning, giving the same height changes much steeper sides. */
-  float broad = terrain_noise(x, z, TERRAIN_RELIEF_SCALE, seed);
-  float region = terrain_noise(x, z, TERRAIN_MOUNTAIN_REGION_SCALE, seed ^ UINT32_C(0xA341316C));
+  const float broad = terrain_noise(x, z, TERRAIN_RELIEF_SCALE, seed);
+  const float region = terrain_noise(x, z, TERRAIN_MOUNTAIN_REGION_SCALE, seed ^ UINT32_C(0xA341316C));
   float mask = fmaxf(0, fminf(1, (region - 0.45f) / 0.35f));
   mask = mask * mask * (3 - 2 * mask);
-  float ridge = 1 - fabsf(2 * terrain_noise(x, z, TERRAIN_RIDGE_SCALE, seed ^ UINT32_C(0xC8013EA4)) - 1);
-  float hills = terrain_noise(x, z, TERRAIN_HILL_SCALE, seed ^ UINT32_C(0x7F4A7C15));
-  float detail = terrain_noise(x, z, TERRAIN_DETAIL_SCALE, seed ^ UINT32_C(0x912AC318));
+  const float ridge = 1 - fabsf(2 * terrain_noise(x, z, TERRAIN_RIDGE_SCALE, seed ^ UINT32_C(0xC8013EA4)) - 1);
+  const float hills = terrain_noise(x, z, TERRAIN_HILL_SCALE, seed ^ UINT32_C(0x7F4A7C15));
+  const float detail = terrain_noise(x, z, TERRAIN_DETAIL_SCALE, seed ^ UINT32_C(0x912AC318));
   int height = (int)floorf(TERRAIN_SURFACE_MIN + 175 * broad + 285 * mask * ridge + 18 * hills + 4 * detail);
   if (height > TERRAIN_SURFACE_MAX) height = TERRAIN_SURFACE_MAX;
-  float local = terrain_noise(x, z, 64, seed ^ UINT32_C(0xFE321AB7));
-  float deposit = terrain_noise(x, z, 128, seed ^ UINT32_C(0xBC219841));
-  int offset = (int)floorf(12 * local - 6);
+  const float local = terrain_noise(x, z, 64, seed ^ UINT32_C(0xFE321AB7));
+  const float deposit = terrain_noise(x, z, 128, seed ^ UINT32_C(0xBC219841));
+  const int offset = (int)floorf(12 * local - 6);
   TerrainColumn c = {.height = height, .material = BLOCK_TYPE_STONE,
                     .deepRockY = TERRAIN_DEEP_ROCK_Y + offset};
   if (height - 1 >= TERRAIN_SNOW_Y + offset) {
@@ -227,10 +227,10 @@ TerrainColumn terrain_sample_column(uint32_t seed, int x, int z) {
   return c;
 }
 
-BlockType terrain_column_block(TerrainColumn c, int y) {
+BlockType terrain_column_block(TerrainColumn c, const int y) {
   if (y < TERRAIN_BASE_Y || y >= c.height) return BLOCK_TYPE_EMPTY;
   if (y < c.deepRockY) return BLOCK_TYPE_DARK_STONE;
-  int depth = c.height - 1 - y;
+  const int depth = c.height - 1 - y;
   if (depth < c.snowDepth) return BLOCK_TYPE_SNOW;
   if (depth < c.sandDepth) return BLOCK_TYPE_SAND;
   if (depth < c.sandDepth + c.gravelDepth) return BLOCK_TYPE_GRAVEL;
@@ -240,12 +240,12 @@ BlockType terrain_column_block(TerrainColumn c, int y) {
 }
 
 /* The flat platform retains its global shuffle fixture. */
-int create_platform(World *world, int side, Vec3 center, float size, uint32_t seed) {
+int create_platform(World *const world, const int side, const Vec3 center, const float size, const uint32_t seed) {
   World result = {0};
   if (world == NULL || !world_init(&result, side, center, size))
     return 0;
   const int count = side * side;
-  uint8_t *tiles = malloc((size_t)count);
+  uint8_t *const tiles = malloc((size_t)count);
   if (tiles == NULL) {
     world_destroy(&result);
     return 0;
@@ -254,15 +254,15 @@ int create_platform(World *world, int side, Vec3 center, float size, uint32_t se
     tiles[i] = (uint8_t)(i % BLOCK_TYPE_COUNT);
   uint32_t state = seed == 0 ? UINT32_C(0x6D2B79F5) : seed;
   for (int i = count - 1; i > 0; i--) {
-    int j = (int)random_bounded(&state, (uint32_t)(i + 1));
-    uint8_t t = tiles[i];
+    const int j = (int)random_bounded(&state, (uint32_t)(i + 1));
+    const uint8_t t = tiles[i];
     tiles[i] = tiles[j];
     tiles[j] = t;
   }
   for (int x = 0; x < side; x++) {
     for (int z = 0; z < side; z++) {
-      int height = 0;
-      BlockType type = (BlockType)tiles[x * side + z];
+      const int height = 0;
+      const BlockType type = (BlockType)tiles[x * side + z];
       for (int y = -1; y < height; y++) {
         if (!world_set_block(&result, result.minX + x, y, result.minZ + z, type)) {
           free(tiles);
@@ -278,8 +278,8 @@ int create_platform(World *world, int side, Vec3 center, float size, uint32_t se
   return 1;
 }
 
-int create_terrain_region(World *world, int minX, int minZ, int side,
-                          Vec3 origin, float size, uint32_t seed) {
+int create_terrain_region(World *const world, const int minX, const int minZ, const int side,
+                          const Vec3 origin, const float size, const uint32_t seed) {
   World result = {0};
   if (!world || !world_init_region(&result, minX, minZ, side, origin, size))
     return 0;
@@ -297,14 +297,14 @@ int create_terrain_region(World *world, int minX, int minZ, int side,
   return 1;
 }
 
-int create_terrain(World *world, int side, Vec3 center, float size, uint32_t seed) {
+int create_terrain(World *const world, const int side, const Vec3 center, const float size, const uint32_t seed) {
   Vec3 origin = center;
   origin.x -= (float)(side % 2) * size * 0.5f;
   origin.z -= (float)(side % 2) * size * 0.5f;
   return create_terrain_region(world, -(side / 2), -(side / 2), side, origin, size, seed);
 }
 
-int create_terrain_streamed(World *world, int side, Vec3 center, float size, uint32_t seed) {
+int create_terrain_streamed(World *const world, const int side, const Vec3 center, const float size, const uint32_t seed) {
   World result = {0};
   if (!world || !world_init(&result, side, center, size))
     return 0;
@@ -319,14 +319,14 @@ int create_terrain_streamed(World *world, int side, Vec3 center, float size, uin
 static const float PLAYER_RADIUS = 0.25f;
 static const float PLAYER_HEIGHT = 1.5f;
 
-static int player_view_block(const World *world, const Player *player, float reach,
+static int player_view_block(const World *const world, const Player *const player, const float reach,
                              int hit[3], int adjacent[3]) {
   if (!world || !world->chunks || !player ||
       !isfinite(reach) || reach <= 0)
     return 0;
   Vec3 eye = player_eye_position(player);
   Vec3 front = player->camera.front;
-  double length = sqrt((double)front.x * front.x + (double)front.y * front.y +
+  const double length = sqrt((double)front.x * front.x + (double)front.y * front.y +
                        (double)front.z * front.z);
   if (!isfinite(length) || length == 0)
     return 0;
@@ -338,7 +338,7 @@ static int player_view_block(const World *world, const Player *player, float rea
   int cell[3], previous[3], step[3];
   for (int axis = 0; axis < 3; axis++) {
     origin[axis] /= world->blockSize;
-    double coordinate = floor(origin[axis]);
+    const double coordinate = floor(origin[axis]);
     if (!isfinite(coordinate) || coordinate <= INT_MIN || coordinate >= INT_MAX)
       return 0;
     previous[axis] = cell[axis] = (int)coordinate;
@@ -373,7 +373,7 @@ static int player_view_block(const World *world, const Player *player, float rea
   }
 }
 
-int player_place_block(World *world, const Player *player, BlockType type, float reach) {
+int player_place_block(World *const world, const Player *const player, const BlockType type, const float reach) {
   int hit[3], adjacent[3];
   if (!block_is_solid(type) || !player_view_block(world, player, reach, hit, adjacent))
     return 0;
@@ -390,14 +390,14 @@ int player_place_block(World *world, const Player *player, BlockType type, float
   return world_set_block(world, adjacent[0], adjacent[1], adjacent[2], type);
 }
 
-int player_remove_block(World *world, const Player *player, float reach) {
+int player_remove_block(World *const world, const Player *const player, const float reach) {
   int hit[3], adjacent[3];
   if (!player_view_block(world, player, reach, hit, adjacent))
     return 0;
   return world_set_block(world, hit[0], hit[1], hit[2], BLOCK_TYPE_EMPTY);
 }
 
-static int player_intersects(const World *world, Vec3 p) {
+static int player_intersects(const World *const world, Vec3 p) {
   if (world == NULL || world->chunks == NULL)
     return 0;
   const float size = world->blockSize;
@@ -427,9 +427,9 @@ static int player_intersects(const World *world, Vec3 p) {
   return 0;
 }
 
-static int move_axis(Player *player, const World *world, float distance, int axis) {
-  float size = world && world->chunks ? world->blockSize : 1.0f;
-  int steps = (int)fmaxf(1, ceilf(fabsf(distance) / fminf(size * 0.25f, 0.125f)));
+static int move_axis(Player *const player, const World *const world, const float distance, const int axis) {
+  const float size = world && world->chunks ? world->blockSize : 1.0f;
+  const int steps = (int)fmaxf(1, ceilf(fabsf(distance) / fminf(size * 0.25f, 0.125f)));
   for (int i = 0; i < steps; i++) {
     const Vec3 start = player->position;
     Vec3 next = start;
@@ -443,8 +443,8 @@ static int move_axis(Player *player, const World *world, float distance, int axi
     if (player_intersects(world, next)) {
       float low = 0, high = 1;
       for (int j = 0; j < 22; j++) {
-        float t = (low + high) * 0.5f;
-        Vec3 candidate = vec3_add(start, vec3_scale(vec3_sub(next, start), t));
+        const float t = (low + high) * 0.5f;
+        const Vec3 candidate = vec3_add(start, vec3_scale(vec3_sub(next, start), t));
         if (player_intersects(world, candidate))
           high = t;
         else
@@ -461,32 +461,32 @@ static int move_axis(Player *player, const World *world, float distance, int axi
   return 0;
 }
 
-Vec3 player_eye_position(const Player *player) {
+Vec3 player_eye_position(const Player *const player) {
   Vec3 eye = player->position;
   eye.y += player->eyeHeight - (player->crouching ? 0.3f : 0.0f);
   return eye;
 }
 
-int player_spawn_on_surface(Player *player, const World *world) {
+int player_spawn_on_surface(Player *const player, const World *const world) {
   if (!player || !world || !world->chunks)
     return 0;
   const float insetRadius = PLAYER_RADIUS - 0.00001f;
-  float loX = (player->position.x - insetRadius - world->origin.x) / world->blockSize;
-  float hiX = (player->position.x + insetRadius - world->origin.x) / world->blockSize;
-  float loZ = (player->position.z - insetRadius - world->origin.z) / world->blockSize;
-  float hiZ = (player->position.z + insetRadius - world->origin.z) / world->blockSize;
+  const float loX = (player->position.x - insetRadius - world->origin.x) / world->blockSize;
+  const float hiX = (player->position.x + insetRadius - world->origin.x) / world->blockSize;
+  const float loZ = (player->position.z - insetRadius - world->origin.z) / world->blockSize;
+  const float hiZ = (player->position.z + insetRadius - world->origin.z) / world->blockSize;
   if (!isfinite(loX) || !isfinite(hiX) || !isfinite(loZ) || !isfinite(hiZ) ||
       hiX <= world->minX || loX >= world->minX + world->blocksPerSide ||
       hiZ <= world->minZ || loZ >= world->minZ + world->blocksPerSide)
     return 0;
-  int firstX = (int)floorf(fmaxf(loX, world->minX));
-  int lastX = (int)ceilf(fminf(hiX, world->minX + world->blocksPerSide)) - 1;
-  int firstZ = (int)floorf(fmaxf(loZ, world->minZ));
-  int lastZ = (int)ceilf(fminf(hiZ, world->minZ + world->blocksPerSide)) - 1;
+  const int firstX = (int)floorf(fmaxf(loX, world->minX));
+  const int lastX = (int)ceilf(fminf(hiX, world->minX + world->blocksPerSide)) - 1;
+  const int firstZ = (int)floorf(fmaxf(loZ, world->minZ));
+  const int lastZ = (int)ceilf(fminf(hiZ, world->minZ + world->blocksPerSide)) - 1;
   float height = -INFINITY;
   for (int x = firstX; x <= lastX; x++)
     for (int z = firstZ; z <= lastZ; z++) {
-      float top = world_surface_height(world, world->origin.x + (x + 0.5f) * world->blockSize,
+      const float top = world_surface_height(world, world->origin.x + (x + 0.5f) * world->blockSize,
                                        world->origin.z + (z + 0.5f) * world->blockSize);
       if (isfinite(top)) height = fmaxf(height, top);
     }
@@ -497,14 +497,14 @@ int player_spawn_on_surface(Player *player, const World *world) {
   return 1;
 }
 
-void update_player(Player *player, PlayerInput input, float dt, const World *world) {
+void update_player(Player *const player, PlayerInput input, const float dt, const World *const world) {
   if (!player || !isfinite(dt) || dt <= 0 || dt > 10)
     return;
   player->crouching = input.crouch != 0;
-  float speed = 4.0f * (input.crouch ? 0.75f : input.run ? 1.5f : 1.0f);
-  Vec3 forward =
+  const float speed = 4.0f * (input.crouch ? 0.75f : input.run ? 1.5f : 1.0f);
+  const Vec3 forward =
       vec3_normalize((Vec3){player->camera.front.x, 0, player->camera.front.z});
-  Vec3 right = vec3_normalize(vec3_cross(forward, player->camera.up));
+  const Vec3 right = vec3_normalize(vec3_cross(forward, player->camera.up));
   Vec3 movement =
       vec3_add(vec3_scale(forward, input.forward), vec3_scale(right, input.strafe));
   if (vec3_dot(movement, movement) > 1)
@@ -521,9 +521,9 @@ void update_player(Player *player, PlayerInput input, float dt, const World *wor
   }
   if (player->grounded)
     return;
-  float gravity = GRAVITY * (player->velocityY <= 0 ? FALL_GRAVITY_MULTIPLIER : 1);
+  const float gravity = GRAVITY * (player->velocityY <= 0 ? FALL_GRAVITY_MULTIPLIER : 1);
   player->velocityY -= gravity * dt;
-  int falling = player->velocityY < 0;
+  const int falling = player->velocityY < 0;
   if (move_axis(player, world, player->velocityY * dt, 1)) {
     player->velocityY = 0;
     player->grounded = falling;

@@ -97,7 +97,7 @@ enum MenuAction {
 #pragma endregion
 
 #pragma region Input
-static void application_set_paused(Application *application, int paused) {
+static void application_set_paused(Application *const application, const int paused) {
   application->paused = paused;
   application->settingsOpen = 0;
   application->simulationAccumulator = 0;
@@ -121,7 +121,7 @@ typedef struct {
 
 /* Logical offsets from the menu centre; drawing, hit testing and automation
    all use these controls rather than maintaining separate layouts. */
-static int menu_buttons(const Application *application, MenuButton buttons[3]) {
+static int menu_buttons(const Application *const application, MenuButton buttons[3]) {
   if (application->settingsOpen) {
     buttons[0] = (MenuButton){MENU_DISTANCE_DOWN, "-", -116, -24, 48,
         application->renderer.viewDistance > MIN_VIEW_DISTANCE};
@@ -136,8 +136,8 @@ static int menu_buttons(const Application *application, MenuButton buttons[3]) {
   return 3;
 }
 
-static int pause_menu_button(const Application *application, double x, double y,
-                              int width, int height) {
+static int pause_menu_button(const Application *const application, const double x, const double y,
+                              const int width, const int height) {
   const float scale = fminf((float)width / 640.0f, (float)height / 480.0f);
   if (scale <= 0)
     return MENU_NONE;
@@ -146,7 +146,7 @@ static int pause_menu_button(const Application *application, double x, double y,
   MenuButton buttons[3];
   const int count = menu_buttons(application, buttons);
   for (int i = 0; i < count; i++) {
-    const MenuButton *button = &buttons[i];
+    const MenuButton *const button = &buttons[i];
     if (button->enabled && fabs(horizontal - button->centerX) <= button->width / 2 &&
         offset >= button->top && offset <= button->top + 48)
       return button->action;
@@ -154,11 +154,11 @@ static int pause_menu_button(const Application *application, double x, double y,
   return MENU_NONE;
 }
 
-static void mouse_button_callback(GLFWwindow *window, const int button, const int action, const int mods) {
+static void mouse_button_callback(GLFWwindow *const window, const int button, const int action, const int mods) {
   (void)mods;
   if (action != GLFW_PRESS)
     return;
-  Application *application = glfwGetWindowUserPointer(window);
+  Application *const application = glfwGetWindowUserPointer(window);
   if (application && application->paused) {
     if (button != GLFW_MOUSE_BUTTON_LEFT)
       return;
@@ -198,13 +198,13 @@ static void mouse_button_callback(GLFWwindow *window, const int button, const in
   }
 }
 
-static void mouse_callback(GLFWwindow *window, const double position_x, const double position_y) {
+static void mouse_callback(GLFWwindow *const window, const double position_x, const double position_y) {
   if (glfwGetInputMode(window, GLFW_CURSOR) != GLFW_CURSOR_DISABLED)
     return;
-  Application *application = glfwGetWindowUserPointer(window);
+  Application *const application = glfwGetWindowUserPointer(window);
   if (application == NULL)
     return;
-  MouseInput *mouseInput = &application->mouseInput;
+  MouseInput *const mouseInput = &application->mouseInput;
   if (mouseInput->firstMouse) {
     mouseInput->lastX = position_x;
     mouseInput->lastY = position_y;
@@ -218,7 +218,7 @@ static void mouse_callback(GLFWwindow *window, const double position_x, const do
   mouseInput->lastY = position_y;
 }
 
-static PlayerInput read_player_input(GLFWwindow *window) {
+static PlayerInput read_player_input(GLFWwindow *const window) {
   PlayerInput input = {0};
   input.forward = (float)((glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) -
                           (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS));
@@ -235,9 +235,9 @@ static PlayerInput read_player_input(GLFWwindow *window) {
 #pragma endregion
 
 #pragma region Camera
-static void update_camera_front(Camera *camera) {
-  float radYaw = camera->yaw * 3.14159265f / 180.0f;
-  float radPitch = camera->pitch * 3.14159265f / 180.0f;
+static void update_camera_front(Camera *const camera) {
+  const float radYaw = camera->yaw * 3.14159265f / 180.0f;
+  const float radPitch = camera->pitch * 3.14159265f / 180.0f;
 
   camera->front.x = cosf(radYaw) * cosf(radPitch);
   camera->front.y = sinf(radPitch);
@@ -245,7 +245,7 @@ static void update_camera_front(Camera *camera) {
   camera->front = vec3_normalize(camera->front);
 }
 
-static void update_camera(Camera *camera, MouseInput *input) {
+static void update_camera(Camera *const camera, MouseInput *const input) {
   const float sensitivity = 0.1f;
   camera->yaw += (float)input->deltaX * sensitivity;
   camera->pitch += (float)input->deltaY * sensitivity;
@@ -287,7 +287,7 @@ static GLuint compile_shader(const GLenum type, const char *source) {
 }
 
 static GLuint create_shader_program(void) {
-  const char *vertexShaderSource =
+  const char *const vertexShaderSource =
       "#version 330 core\n"
       "layout (location = 0) in vec3 aPos;\n"
       "uniform mat4 mvp;\n"
@@ -297,7 +297,7 @@ static GLuint create_shader_program(void) {
       "    gl_Position = mvp * vec4(aPos, 1.0);\n"
       "}\n";
 
-  const char *fragmentShaderSource =
+  const char *const fragmentShaderSource =
       "#version 330 core\n"
       "out vec4 FragColor;\n"
       "uniform vec3 color;\n"
@@ -346,7 +346,7 @@ static GLuint create_shader_program(void) {
   return program;
 }
 
-static void section_gpu_mesh_destroy(SectionGpuMesh *mesh) {
+static void section_gpu_mesh_destroy(SectionGpuMesh *const mesh) {
   if (mesh->vao)
     glDeleteVertexArrays(1, &mesh->vao);
   if (mesh->vbo)
@@ -354,7 +354,7 @@ static void section_gpu_mesh_destroy(SectionGpuMesh *mesh) {
   *mesh = (SectionGpuMesh){0};
 }
 
-static void renderer_destroy(Renderer *renderer) {
+static void renderer_destroy(Renderer *const renderer) {
   for (size_t i = 0; i < renderer->meshCount; i++)
     section_gpu_mesh_destroy(&renderer->meshes[i]);
   free(renderer->meshes);
@@ -369,7 +369,7 @@ static void renderer_destroy(Renderer *renderer) {
   *renderer = (Renderer){0};
 }
 
-static int renderer_init(Renderer *renderer) {
+static int renderer_init(Renderer *const renderer) {
   *renderer = (Renderer){.viewDistance = DEFAULT_VIEW_DISTANCE};
   renderer->program = create_shader_program();
   if (renderer->program == 0)
@@ -407,8 +407,8 @@ static int renderer_init(Renderer *renderer) {
 }
 
 /* Upload into a temporary object: failures retain the previous GPU mesh. */
-static int renderer_upload_section_mesh(SectionGpuMesh *target,
-                                        const SectionMesh *mesh, Performance *p) {
+static int renderer_upload_section_mesh(SectionGpuMesh *const target,
+                                        const SectionMesh *const mesh, Performance *const p) {
   if (!mesh || (mesh->vertexCount && !mesh->vertices) ||
       mesh->vertexCount > (size_t)PTRDIFF_MAX / sizeof(*mesh->vertices)) return 0;
   SectionGpuMesh result = {
@@ -466,7 +466,7 @@ static int renderer_upload_section_mesh(SectionGpuMesh *target,
    Missing/empty sections retire geometry without allocating a VAO/VBO for air.
    Records are keyed by explicit signed section identity. Residency changes
    merge the ordered collection and retire departing geometry. */
-static int mesh_identity_compare(const SectionGpuMesh *m, int x, int y, int z) {
+static int mesh_identity_compare(const SectionGpuMesh *const m, const int x, const int y, const int z) {
   if (m->chunkX != x) return m->chunkX < x ? -1 : 1;
   if (m->chunkZ != z) return m->chunkZ < z ? -1 : 1;
   return (m->sectionY > y) - (m->sectionY < y);
@@ -474,20 +474,20 @@ static int mesh_identity_compare(const SectionGpuMesh *m, int x, int y, int z) {
 
 /* Resident records follow chunk X/Z and signed section Y, allowing a linear
    merge when residency changes. GPU handles move without replacing geometry. */
-static int renderer_prepare_world(Renderer *renderer, const World *world) {
+static int renderer_prepare_world(Renderer *const renderer, const World *const world) {
   size_t i = 0;
   int same = renderer->meshCount == world->sectionCount;
   for (size_t c = 0; same && c < world->chunkCount; c++)
     for (const Subchunk *s = world->chunks[c].sections; s; s = s->next)
       if (mesh_identity_compare(&renderer->meshes[i++], world->chunks[c].x, s->sectionY, world->chunks[c].z)) { same = 0; break; }
   if (same) return 1;
-  double start = perf_clock(renderer->performance);
-  SectionGpuMesh *records = world->sectionCount ? calloc(world->sectionCount, sizeof(*records)) : NULL;
+  const double start = perf_clock(renderer->performance);
+  SectionGpuMesh *const records = world->sectionCount ? calloc(world->sectionCount, sizeof(*records)) : NULL;
   if (world->sectionCount && !records) return 0;
   size_t old = 0, n = 0;
   for (size_t c = 0; c < world->chunkCount; c++)
     for (const Subchunk *s = world->chunks[c].sections; s; s = s->next) {
-      int x = world->chunks[c].x, z = world->chunks[c].z;
+      const int x = world->chunks[c].x, z = world->chunks[c].z;
       while (old < renderer->meshCount && mesh_identity_compare(&renderer->meshes[old], x, s->sectionY, z) < 0)
         section_gpu_mesh_destroy(&renderer->meshes[old++]);
       if (old < renderer->meshCount && !mesh_identity_compare(&renderer->meshes[old], x, s->sectionY, z))
@@ -503,9 +503,9 @@ static int renderer_prepare_world(Renderer *renderer, const World *world) {
   return 1;
 }
 
-static int renderer_sync_section(const Renderer *renderer, World *world, const size_t i) {
-  SectionGpuMesh *gpu = &renderer->meshes[i];
-  Subchunk *section = world_section_mut(world, gpu->chunkX, gpu->sectionY, gpu->chunkZ);
+static int renderer_sync_section(const Renderer *const renderer, World *const world, const size_t i) {
+  SectionGpuMesh *const gpu = &renderer->meshes[i];
+  Subchunk *const section = world_section_mut(world, gpu->chunkX, gpu->sectionY, gpu->chunkZ);
   if (!section) {
     /* A regenerated world can omit a section that previously had a mesh. */
     section_gpu_mesh_destroy(gpu);
@@ -514,13 +514,13 @@ static int renderer_sync_section(const Renderer *renderer, World *world, const s
   if (!section->dirty)
     return 1;
   SectionMesh cpu = {0};
-  Performance *p = renderer->performance;
+  Performance *const p = renderer->performance;
   double start = perf_clock(p);
   int success = section_mesh_build(world, gpu->chunkX, gpu->sectionY, gpu->chunkZ, &cpu);
   if (p && p->enabled) {
     p->frame.mesh += perf_clock(p) - start;
     p->frame.rebuilds++;
-    size_t bytes = cpu.vertexCount * sizeof(*cpu.vertices);
+    const size_t bytes = cpu.vertexCount * sizeof(*cpu.vertices);
     if (bytes > p->frame.peakMeshBytes) p->frame.peakMeshBytes = bytes;
   }
   if (success) {
@@ -537,7 +537,7 @@ static int renderer_sync_section(const Renderer *renderer, World *world, const s
   return 1;
 }
 
-static int renderer_sync_world(Renderer *renderer, World *world) {
+static int renderer_sync_world(Renderer *const renderer, World *const world) {
   if (!renderer_prepare_world(renderer, world))
     return 0;
   for (size_t i = 0; i < renderer->meshCount; i++)
@@ -550,7 +550,7 @@ static int renderer_sync_world(Renderer *renderer, World *world) {
    one chunk of padding, clipped to world bounds. Retire before allocating the
    next neighbourhood, including chunks with no renderer records (failed sync).
    Edited CPU columns remain authoritative; their derived GPU data can retire. */
-static int renderer_sync_view(Renderer *renderer, World *world, const Player *player) {
+static int renderer_sync_view(Renderer *const renderer, World *const world, const Player *const player) {
   if (!world->proceduralTerrain)
     return renderer_sync_world(renderer, world);
   const Vec3 eye = player_eye_position(player);
@@ -574,34 +574,34 @@ static int renderer_sync_view(Renderer *renderer, World *world, const Player *pl
   renderer->visibleMeshCount = renderer->drawMeshCount = 0;
   /* Retire departing columns before collecting current section identities. */
   for (size_t i = 0; i < renderer->meshCount; i++) {
-    SectionGpuMesh *m = &renderer->meshes[i];
+    SectionGpuMesh *const m = &renderer->meshes[i];
     if (m->chunkX >= minX && m->chunkX <= maxX && m->chunkZ >= minZ && m->chunkZ <= maxZ) continue;
-    Subchunk *section = world_section_mut(world, m->chunkX, m->sectionY, m->chunkZ);
+    Subchunk *const section = world_section_mut(world, m->chunkX, m->sectionY, m->chunkZ);
     if (section) section->dirty = 1;
     if (renderer->performance && renderer->performance->enabled && m->vbo) {
       renderer->performance->frame.retiredMeshes++;
       for (int t = 0; t < BLOCK_TYPE_COUNT; t++)
         renderer->performance->frame.retiredBytes += (size_t)m->vertexCount[t] * sizeof(SurfaceVertex);
     }
-    int x = m->chunkX, y = m->sectionY, z = m->chunkZ;
+    const int x = m->chunkX, y = m->sectionY, z = m->chunkZ;
     section_gpu_mesh_destroy(m);
     m->chunkX = x; m->sectionY = y; m->chunkZ = z;
   }
   /* CPU residency must not depend on successful renderer metadata allocation. */
-  size_t evicted = world_release_chunks_outside(world, minX, maxX, minZ, maxZ);
+  const size_t evicted = world_release_chunks_outside(world, minX, maxX, minZ, maxZ);
   if (renderer->performance && renderer->performance->enabled)
     renderer->performance->frame.evictedChunks += evicted;
   for (int cx = minX; cx <= maxX; cx++)
     for (int cz = minZ; cz <= maxZ; cz++) {
-      double start = perf_clock(renderer->performance);
-      int ready = world_materialize_chunk(world, cx, cz);
+      const double start = perf_clock(renderer->performance);
+      const int ready = world_materialize_chunk(world, cx, cz);
       if (renderer->performance && renderer->performance->enabled)
         renderer->performance->frame.materialize += perf_clock(renderer->performance) - start;
       if (!ready) return 0;
     }
   if (!renderer_prepare_world(renderer, world)) return 0;
   if (renderer->meshCount > renderer->visibleMeshCapacity) {
-    size_t *indices = malloc(renderer->meshCount * sizeof(*indices));
+    size_t *const indices = malloc(renderer->meshCount * sizeof(*indices));
     if (!indices) return 0;
     free(renderer->visibleMeshes);
     renderer->visibleMeshes = indices;
@@ -610,7 +610,7 @@ static int renderer_sync_view(Renderer *renderer, World *world, const Player *pl
   renderer->streamed = 1;
   renderer->visibleMeshCount = 0;
   for (size_t i = 0; i < renderer->meshCount; i++) {
-    SectionGpuMesh *m = &renderer->meshes[i];
+    SectionGpuMesh *const m = &renderer->meshes[i];
     if (m->chunkX < minX || m->chunkX > maxX || m->chunkZ < minZ || m->chunkZ > maxZ) continue;
     renderer->visibleMeshes[renderer->visibleMeshCount++] = i;
     if (!renderer_sync_section(renderer, world, i)) return 0;
@@ -713,14 +713,14 @@ static const unsigned char *font_glyph(const char character) {
   }
 }
 
-static int build_text_vertices(const char *text, const float shadowOffset,
+static int build_text_vertices(const char *const text, const float shadowOffset,
                                const int framebufferWidth, const int framebufferHeight,
-                               float *vertices, const float x, const float y, const float scale) {
+                               float *const vertices, const float x, const float y, const float scale) {
   int vertexCount = 0;
 
   for (int characterIndex = 0; text[characterIndex] != '\0';
        characterIndex++) {
-    const unsigned char *glyph = font_glyph(text[characterIndex]);
+    const unsigned char *const glyph = font_glyph(text[characterIndex]);
     if (glyph == NULL)
       continue;
     const float originX = x + ((float)characterIndex * 18.0f + shadowOffset) * scale;
@@ -751,7 +751,7 @@ static int build_text_vertices(const char *text, const float shadowOffset,
   return vertexCount;
 }
 
-static void render_fps(const Renderer *renderer, const int fps) {
+static void render_fps(const Renderer *const renderer, const int fps) {
   if (renderer->framebufferWidth <= 0 || renderer->framebufferHeight <= 0)
     return;
 
@@ -786,15 +786,15 @@ static void render_fps(const Renderer *renderer, const int fps) {
   glEnable(GL_DEPTH_TEST);
 }
 
-static void draw_menu_vertices(const Renderer *renderer, const float *vertices,
+static void draw_menu_vertices(const Renderer *const renderer, const float *const vertices,
                                 const int count, const Vec3 color) {
   glBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr)(count * 3 * sizeof(float)), vertices);
   glUniform3f(renderer->colorLocation, color.x, color.y, color.z);
   glDrawArrays(GL_TRIANGLES, 0, count);
 }
 
-static void draw_menu_rectangle(const Renderer *renderer, float x, float y,
-                                 float width, float height, Vec3 color) {
+static void draw_menu_rectangle(const Renderer *const renderer, const float x, const float y,
+                                 const float width, const float height, const Vec3 color) {
   const float left = 2 * x / (float)renderer->framebufferWidth - 1;
   const float right = 2 * (x + width) / (float)renderer->framebufferWidth - 1;
   const float top = 1 - 2 * y / (float)renderer->framebufferHeight;
@@ -804,8 +804,8 @@ static void draw_menu_rectangle(const Renderer *renderer, float x, float y,
   draw_menu_vertices(renderer, vertices, 6, color);
 }
 
-static void draw_menu_text(const Renderer *renderer, const char *text,
-                            float centerX, float y, float scale, Vec3 color) {
+static void draw_menu_text(const Renderer *const renderer, const char *const text,
+                            const float centerX, const float y, const float scale, const Vec3 color) {
   float vertices[TEXT_MAX_CHARS * 5 * 7 * 6 * 3];
   const float width = ((float)strlen(text) * 18 - 4) * scale;
   const int count = build_text_vertices(text, 0, renderer->framebufferWidth,
@@ -814,8 +814,8 @@ static void draw_menu_text(const Renderer *renderer, const char *text,
   draw_menu_vertices(renderer, vertices, count, color);
 }
 
-static void render_performance(const Application *a) {
-  const Performance *p = &a->performance;
+static void render_performance(const Application *const a) {
+  const Performance *const p = &a->performance;
   if (!p->overlay) return;
   char lines[5][96];
   snprintf(lines[0], 96, "FRAME US AVG %.0f P95 %.0f MAX %.0f", p->average*1e6, p->p95*1e6, p->maximum*1e6);
@@ -830,7 +830,7 @@ static void render_performance(const Application *a) {
   glEnable(GL_DEPTH_TEST);
 }
 
-static void draw_menu_button(const Renderer *renderer, const char *label,
+static void draw_menu_button(const Renderer *const renderer, const char *const label,
                               const float centerX, const float top, const float width, const float scale,
                               const int hovered, const int enabled) {
   const Vec3 color = !enabled ? (Vec3){.x = 0.15f, .y = 0.18f, .z = 0.15f} :
@@ -841,8 +841,8 @@ static void draw_menu_button(const Renderer *renderer, const char *label,
                    enabled ? (Vec3){.x = 0.95f, .y = 0.98f, .z = 0.92f} : (Vec3){.x = 0.4f, .y = 0.45f, .z = 0.4f});
 }
 
-static void render_pause_menu(const Application *application) {
-  const Renderer *renderer = &application->renderer;
+static void render_pause_menu(const Application *const application) {
+  const Renderer *const renderer = &application->renderer;
   const int width = renderer->framebufferWidth;
   const int height = renderer->framebufferHeight;
   if (width <= 0 || height <= 0)
@@ -883,7 +883,7 @@ static void render_pause_menu(const Application *application) {
   MenuButton buttons[3];
   const int count = menu_buttons(application, buttons);
   for (int i = 0; i < count; i++) {
-    const MenuButton *button = &buttons[i];
+    const MenuButton *const button = &buttons[i];
     draw_menu_button(renderer, button->label, centerX + button->centerX * scale,
                        centerY + button->top * scale, button->width, scale,
                        hovered == button->action, button->enabled);
@@ -899,7 +899,7 @@ static void render_pause_menu(const Application *application) {
 
 /* Test the most positive AABB vertex against each homogeneous clip plane.
    No normalization is needed, and boxes crossing a plane remain visible. */
-static int section_in_frustum(const SectionGpuMesh *mesh, const mat4 mvp) {
+static int section_in_frustum(const SectionGpuMesh *const mesh, const mat4 mvp) {
   for(int axis=0;axis<3;axis++) for(int sign=-1;sign<=1;sign+=2) {
     const float a=mvp[3]+(float)sign*mvp[axis];
     const float b=mvp[7]+(float)sign*mvp[4+axis];
@@ -913,7 +913,7 @@ static int section_in_frustum(const SectionGpuMesh *mesh, const mat4 mvp) {
   return 1;
 }
 
-static int section_within_view_distance(const SectionGpuMesh *mesh, const Vec3 eye,
+static int section_within_view_distance(const SectionGpuMesh *const mesh, const Vec3 eye,
                                          const float distance) {
   const float dx = fmaxf(mesh->boundsMin.x - eye.x, fmaxf(0, eye.x - mesh->boundsMax.x));
   const float dy = fmaxf(mesh->boundsMin.y - eye.y, fmaxf(0, eye.y - mesh->boundsMax.y));
@@ -923,14 +923,14 @@ static int section_within_view_distance(const SectionGpuMesh *mesh, const Vec3 e
 
 /* Allocation failure leaves storage owned and reusable. The caller falls back
    to direct visibility checks for this frame, never a stale/partial draw list. */
-static int renderer_collect_draw_meshes(Renderer *renderer, Vec3 eye,
-                                        float distance, const mat4 mvp) {
+static int renderer_collect_draw_meshes(Renderer *const renderer, const Vec3 eye,
+                                        const float distance, const mat4 mvp) {
   renderer->drawMeshCount = 0;
   const size_t count = renderer->streamed ? renderer->visibleMeshCount : renderer->meshCount;
-  Performance *p = renderer->performance;
+  Performance *const p = renderer->performance;
   for (size_t n = 0; n < count; n++) {
-    size_t i = renderer->streamed ? renderer->visibleMeshes[n] : n;
-    const SectionGpuMesh *mesh = &renderer->meshes[i];
+    const size_t i = renderer->streamed ? renderer->visibleMeshes[n] : n;
+    const SectionGpuMesh *const mesh = &renderer->meshes[i];
     int nonempty = 0;
     for (int t = 0; t < BLOCK_TYPE_COUNT; t++)
       nonempty |= mesh->vertexCount[t] != 0;
@@ -942,7 +942,7 @@ static int renderer_collect_draw_meshes(Renderer *renderer, Vec3 eye,
     if (renderer->drawMeshCount == renderer->drawMeshCapacity) {
       size_t capacity = renderer->drawMeshCapacity ? renderer->drawMeshCapacity * 2 : 64;
       if (capacity > count) capacity = count;
-      size_t *indices = realloc(renderer->drawMeshes, capacity * sizeof(*indices));
+      size_t *const indices = realloc(renderer->drawMeshes, capacity * sizeof(*indices));
       if (!indices) {
         renderer->drawMeshCount = 0;
         if (p && p->enabled) p->frame.visibilityFallbacks++;
@@ -956,7 +956,7 @@ static int renderer_collect_draw_meshes(Renderer *renderer, Vec3 eye,
   return 1;
 }
 
-static void render_world(Renderer *renderer, const Player *player) {
+static void render_world(Renderer *const renderer, const Player *const player) {
   renderer->drawMeshCount = 0;
   if (renderer->framebufferWidth <= 0 || renderer->framebufferHeight <= 0)
     return;
@@ -973,9 +973,9 @@ static void render_world(Renderer *renderer, const Player *player) {
   mat4_lookat(cameraPosition, target, player->camera.up, view);
   mat4_multiply(proj, view, mvp);
 
-  Performance *p = renderer->performance;
-  double start = perf_clock(p);
-  int collected = renderer_collect_draw_meshes(renderer, cameraPosition, viewDistance, mvp);
+  Performance *const p = renderer->performance;
+  const double start = perf_clock(p);
+  const int collected = renderer_collect_draw_meshes(renderer, cameraPosition, viewDistance, mvp);
   if (p && p->enabled) p->frame.visibility += perf_clock(p) - start;
   glUniformMatrix4fv(renderer->mvpLocation, 1, GL_FALSE, (float *)mvp);
   for (int type = 0; type < BLOCK_TYPE_COUNT; type++) {
@@ -989,7 +989,7 @@ static void render_world(Renderer *renderer, const Player *player) {
     for (size_t n = 0; n < count; n++) {
       const size_t i = collected ? renderer->drawMeshes[n] :
           (renderer->streamed ? renderer->visibleMeshes[n] : n);
-      const SectionGpuMesh *mesh = &renderer->meshes[i];
+      const SectionGpuMesh *const mesh = &renderer->meshes[i];
       if (!mesh->vertexCount[type]) continue;
       if (!collected) {
         if (p && p->enabled) p->frame.distanceTests++;
@@ -1010,9 +1010,9 @@ static void render_world(Renderer *renderer, const Player *player) {
 #pragma endregion
 
 #pragma region Application
-static void framebuffer_size_callback(GLFWwindow *window, const int width,
+static void framebuffer_size_callback(GLFWwindow *const window, const int width,
                                       const int height) {
-  Application *application = glfwGetWindowUserPointer(window);
+  Application *const application = glfwGetWindowUserPointer(window);
   if (application == NULL)
     return;
   application->renderer.framebufferWidth = width;
@@ -1021,11 +1021,11 @@ static void framebuffer_size_callback(GLFWwindow *window, const int width,
 }
 
 /* Expensive metadata scans happen only at explicit capture/window boundaries. */
-static void performance_snapshot(Application *a) {
+static void performance_snapshot(Application *const a) {
   a->residentChunks = a->editedChunks = a->dirtySections = a->gpuBytes = 0;
   a->residentVoxelBytes = 0;
   for (size_t c = 0; c < a->world.chunkCount; c++) {
-    const Chunk *chunk = &a->world.chunks[c];
+    const Chunk *const chunk = &a->world.chunks[c];
     int resident = chunk->terrainReady;
     a->editedChunks += chunk->edited != 0;
     for (const Subchunk *section = chunk->sections; section; section = section->next) {
@@ -1041,7 +1041,7 @@ static void performance_snapshot(Application *a) {
       a->gpuBytes += (size_t)a->renderer.meshes[i].vertexCount[t] * sizeof(SurfaceVertex);
 }
 
-static void performance_report(Application *a, const char *phase) {
+static void performance_report(Application *const a, const char *const phase) {
   if (!a->performance.enabled) return;
   performance_snapshot(a);
   const PerformanceSnapshot snapshot = {
@@ -1069,7 +1069,7 @@ static void performance_report(Application *a, const char *phase) {
   perf_report(&a->performance, &snapshot, phase);
 }
 
-static void application_shutdown(Application *application) {
+static void application_shutdown(Application *const application) {
   world_destroy(&application->world);
   if (application->rendererInitialized) {
     renderer_destroy(&application->renderer);
@@ -1085,7 +1085,7 @@ static void application_shutdown(Application *application) {
   }
 }
 
-static int application_init(Application *application) {
+static int application_init(Application *const application) {
   *application = (Application){
       .player = {.position = {.x = 0.5f, .y = 0.0f, .z = 0.5f},
                  .grounded = 1,
@@ -1098,10 +1098,10 @@ static int application_init(Application *application) {
   };
 
   int worldSide = PLATFORM_BLOCKS_PER_SIDE;
-  const char *configuredSide = getenv("BW_WORLD_SIZE");
+  const char *const configuredSide = getenv("BW_WORLD_SIZE");
   if (configuredSide) {
     char *end;
-    long parsed = strtol(configuredSide, &end, 10);
+    const long parsed = strtol(configuredSide, &end, 10);
     if (end == configuredSide || *end || parsed < 1 || parsed > WORLD_MAX_BLOCKS_PER_SIDE) {
       fprintf(stderr, "BW_WORLD_SIZE must be an integer from 1 to %d\n",
               WORLD_MAX_BLOCKS_PER_SIDE);
@@ -1131,7 +1131,7 @@ static int application_init(Application *application) {
     application->glfwInitialized = 1;
   }
 
-  double startupStart = perf_clock(&application->performance);
+  const double startupStart = perf_clock(&application->performance);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
@@ -1182,7 +1182,7 @@ static int application_init(Application *application) {
   glfwSetFramebufferSizeCallback(application->window,
                                  framebuffer_size_callback);
 
-  double worldStart = perf_clock(&application->performance);
+  const double worldStart = perf_clock(&application->performance);
   if (!create_terrain_streamed(&application->world, worldSide, CENTER,
                        BLOCK_SIZE, WORLD_SEED)) {
     fprintf(stderr, "Failed to create voxel terrain\n");
@@ -1195,8 +1195,8 @@ static int application_init(Application *application) {
     for (int dx = -ring; dx <= ring && !found; dx++)
       for (int dz = -ring; dz <= ring && !found; dz++) {
         if (abs(dx) != ring && abs(dz) != ring) continue;
-        int x = (int)floorf((application->player.position.x - application->world.origin.x) / BLOCK_SIZE) + dx * 16;
-        int z = (int)floorf((application->player.position.z - application->world.origin.z) / BLOCK_SIZE) + dz * 16;
+        const int x = (int)floorf((application->player.position.x - application->world.origin.x) / BLOCK_SIZE) + dx * 16;
+        const int z = (int)floorf((application->player.position.z - application->world.origin.z) / BLOCK_SIZE) + dz * 16;
         if (x < application->world.minX || x >= application->world.minX + worldSide ||
             z < application->world.minZ || z >= application->world.minZ + worldSide) continue;
         TerrainColumn c = terrain_sample_column(application->world.terrainSeed, x, z);
@@ -1210,7 +1210,7 @@ static int application_init(Application *application) {
     application_shutdown(application);
     return 0;
   }
-  double syncStart = perf_clock(&application->performance);
+  const double syncStart = perf_clock(&application->performance);
   if (!renderer_sync_view(&application->renderer, &application->world, &application->player)) {
     fprintf(stderr,"Failed to build or upload section meshes\n");
     application_shutdown(application);
@@ -1233,8 +1233,8 @@ static int application_init(Application *application) {
   return 1;
 }
 
-static void application_update(Application *application) {
-  GLFWwindow *window = application->window;
+static void application_update(Application *const application) {
+  GLFWwindow *const window = application->window;
   const int wasPaused = application->paused;
   glfwPollEvents();
 
@@ -1300,8 +1300,8 @@ static void application_update(Application *application) {
   }
 }
 
-static void application_render(Application *application) {
-  Performance *p = &application->performance;
+static void application_render(Application *const application) {
+  Performance *const p = &application->performance;
   double start = perf_clock(p);
   glClearColor(0.15f, 0.15f, 0.2f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -1320,8 +1320,8 @@ static void application_render(Application *application) {
 
 /* Raw duration is the previous start-to-start interval, before simulation clamping.
    Work fields describe this frame; a spike appears in raw on the next frame. */
-static int application_frame(Application *a) {
-  Performance *p = &a->performance;
+static int application_frame(Application *const a) {
+  Performance *const p = &a->performance;
   p->frame = (FrameWork){0};
   double start = perf_clock(p);
   application_update(a);
@@ -1330,7 +1330,7 @@ static int application_frame(Application *a) {
     p->frame.update = perf_clock(p) - start;
   }
   start = perf_clock(p);
-  int success = renderer_sync_view(&a->renderer, &a->world, &a->player);
+  const int success = renderer_sync_view(&a->renderer, &a->world, &a->player);
   if (p->enabled) p->frame.sync = perf_clock(p) - start;
   application_render(a);
   perf_record(p);
@@ -1353,7 +1353,7 @@ int main(void) {
     } else {
       meshRebuildFailed = 0;
     }
-    Performance *p = &application.performance;
+    Performance *const p = &application.performance;
     if (p->enabled && (p->count == PERF_SAMPLES || p->total.raw >= 1.0)) {
       performance_report(&application, "play");
       performance_reset(p);

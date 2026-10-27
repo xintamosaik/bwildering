@@ -5,22 +5,22 @@
 #include <stdlib.h>
 #include <string.h>
 
-void perf_configure(Performance *p) {
+void perf_configure(Performance *const p) {
   p->enabled = getenv("BW_PERF") && strcmp(getenv("BW_PERF"), "0");
   p->overlay = getenv("BW_DEBUG") && strcmp(getenv("BW_DEBUG"), "0");
   if (p->overlay) p->enabled = 1;
 }
 
-double perf_clock(const Performance *p) {
+double perf_clock(const Performance *const p) {
   return p && p->enabled ? glfwGetTime() : 0;
 }
 
-static int perf_compare(const void *a, const void *b) {
-  double x = *(const double *)a, y = *(const double *)b;
+static int perf_compare(const void *const a, const void *const b) {
+  const double x = *(const double *)a, y = *(const double *)b;
   return (x > y) - (x < y);
 }
 
-void perf_record(Performance *p) {
+void perf_record(Performance *const p) {
   if (!p->enabled || p->count == PERF_SAMPLES) return;
   p->samples[p->count++] = p->frame.raw;
 #define PERF_SUM(field) p->total.field += p->frame.field
@@ -36,7 +36,7 @@ void perf_record(Performance *p) {
     p->total.peakMeshBytes = p->frame.peakMeshBytes;
 }
 
-void perf_finish_window(Performance *p) {
+void perf_finish_window(Performance *const p) {
   if (!p->count) return;
   double sorted[PERF_SAMPLES];
   memcpy(sorted, p->samples, p->count * sizeof(*sorted));
@@ -46,16 +46,16 @@ void perf_finish_window(Performance *p) {
   p->maximum = sorted[p->count - 1];
 }
 
-void performance_reset(Performance *p) {
+void performance_reset(Performance *const p) {
   p->count = 0;
   p->total = (FrameWork){0};
   p->frame = (FrameWork){0};
 }
 
-void perf_report(Performance *p, const PerformanceSnapshot *s, const char *phase) {
+void perf_report(Performance *const p, const PerformanceSnapshot *const s, const char *const phase) {
   if (!p->enabled) return;
   perf_finish_window(p);
-  double n = p->count ? (double)p->count : 1;
+  const double n = p->count ? (double)p->count : 1;
   fprintf(stdout, "PERF phase=%s samples=%zu frame_ms=%.3f/%.3f/%.3f "
       "update_ms=%.3f sync_ms=%.3f materialize_ms=%.3f mesh_ms=%.3f upload_ms=%.3f "
       "render_ms=%.3f swap_ms=%.3f visibility_ms=%.3f distance_tests_avg=%.1f "

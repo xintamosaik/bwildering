@@ -1,6 +1,7 @@
 # Renderer verification
 
-Priority: alongside streaming and edit changes. Status: planned.
+Priority: alongside streaming and edit changes. Status: implemented and validated
+on local accelerated OpenGL (27 October 2026).
 Related: [issue 010](../../issues/010-renderer-lifecycle-audit.md).
 
 ## Goal
@@ -22,7 +23,7 @@ cannot establish GPU resource retirement or visual correctness.
    visible-index growth failure, failed replacement followed by departure,
    empty retirement markers, repeated edits and radius shrink/grow. Read back
    buffer bytes/material ranges and verify deleted GL objects where appropriate.
-4. Compare depth coverage and submitted geometry with an uncullled reference
+4. Compare depth coverage and submitted geometry with an unculled reference
    for negative coordinates, translated/scaled worlds, camera/frustum boundaries,
    maximum view distance and edited section seams. Prefer tolerances appropriate
    to depth values over driver-specific screenshots.
@@ -42,3 +43,27 @@ cannot establish GPU resource retirement or visual correctness.
   regression coverage. Keep unavailable runtime checks explicitly pending.
 - Complete when ownership transitions, culling and streaming scenarios pass on
   a real context and remaining frame-time limitations are measured and tracked.
+
+## Completion evidence
+
+The [renderer audit](../../renderer-audit.md) records compiler, GL device and
+display details, reproducible commands, the ownership transitions of all audited
+paths, real-context results and remaining verification limits. It is linked from
+issue 010 and `tests/README.md`.
+
+Existing failure/retirement fixtures were retained. New fixtures compare depth
+coverage and actual submitted ranges against an independent unculled draw loop
+for negative coordinates, translated/scaled worlds, clip boundaries, maximum
+view distance and repeated seam edits. They check unique handle ownership after
+metadata transfer and actual deletion at destruction. Pending edits keep old
+geometry drawable; fast departure cancels work and retires handles; staged
+revisits converge to independent synchronous worlds with matching GPU bytes,
+material ranges and depth.
+
+Shared builds/tests, the extended real-GL suite, ASan/UBSan with LeakSanitizer
+disabled, and Clang-Tidy narrowing checks passed. Serial baseline/scheduled travel
+captures now include separate synchronization, CPU submission and whole-frame
+percentiles for walking, running, teleport and radius changes at 25/100/300.
+Remaining scheduling spikes and loading latency stay tracked in plan 01;
+other devices and interactive presentation remain unverified, as recorded in
+the audit.

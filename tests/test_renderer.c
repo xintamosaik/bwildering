@@ -1,6 +1,9 @@
 /* Exercise the private renderer in a real GL context without adding test hooks
    or development controls to the game. */
 #include <stdlib.h>
+#include <assert.h>
+#include "../application.h"
+static void checked_draw_arrays(GLenum mode, GLint first, GLsizei count);
 static int draw_allocations_before_failure = -1;
 static void *draw_test_realloc(void *pointer, size_t bytes) {
   if (draw_allocations_before_failure == 0) return NULL;
@@ -22,13 +25,44 @@ static void *visible_test_malloc(size_t bytes) {
 #define malloc visible_test_malloc
 #define calloc metadata_test_calloc
 #define realloc draw_test_realloc
+#define glDrawArrays checked_draw_arrays
 #define main bwildering_application_main
 #include "../main.c"
 #undef main
 #undef realloc
 #undef calloc
 #undef malloc
-#include <assert.h>
+#undef glDrawArrays
+
+/* Record real submissions only while a verification capture is active. */
+typedef struct { GLuint vao; GLint first; GLsizei count; } AuditRange;
+enum { AUDIT_RANGE_CAPACITY = 32768, AUDIT_WIDTH = 320, AUDIT_HEIGHT = 240 };
+static AuditRange auditRanges[AUDIT_RANGE_CAPACITY];
+static size_t auditRangeCount;
+static const Renderer *auditRenderer;
+
+static void checked_draw_arrays(const GLenum mode, const GLint first, const GLsizei count) {
+  if (auditRenderer) {
+    GLint vao = 0, vbo = 0;
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
+    glGetVertexAttribiv(0, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &vbo);
+    assert(mode == GL_TRIANGLES && first >= 0 && count > 0 && count % 3 == 0);
+    assert(glIsVertexArray((GLuint)vao) && glIsBuffer((GLuint)vbo));
+    size_t owners = 0, matches = 0;
+    for (size_t i = 0; i < auditRenderer->meshCount; i++) {
+      const SectionGpuMesh *const mesh = &auditRenderer->meshes[i];
+      if (mesh->vao != (GLuint)vao) continue;
+      owners++;
+      assert(mesh->vbo == (GLuint)vbo);
+      for (int t = 0; t < BLOCK_TYPE_COUNT; t++)
+        matches += mesh->firstVertex[t] == first && mesh->vertexCount[t] == count;
+    }
+    assert(owners == 1 && matches == 1);
+    assert(auditRangeCount < AUDIT_RANGE_CAPACITY);
+    auditRanges[auditRangeCount++] = (AuditRange){(GLuint)vao, first, count};
+  }
+  glDrawArrays(mode, first, count);
+}
 
 static PFNGLBUFFERDATAPROC real_buffer_upload;
 static int uploads_before_failure;
@@ -172,6 +206,251 @@ static void test_frustum(void) {
   mesh.boundsMax = (Vec3){26, 1, 1};
   assert(section_within_view_distance(&mesh, (Vec3){0}, 25));
   assert(!section_within_view_distance(&mesh, (Vec3){-0.001f, 0, 0}, 25));
+}
+
+/* Submit every owned mesh without residency, distance or frustum predicates.
+   Hardware clipping and depth testing provide the independent reference. */
+static void render_unculled(const Renderer *const renderer, const Player *const player) {
+  mat4 projection, view, mvp;
+  mat4_perspective(75.0f * (3.14159f / 180.0f),
+                  (float)AUDIT_WIDTH / (float)AUDIT_HEIGHT, 0.05f,
+                  renderer->viewDistance, projection);
+  const Vec3 eye = player_eye_position(player);
+  mat4_lookat(eye, vec3_add(eye, player->camera.front), player->camera.up, view);
+  mat4_multiply(projection, view, mvp);
+  glUseProgram(renderer->program);
+  glUniformMatrix4fv(renderer->mvpLocation, 1, GL_FALSE, mvp);
+  for (size_t i = 0; i < renderer->meshCount; i++) {
+    const SectionGpuMesh *const mesh = &renderer->meshes[i];
+    for (int t = 0; t < BLOCK_TYPE_COUNT; t++) {
+      Vec3 color;
+      if (!mesh->vertexCount[t] || !block_type_color((BlockType)t, &color)) continue;
+      glUniform3f(renderer->colorLocation, color.x, color.y, color.z);
+      glBindVertexArray(mesh->vao);
+      checked_draw_arrays(GL_TRIANGLES, mesh->firstVertex[t], mesh->vertexCount[t]);
+    }
+  }
+}
+
+static void assert_unique_gpu_owners(const Renderer *const renderer) {
+  for (size_t i = 0; i < renderer->meshCount; i++) {
+    const SectionGpuMesh *const mesh = &renderer->meshes[i];
+    assert(!!mesh->vao == !!mesh->vbo);
+    if (!mesh->vao) { assert(!vertex_count(mesh)); continue; }
+    assert(glIsVertexArray(mesh->vao) && glIsBuffer(mesh->vbo));
+    for (size_t j = i + 1; j < renderer->meshCount; j++) {
+      assert(mesh->vao != renderer->meshes[j].vao);
+      assert(mesh->vbo != renderer->meshes[j].vbo);
+    }
+  }
+}
+
+static void assert_unculled_parity(Renderer *const renderer, const Player *const player,
+                                  const int expectCoverage) {
+  static float depths[2][AUDIT_WIDTH * AUDIT_HEIGHT];
+  static AuditRange optimized[AUDIT_RANGE_CAPACITY];
+  size_t optimizedCount = 0;
+  assert_unique_gpu_owners(renderer);
+  renderer->framebufferWidth = AUDIT_WIDTH;
+  renderer->framebufferHeight = AUDIT_HEIGHT;
+  glViewport(0, 0, AUDIT_WIDTH, AUDIT_HEIGHT);
+  glEnable(GL_DEPTH_TEST);
+  glEnable(GL_CULL_FACE);
+  GLuint query = 0;
+  glGenQueries(1, &query);
+  for (int reference = 0; reference < 2; reference++) {
+    glClearDepth(1.0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    auditRenderer = renderer;
+    auditRangeCount = 0;
+    glBeginQuery(GL_PRIMITIVES_GENERATED, query);
+    if (reference) render_unculled(renderer, player);
+    else render_world(renderer, player);
+    glEndQuery(GL_PRIMITIVES_GENERATED);
+    auditRenderer = NULL;
+    GLuint primitives = 0;
+    glGetQueryObjectuiv(query, GL_QUERY_RESULT, &primitives);
+    size_t triangles = 0;
+    for (size_t i = 0; i < auditRangeCount; i++) triangles += (size_t)auditRanges[i].count / 3;
+    assert(triangles == (size_t)primitives);
+    glReadPixels(0, 0, AUDIT_WIDTH, AUDIT_HEIGHT, GL_DEPTH_COMPONENT, GL_FLOAT, depths[reference]);
+    if (!reference) {
+      optimizedCount = auditRangeCount;
+      memcpy(optimized, auditRanges, optimizedCount * sizeof(*optimized));
+    }
+  }
+  /* Every optimized range belongs to the reference, exactly once. */
+  for (size_t i = 0; i < optimizedCount; i++) {
+    size_t matches = 0;
+    for (size_t j = 0; j < auditRangeCount; j++)
+      matches += optimized[i].vao == auditRanges[j].vao &&
+                 optimized[i].first == auditRanges[j].first && optimized[i].count == auditRanges[j].count;
+    assert(matches == 1);
+    for (size_t j = 0; j < i; j++)
+      assert(optimized[i].vao != optimized[j].vao || optimized[i].first != optimized[j].first);
+  }
+  size_t covered = 0;
+  for (size_t i = 0; i < AUDIT_WIDTH * AUDIT_HEIGHT; i++) {
+    assert(isfinite(depths[0][i]) && isfinite(depths[1][i]));
+    assert((depths[0][i] < 1.0f) == (depths[1][i] < 1.0f));
+    assert(fabsf(depths[0][i] - depths[1][i]) <= 0.00001f);
+    covered += depths[1][i] < 1.0f;
+  }
+  if (expectCoverage >= 0) assert((covered != 0) == expectCoverage);
+  glDeleteQueries(1, &query);
+  assert(glGetError() == GL_NO_ERROR);
+}
+
+static void test_unculled_transforms_seams_and_destruction(void) {
+  const Vec3 origins[] = {{0}, {-57.25f, 31.5f, -83.0f}};
+  const float scales[] = {1.0f, 2.5f};
+  for (size_t fixture = 0; fixture < 2; fixture++) {
+    World world = {0};
+    Renderer renderer = {0};
+    assert(world_init(&world, 128, origins[fixture], scales[fixture]));
+    assert(renderer_init(&renderer));
+    /* Both signs of X/Y and the negative Z section seam, with two materials. */
+    for (int x = -2; x <= 1; x++)
+      for (int y = -2; y <= 1; y++)
+        for (int z = -17; z <= -16; z++)
+          assert(world_set_block(&world, x, y, z, x < 0 ? BLOCK_TYPE_STONE : BLOCK_TYPE_SNOW));
+    assert(renderer_sync_world(&renderer, &world));
+    Player player = {.eyeHeight = 0.0f,
+        .camera = {.front = {0, 0, -1}, .up = {0, 1, 0}}};
+    const Vec3 positions[] = {{-0.5f, -0.5f, 0}, {-0.5f, -0.5f, -14.98f},
+                              {-0.5f, -0.5f, 9.5f}, {-0.5f, -0.5f, 10.5f}};
+    for (size_t pose = 0; pose < 4; pose++) {
+      player.position = vec3_add(origins[fixture], vec3_scale(positions[pose], scales[fixture]));
+      renderer.viewDistance = 25.0f * scales[fixture];
+      assert_unculled_parity(&renderer, &player, pose == 1 ? -1 : pose != 3);
+    }
+    player.position = vec3_add(origins[fixture], (Vec3){0, 0, 0});
+    renderer.viewDistance = MAX_VIEW_DISTANCE;
+    /* Move the wall across both side planes and behind the camera. */
+    const float yaws[] = {-0.8f, -0.7f, 0.0f, 0.7f, 0.8f, 3.14159265f};
+    for (size_t pose = 0; pose < sizeof(yaws) / sizeof(*yaws); pose++) {
+      player.camera.front = (Vec3){sinf(yaws[pose]), 0, -cosf(yaws[pose])};
+      assert_unculled_parity(&renderer, &player, pose == 2 ? 1 : pose == 5 ? 0 : -1);
+    }
+    const float pitches[] = {-0.8f, -0.7f, 0.7f, 0.8f};
+    for (size_t pose = 0; pose < sizeof(pitches) / sizeof(*pitches); pose++) {
+      player.camera.front = (Vec3){0, sinf(pitches[pose]), -cosf(pitches[pose])};
+      assert_unculled_parity(&renderer, &player, -1);
+    }
+    player.camera.front = (Vec3){0, 0, -1};
+    player.position = vec3_add(origins[fixture], (Vec3){-0.5f * scales[fixture],
+        -0.5f * scales[fixture], MAX_VIEW_DISTANCE - 15.0f * scales[fixture] - 0.5f});
+    assert_unculled_parity(&renderer, &player, 1);
+    player.position.z += 1.0f;
+    assert_unculled_parity(&renderer, &player, 0);
+    player.position = origins[fixture];
+    for (int edit = 0; edit < 12; edit++) {
+      assert(world_set_block(&world, -1, -1, -16,
+                             edit % 2 ? BLOCK_TYPE_EMPTY : BLOCK_TYPE_GRASS));
+      assert(renderer_sync_world(&renderer, &world));
+      assert_unculled_parity(&renderer, &player, 1);
+      for (size_t i = 0; i < renderer.meshCount; i++) {
+        const SectionGpuMesh *const gpu = &renderer.meshes[i];
+        SectionMesh cpu = {0};
+        assert(section_mesh_build(&world, gpu->chunkX, gpu->sectionY, gpu->chunkZ, &cpu));
+        assert_gpu_geometry(gpu, &cpu);
+        section_mesh_destroy(&cpu);
+      }
+    }
+    /* New earlier metadata identities transfer existing handles to one owner. */
+    const SectionGpuMesh retained = *gpu_section(&renderer, -1, -1, -1);
+    assert(world_set_block(&world, -40, 0, 0, BLOCK_TYPE_SAND));
+    assert(renderer_sync_world(&renderer, &world));
+    assert(gpu_section(&renderer, -1, -1, -1)->vbo == retained.vbo);
+    assert_unique_gpu_owners(&renderer);
+    GLuint vaos[32], vbos[32];
+    const size_t count = renderer.meshCount;
+    assert(count <= 32);
+    for (size_t i = 0; i < count; i++) { vaos[i] = renderer.meshes[i].vao; vbos[i] = renderer.meshes[i].vbo; }
+    const GLuint program = renderer.program, textVao = renderer.textVao, textVbo = renderer.textVbo;
+    world_destroy(&world); /* CPU destruction does not own any GL objects. */
+    assert_unique_gpu_owners(&renderer);
+    renderer_destroy(&renderer);
+    for (size_t i = 0; i < count; i++) assert(!glIsVertexArray(vaos[i]) && !glIsBuffer(vbos[i]));
+    /* A current program remains flagged for deletion until it is unbound. */
+    glUseProgram(0);
+    assert(!glIsProgram(program) && !glIsVertexArray(textVao) && !glIsBuffer(textVbo));
+    assert(!renderer.meshes && !renderer.visibleMeshes && !renderer.drawMeshes && !renderer.pendingCount);
+    renderer_destroy(&renderer); /* Idempotent while the context remains current. */
+    assert(glGetError() == GL_NO_ERROR);
+  }
+  puts("Unculled depth/range parity, transformed seams and GL destruction checks passed.");
+}
+
+static void test_rendered_pending_edits_and_cancellation(void) {
+  Renderer renderer = {0};
+  World world = {0}, referenceWorld = {0};
+  Renderer reference = {0};
+  Player player = {.position = {-0.5f, 400.5f, 0.0f}, .eyeHeight = 0.0f,
+      .camera = {.front = {0, 0, -1}, .up = {0, 1, 0}}};
+  const StreamBudget paused = {.operations = 0, .bytes = SIZE_MAX};
+  const StreamBudget batch = {.operations = 16, .bytes = SIZE_MAX};
+  assert(renderer_init(&renderer));
+  renderer.viewDistance = 25.0f;
+  assert(create_terrain_streamed(&world, 256, (Vec3){0}, 1.0f, WORLD_SEED));
+  assert(world_set_block(&world, -1, 400, -16, BLOCK_TYPE_STONE));
+  assert(world_set_block(&world, 0, 400, -16, BLOCK_TYPE_SNOW));
+  assert(renderer_sync_view(&renderer, &world, &player));
+  assert_unculled_parity(&renderer, &player, 1);
+  static float oldDepth[AUDIT_WIDTH * AUDIT_HEIGHT], pendingDepth[AUDIT_WIDTH * AUDIT_HEIGHT];
+  glReadPixels(0, 0, AUDIT_WIDTH, AUDIT_HEIGHT, GL_DEPTH_COMPONENT, GL_FLOAT, oldDepth);
+  const SectionGpuMesh old = *gpu_section(&renderer, -1, 25, -1);
+  SectionMesh oldCpu = {0};
+  assert(section_mesh_build(&world, -1, 25, -1, &oldCpu));
+  assert(world_set_block(&world, -1, 400, -16, BLOCK_TYPE_EMPTY));
+  assert(renderer_sync_view_work(&renderer, &world, &player, &paused) == STREAM_DEFERRED);
+  assert(world_get_block(&world, -1, 400, -16) == BLOCK_TYPE_EMPTY);
+  assert_gpu_geometry(gpu_section(&renderer, -1, 25, -1), &oldCpu);
+  assert_unculled_parity(&renderer, &player, 1);
+  glReadPixels(0, 0, AUDIT_WIDTH, AUDIT_HEIGHT, GL_DEPTH_COMPONENT, GL_FLOAT, pendingDepth);
+  for (size_t i = 0; i < AUDIT_WIDTH * AUDIT_HEIGHT; i++)
+    assert(fabsf(oldDepth[i] - pendingDepth[i]) <= 0.00001f);
+  section_mesh_destroy(&oldCpu);
+  /* Fast departure cancels pending identities and deletes the old mesh before
+     any new upload can reuse its names. Rendering submits no retired object. */
+  player.position.x = 10000.0f;
+  assert(renderer_sync_view_work(&renderer, &world, &player, &paused) == STREAM_COMPLETE);
+  assert(!renderer.pendingCount && !glIsVertexArray(old.vao) && !glIsBuffer(old.vbo));
+  assert_unculled_parity(&renderer, &player, 0);
+  assert(!auditRangeCount);
+  player.position.x = -0.5f;
+  renderer.viewDistance = 100.0f;
+  size_t passes = 0;
+  while (renderer_sync_view_work(&renderer, &world, &player, &batch) != STREAM_COMPLETE)
+    assert(++passes < 1000);
+  /* Independent world, same edits: the synchronous drain is the convergence
+     oracle, including driver-owned bytes and each material range. */
+  assert(create_terrain_streamed(&referenceWorld, 256, (Vec3){0}, 1.0f, WORLD_SEED));
+  assert(world_set_block(&referenceWorld, -1, 400, -16, BLOCK_TYPE_EMPTY));
+  assert(world_set_block(&referenceWorld, 0, 400, -16, BLOCK_TYPE_SNOW));
+  assert(renderer_init(&reference));
+  reference.viewDistance = renderer.viewDistance;
+  assert(renderer_sync_view(&reference, &referenceWorld, &player));
+  assert(renderer.meshCount == reference.meshCount);
+  for (size_t i = 0; i < reference.meshCount; i++) {
+    const SectionGpuMesh *const expected = &reference.meshes[i];
+    SectionMesh cpu = {0};
+    assert(section_mesh_build(&referenceWorld, expected->chunkX, expected->sectionY, expected->chunkZ, &cpu));
+    assert_gpu_geometry(expected, &cpu);
+    assert_gpu_geometry(gpu_section(&renderer, expected->chunkX, expected->sectionY, expected->chunkZ), &cpu);
+    section_mesh_destroy(&cpu);
+  }
+  assert_unculled_parity(&renderer, &player, 1);
+  glReadPixels(0, 0, AUDIT_WIDTH, AUDIT_HEIGHT, GL_DEPTH_COMPONENT, GL_FLOAT, pendingDepth);
+  assert_unculled_parity(&reference, &player, 1);
+  glReadPixels(0, 0, AUDIT_WIDTH, AUDIT_HEIGHT, GL_DEPTH_COMPONENT, GL_FLOAT, oldDepth);
+  for (size_t i = 0; i < AUDIT_WIDTH * AUDIT_HEIGHT; i++)
+    assert(fabsf(oldDepth[i] - pendingDepth[i]) <= 0.00001f);
+  renderer_destroy(&renderer);
+  renderer_destroy(&reference);
+  world_destroy(&world);
+  world_destroy(&referenceWorld);
+  puts("Rendered pending edits, fast departure and synchronous convergence checks passed.");
 }
 
 static void test_rendered_movement(void) {
@@ -327,7 +606,7 @@ static void test_streamed_exploration_revisits_edited_terrain(void) {
   renderer.framebufferHeight = 480;
   renderer.viewDistance = 25;
   int height = terrain_sample_column(seed, 0, 0).height;
-  Player player = {.position = {0.5f, height + 8, 4.5f}, .eyeHeight = 1,
+  Player player = {.position = {0.5f, (float)height + 8.0f, 4.5f}, .eyeHeight = 1,
       .camera = {.front = {0, -0.8944272f, -0.4472136f}, .up = {0, 1, 0}}};
   assert(renderer_sync_view(&renderer, &world, &player));
   DepthFrame before = capture_world(&renderer, &player);
@@ -758,6 +1037,11 @@ int main(void) {
   assert(glewInit() == GLEW_OK);
   while (glGetError() != GL_NO_ERROR) {
   }
+  printf("AUDIT compiler=%s vendor=%s renderer=%s version=%s display=%s resolution=640x480\n",
+         __VERSION__, (const char *)glGetString(GL_VENDOR), (const char *)glGetString(GL_RENDERER),
+         (const char *)glGetString(GL_VERSION), getenv("DISPLAY") ? getenv("DISPLAY") : "unset");
+  test_unculled_transforms_seams_and_destruction();
+  test_rendered_pending_edits_and_cancellation();
   test_stream_budget();
   test_performance_counters();
   test_sparse_vertical_renderer();
@@ -922,7 +1206,7 @@ int main(void) {
   printf("Default %dx%d world: startup %.1f ms, %zu resident sections, %.1f MiB terrain vertices\n",
          application.world.blocksPerSide, application.world.blocksPerSide,
          1000 * (glfwGetTime() - applicationStart), application.world.sectionCount,
-         terrainVertices * sizeof(SurfaceVertex) / (1024.0 * 1024.0));
+         (double)(terrainVertices * sizeof(SurfaceVertex)) / (1024.0 * 1024.0));
   assert(application.world.blocksPerSide == PLATFORM_BLOCKS_PER_SIDE);
   float spawnY = world_surface_height(&application.world, application.player.position.x,
                                       application.player.position.z);

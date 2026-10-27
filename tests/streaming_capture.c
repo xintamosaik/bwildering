@@ -42,9 +42,11 @@ static void capture_frames(Application *const a, const int baseline) {
   const float radii[] = {25.0f, 100.0f, 300.0f};
   const char *const names[] = {"stationary", "walking", "running", "teleport",
                                "reverse", "radius", "edge"};
-  printf("FRAMES mode=%s seed=%u GL=%s\n", baseline ? "baseline" : "scheduled",
-         WORLD_SEED, (const char *)glGetString(GL_RENDERER));
-  puts("radius,scenario,sync_p50_ms,sync_p95_ms,sync_p99_ms,sync_max_ms,frame_p50_ms,frame_p95_ms,frame_p99_ms,frame_max_ms,materialize_ms,mesh_ms,upload_submission_ms,retire_ms,metadata_ms,operations,upload_bytes,peak_pending,peak_chunks,peak_sections,peak_gpu_bytes,atomic_max_ms,convergence_frames,peak_queue,peak_cpu_owned_bytes,materialized_chunks,section_builds,last_request_loading_frames");
+  printf("FRAMES mode=%s seed=%u compiler=%s vendor=%s GL=%s version=%s resolution=640x480 swap_interval=0\n",
+         baseline ? "baseline" : "scheduled", WORLD_SEED, __VERSION__,
+         (const char *)glGetString(GL_VENDOR), (const char *)glGetString(GL_RENDERER),
+         (const char *)glGetString(GL_VERSION));
+  puts("radius,scenario,sync_p50_ms,sync_p95_ms,sync_p99_ms,sync_max_ms,frame_p50_ms,frame_p95_ms,frame_p99_ms,frame_max_ms,materialize_ms,mesh_ms,upload_submission_ms,retire_ms,metadata_ms,operations,upload_bytes,peak_pending,peak_chunks,peak_sections,peak_gpu_bytes,atomic_max_ms,convergence_frames,peak_queue,peak_cpu_owned_bytes,materialized_chunks,section_builds,last_request_loading_frames,submission_p50_ms,submission_p95_ms,submission_p99_ms,submission_max_ms");
   for (size_t r = 0; r < sizeof(radii)/sizeof(*radii); r++) {
     a->renderer.viewDistance = radii[r];
     a->player.position = (Vec3){-16.5f, 410.0f, -16.5f};
@@ -53,7 +55,7 @@ static void capture_frames(Application *const a, const int baseline) {
     assert(renderer_sync_view(&a->renderer, &a->world, &a->player));
     glFinish();
     for (int scenario = 0; scenario < 7; scenario++) {
-      double sync[CAPTURE_FRAMES], frame[CAPTURE_FRAMES];
+      double sync[CAPTURE_FRAMES], frame[CAPTURE_FRAMES], submission[CAPTURE_FRAMES];
       FrameWork total = {0};
       a->renderer.peakPending = 0;
       size_t peakPending = 0, peakChunks = 0, peakSections = 0, peakGpu = 0;
@@ -90,7 +92,9 @@ static void capture_frames(Application *const a, const int baseline) {
         }
         sync[f] = glfwGetTime() - start;
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        const double submissionStart = glfwGetTime();
         render_world(&a->renderer, &a->player);
+        submission[f] = glfwGetTime() - submissionStart;
         glfwSwapBuffers(a->window);
         frame[f] = glfwGetTime() - frameStart;
         const FrameWork *const work = &a->performance.frame;
@@ -137,11 +141,14 @@ static void capture_frames(Application *const a, const int baseline) {
       assert(glGetError() == GL_NO_ERROR);
       qsort(sync, CAPTURE_FRAMES, sizeof(*sync), capture_compare);
       qsort(frame, CAPTURE_FRAMES, sizeof(*frame), capture_compare);
-      printf("%.0f,%s,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%zu,%zu,%zu,%zu,%zu,%zu,%.3f,%zu,%zu,%zu,%zu,%zu,%zu\n",
+      qsort(submission, CAPTURE_FRAMES, sizeof(*submission), capture_compare);
+      printf("%.0f,%s,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%zu,%zu,%zu,%zu,%zu,%zu,%.3f,%zu,%zu,%zu,%zu,%zu,%zu,%.3f,%.3f,%.3f,%.3f\n",
              radii[r], names[scenario], sync[119]*1000, sync[227]*1000, sync[237]*1000, sync[239]*1000,
              frame[119]*1000, frame[227]*1000, frame[237]*1000, frame[239]*1000,
              total.materialize*1000, total.mesh*1000, total.upload*1000,
-             total.retirement*1000, total.metadata*1000, total.operations, total.uploadBytes, peakPending, peakChunks, peakSections, peakGpu, atomicMax*1000, convergence, peakQueue, peakCpu, total.materializedChunks, total.rebuilds, loadingFrames);
+             total.retirement*1000, total.metadata*1000, total.operations, total.uploadBytes, peakPending, peakChunks, peakSections, peakGpu, atomicMax*1000, convergence, peakQueue, peakCpu, total.materializedChunks, total.rebuilds, loadingFrames,
+             submission[119]*1000, submission[227]*1000,
+             submission[237]*1000, submission[239]*1000);
       fflush(stdout);
     }
   }

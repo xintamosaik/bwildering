@@ -235,10 +235,13 @@ the distributions; upload times describe CPU submission, not GPU execution.
 Convergence frames count additional sync-only budget passes after the 240 sampled
 frames, excluding the final empty confirmation pass. Atomic maximum also covers
 those tail passes. Other work totals and residency peaks cover the sampled window.
-CSV includes p50/p95/p99/max sync and full-frame times, disjoint materialization,
+CSV includes p50/p95/p99/max sync, CPU render submission and full-frame times, disjoint materialization,
 meshing, upload submission, retirement and metadata times, operation/build counts,
 bytes, residency, discovered pending work, queue occupancy and owned CPU storage.
 The original 64-stop radius-25 cold-travel stress remains separate.
+The render submission columns were added during the
+[renderer audit](renderer-audit.md); its linked captures include those columns
+and the full compiler/vendor/version banner. Earlier captures below predate them.
 
 ## Captured results
 

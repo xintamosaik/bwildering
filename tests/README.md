@@ -33,6 +33,13 @@ identity checks. See [issue 004](../issues/004-mesh-candidate-correctness.md).
 
 `make test` runs logic, allocation-failure, and headless menu interaction tests.
 `make test-renderer` additionally requires an X11 display and OpenGL 3.3 context.
+The [renderer audit](../renderer-audit.md) records the verified GL device,
+reproduction commands, handle/buffer ownership and real-context depth/submission
+checks. New fixtures cover unculled reference parity for transformed negative
+section seams, clip boundaries and maximum distance, unique handle transfer and
+GL deletion, old geometry during pending edits, fast-departure cancellation and
+convergence to an independently drained world. Raw serial travel captures include
+sync, CPU submission and whole-frame p50/p95/p99/max distributions.
 `make test-sanitize` runs the non-graphical suites with ASan and UBSan. Environments
 that cannot run LeakSanitizer under tracing can use
 `ASAN_OPTIONS=detect_leaks=0 make test-sanitize`; this does not check leaks.

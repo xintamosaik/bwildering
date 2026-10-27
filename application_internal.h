@@ -5,6 +5,7 @@
 #include <GLFW/glfw3.h>
 #include "application.h"
 #include "input.h"
+#include "game.h"
 #include "ui.h"
 #include "performance.h"
 #include "renderer_internal.h"
@@ -15,10 +16,10 @@ static const uint32_t WORLD_SEED = UINT32_C(0x4B1D2A37);
 
 struct Application {
   GLFWwindow *window;
-  Player player;
+  Game game;
+  GameplayAim pendingAim;
   InputState input;
   Renderer renderer;
-  World world;
   Performance performance;
   size_t residentChunks, editedChunks, dirtySections, gpuBytes, residentVoxelBytes;
   double worldMetadataSeconds, startupSeconds;

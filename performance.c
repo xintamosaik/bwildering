@@ -110,10 +110,11 @@ static void perf_report(Performance *const p, const PerformanceSnapshot *const s
 
 /* Expensive metadata scans happen only at explicit capture/window boundaries. */
 void performance_snapshot(Application *const application) {
+  const World *const world = game_world(&application->game);
   application->residentChunks = application->editedChunks = application->dirtySections = application->gpuBytes = 0;
   application->residentVoxelBytes = 0;
-  for (size_t c = 0; c < application->world.chunkCount; c++) {
-    const Chunk *const chunk = &application->world.chunks[c];
+  for (size_t c = 0; c < world->chunkCount; c++) {
+    const Chunk *const chunk = &world->chunks[c];
     int resident = chunk->terrainReady;
     application->editedChunks += chunk->edited != 0;
     for (const Subchunk *section = chunk->sections; section; section = section->next) {
@@ -132,14 +133,15 @@ void performance_snapshot(Application *const application) {
 void performance_report(Application *const application, const char *const phase) {
   if (!application->performance.enabled) return;
   performance_snapshot(application);
+  const World *const world = game_world(&application->game);
   const PerformanceSnapshot snapshot = {
       .residentChunks = application->residentChunks,
-      .sections = application->world.sectionCount,
+      .sections = world->sectionCount,
       .editedChunks = application->editedChunks,
       .dirtySections = application->dirtySections,
       .neighborhoodSlots = application->renderer.visibleMeshCount,
-      .worldMetadataBytes = sizeof(World) + application->world.chunkCount * sizeof(Chunk) +
-          (application->world.edits ? WORLD_EDIT_CAPACITY * sizeof(VoxelEdit) : 0),
+      .worldMetadataBytes = sizeof(World) + world->chunkCount * sizeof(Chunk) +
+          (world->edits ? WORLD_EDIT_CAPACITY * sizeof(VoxelEdit) : 0),
       .rendererMetadataBytes = sizeof(Renderer) + application->renderer.meshCount * sizeof(SectionGpuMesh),
       .residentVoxelBytes = application->residentVoxelBytes,
       .visibleIndexBytes = application->renderer.visibleMeshCapacity * sizeof(size_t),
@@ -148,8 +150,8 @@ void performance_report(Application *const application, const char *const phase)
       .worldMetadataSeconds = application->worldMetadataSeconds,
       .rendererMetadataSeconds = application->renderer.metadataSeconds,
       .startupSeconds = application->startupSeconds,
-      .seed = application->world.terrainSeed,
-      .side = application->world.blocksPerSide,
+      .seed = world->terrainSeed,
+      .side = world->blocksPerSide,
       .viewDistance = application->renderer.viewDistance,
       .framebufferWidth = application->renderer.framebufferWidth,
       .framebufferHeight = application->renderer.framebufferHeight,

@@ -696,7 +696,7 @@ RENDERER_PRIVATE int renderer_collect_draw_meshes(Renderer *const renderer, cons
   return 1;
 }
 
-void render_world(Renderer *const renderer, const Player *const player) {
+void render_world(Renderer *const renderer, const View camera) {
   renderer->drawMeshCount = 0;
   if (renderer->framebufferWidth <= 0 || renderer->framebufferHeight <= 0)
     return;
@@ -708,9 +708,9 @@ void render_world(Renderer *const renderer, const Player *const player) {
       (float)renderer->framebufferWidth / (float)renderer->framebufferHeight;
   const float viewDistance = renderer->viewDistance > 0 ? renderer->viewDistance : DEFAULT_VIEW_DISTANCE;
   mat4_perspective(75.0f * (3.14159f / 180.0f), aspectRatio, 0.05f, viewDistance, proj);
-  const Vec3 cameraPosition = player_eye_position(player);
-  const Vec3 target = vec3_add(cameraPosition, player->camera.front);
-  mat4_lookat(cameraPosition, target, player->camera.up, view);
+  const Vec3 cameraPosition = camera.eye;
+  const Vec3 target = vec3_add(cameraPosition, camera.front);
+  mat4_lookat(cameraPosition, target, camera.up, view);
   mat4_multiply(proj, view, mvp);
 
   Performance *const p = renderer->performance;

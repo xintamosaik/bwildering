@@ -1,7 +1,7 @@
 #ifndef RENDERER_H
 #define RENDERER_H
 
-#include "game_logic.h"
+#include "view.h"
 #include "performance.h"
 #include "ui_draw.h"
 
@@ -21,7 +21,7 @@ void renderer_set_view_distance(Renderer *renderer, float distance);
 int renderer_storage_limits(World *world);
 int renderer_sync_view(Renderer *renderer, World *world, const Player *player);
 StreamResult renderer_step_view(Renderer *renderer, World *world, const Player *player);
-void render_world(Renderer *renderer, const Player *player);
+void render_world(Renderer *renderer, View camera);
 size_t renderer_neighborhood_slots(const Renderer *renderer);
 UiDrawContext renderer_ui_context(const Renderer *renderer);
 

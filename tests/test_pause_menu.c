@@ -89,14 +89,11 @@ static void assert_player_unchanged(const Player *actual, const Player *expected
   assert(actual->grounded == expected->grounded);
   assert(actual->eyeHeight == expected->eyeHeight);
   assert(actual->crouching == expected->crouching);
-  assert(actual->camera.yaw == expected->camera.yaw);
-  assert(actual->camera.pitch == expected->camera.pitch);
-  assert(actual->camera.front.x == expected->camera.front.x);
-  assert(actual->camera.front.y == expected->camera.front.y);
-  assert(actual->camera.front.z == expected->camera.front.z);
-  assert(actual->camera.up.x == expected->camera.up.x);
-  assert(actual->camera.up.y == expected->camera.up.y);
-  assert(actual->camera.up.z == expected->camera.up.z);
+  assert(actual->aim.yaw == expected->aim.yaw);
+  assert(actual->aim.pitch == expected->aim.pitch);
+  assert(actual->aim.front.x == expected->aim.front.x);
+  assert(actual->aim.front.y == expected->aim.front.y);
+  assert(actual->aim.front.z == expected->aim.front.z);
 }
 
 /* Exercise the visible controls through captured clicks and the public routing path. */
@@ -198,12 +195,13 @@ static void test_passive_capture_and_ordering(void) {
   closeRequested = 0;
   windowWidth = 640; windowHeight = 480; pixelScale = 2;
   application.renderer.viewDistance = DEFAULT_VIEW_DISTANCE;
-  application.player = (Player){.position = {0, 5, 0}, .eyeHeight = 1,
-      .camera = {.front = {0, 0, -1}, .up = {0, 1, 0}, .yaw = -90}};
-  assert(create_platform(&application.world, 16, (Vec3){0}, 1, 1));
-  assert(world_set_block(&application.world, 0, 5, -3, BLOCK_TYPE_STONE));
-  const Player frozen = application.player;
-  const size_t voxels = application.world.voxelCount;
+  application.game.player = (Player){.position = {0, 5, 0}, .eyeHeight = 1,
+      .aim = {.front = {0, 0, -1}, .yaw = -90}};
+  application.pendingAim = application.game.player.aim;
+  assert(create_platform(&application.game.world, 16, (Vec3){0}, 1, 1));
+  assert(world_set_block(&application.game.world, 0, 5, -3, BLOCK_TYPE_STONE));
+  const Player frozen = application.game.player;
+  const size_t voxels = application.game.world.voxelCount;
   application.simulationAccumulator = 0.01;
   application.jumpQueued = application.placeQueued = application.removeQueued = 1;
   application.input.keyBindings[GLFW_KEY_P] = INPUT_PAUSE | INPUT_JUMP | INPUT_PLACE;
@@ -223,8 +221,8 @@ static void test_passive_capture_and_ordering(void) {
   assert(!application.simulationAccumulator && !application.jumpQueued);
   assert(!application.placeQueued && !application.removeQueued);
   assert(!application.input.mouse.deltaX && !application.input.mouse.deltaY);
-  assert(application.world.voxelCount == voxels);
-  assert_player_unchanged(&application.player, &frozen);
+  assert(application.game.world.voxelCount == voxels);
+  assert_player_unchanged(&application.game.player, &frozen);
 
   /* All clicks happen between polls; the final cursor position is unrelated.
      Settings, increase, back and resume must each use its captured coordinates. */
@@ -242,8 +240,8 @@ static void test_passive_capture_and_ordering(void) {
   assert(!application.paused && !application.ui.settingsOpen && !closeRequested);
   assert(application.renderer.viewDistance == DEFAULT_VIEW_DISTANCE + VIEW_DISTANCE_STEP);
   assert(!application.input.clickCount && !application.input.pressed);
-  assert(application.world.voxelCount == voxels);
-  assert_player_unchanged(&application.player, &frozen);
+  assert(application.game.world.voxelCount == voxels);
+  assert_player_unchanged(&application.game.player, &frozen);
 
   /* Pause beats a simultaneous resume click and clears gameplay actions. */
   application.input.mouseBindings[GLFW_MOUSE_BUTTON_RIGHT] = INPUT_PAUSE | INPUT_REMOVE;
@@ -252,7 +250,7 @@ static void test_passive_capture_and_ordering(void) {
   buttonCallback(NULL, GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
   frame(&application, 0.02);
   assert(application.paused && !application.input.clickCount);
-  assert(application.world.voxelCount == voxels);
+  assert(application.game.world.voxelCount == voxels);
 
   /* Overflow drops newest menu clicks; coalesced gameplay capture continues. */
   cursorX = 0; cursorY = 0;
@@ -265,8 +263,8 @@ static void test_passive_capture_and_ordering(void) {
   assert(application.paused && !application.input.clickCount);
   click_button(&application, "RESUME");
   assert(!application.paused);
-  assert_player_unchanged(&application.player, &frozen);
-  world_destroy(&application.world);
+  assert_player_unchanged(&application.game.player, &frozen);
+  world_destroy(&application.game.world);
   pixelScale = 1;
 }
 
@@ -281,18 +279,19 @@ static void test_view_distance_settings(int width, int height, int density) {
   closeRequested = 0;
   now = 0;
   application.renderer.viewDistance = DEFAULT_VIEW_DISTANCE;
-  application.player = (Player){.position = {0, 5, 0}, .eyeHeight = 1,
-      .camera = {.front = {0, 0, -1}, .up = {0, 1, 0}, .yaw = -90}};
-  assert(create_platform(&application.world, 16, (Vec3){0}, 1, 1));
+  application.game.player = (Player){.position = {0, 5, 0}, .eyeHeight = 1,
+      .aim = {.front = {0, 0, -1}, .yaw = -90}};
+  application.pendingAim = application.game.player.aim;
+  assert(create_platform(&application.game.world, 16, (Vec3){0}, 1, 1));
   /* Keep editable terrain in reach: a leaked gameplay click must have an effect. */
-  assert(world_set_block(&application.world, 0, 5, -3, BLOCK_TYPE_STONE));
-  assert(world_set_block(&application.world, 0, 6, -3, BLOCK_TYPE_STONE));
+  assert(world_set_block(&application.game.world, 0, 5, -3, BLOCK_TYPE_STONE));
+  assert(world_set_block(&application.game.world, 0, 6, -3, BLOCK_TYPE_STONE));
   keys[GLFW_KEY_F1] = GLFW_PRESS;
   frame(&application, 0.02);
   keys[GLFW_KEY_F1] = GLFW_RELEASE;
   frame(&application, 0.02);
-  Player frozen = application.player;
-  const size_t voxels = application.world.voxelCount;
+  Player frozen = application.game.player;
+  const size_t voxels = application.game.world.voxelCount;
   click_button(&application, "SETTINGS"); /* Settings */
   assert(application.paused && application.ui.settingsOpen);
 
@@ -319,8 +318,8 @@ static void test_view_distance_settings(int width, int height, int density) {
   assert(section_within_view_distance(&distant, (Vec3){beyond - 10, 0, 0}, 25));
   assert(!section_within_view_distance(&distant, (Vec3){beyond - 10, 50, 0}, 25));
   assert(application.paused && !closeRequested);
-  assert(application.world.voxelCount == voxels);
-  assert_player_unchanged(&application.player, &frozen);
+  assert(application.game.world.voxelCount == voxels);
+  assert_player_unchanged(&application.game.player, &frozen);
 
   click_button(&application, "BACK"); /* Back, not Quit */
   assert(application.paused && !application.ui.settingsOpen && !closeRequested);
@@ -341,10 +340,46 @@ static void test_view_distance_settings(int width, int height, int density) {
   frame(&application, 0.02);
   click_button(&application, "SETTINGS");
   assert(application.ui.settingsOpen && application.renderer.viewDistance == MIN_VIEW_DISTANCE);
-  world_destroy(&application.world);
+  world_destroy(&application.game.world);
+}
+
+/* Pending local look renders immediately without advancing authoritative aim. */
+static void test_pending_game_view(void) {
+  Application application = {0};
+  input_init(&application.input);
+  input_attach(&application.input, NULL);
+  memset(keys, 0, sizeof(keys));
+  memset(mouseButtons, 0, sizeof(mouseButtons));
+  cursorMode = GLFW_CURSOR_DISABLED;
+  pendingClick = 0;
+  now = 0.0;
+  assert(create_platform(&application.game.world, 16, (Vec3){0}, 1.0f, 1));
+  application.game.player = (Player){.position = {0.5f, 5.0f, 0.5f},
+      .eyeHeight = 1.0f, .aim = game_aim(-90.0f, 0.0f)};
+  application.pendingAim = application.game.player.aim;
+  const Player frozen = application.game.player;
+  cursorCallback(NULL, 0.0, 0.0);
+  cursorCallback(NULL, 900.0, 0.0);
+  frame(&application, 0.001);
+  assert(application.game.tick == 0);
+  assert_player_unchanged(&application.game.player, &frozen);
+  const View view = player_view(game_player(&application.game), application.pendingAim);
+  assert(view.front.x > 0.99f && frozen.aim.front.z < -0.99f);
+  frame(&application, 0.02);
+  assert(application.game.tick == 1 && application.game.player.aim.front.x > 0.99f);
+  cursorCallback(NULL, 1000.0, 0.0);
+  frame(&application, 0.001);
+  assert(application.pendingAim.yaw > application.game.player.aim.yaw);
+  keys[GLFW_KEY_ESCAPE] = GLFW_PRESS;
+  frame(&application, 0.001);
+  assert(application.paused && application.game.tick == 1);
+  assert(application.pendingAim.yaw == application.game.player.aim.yaw);
+  memset(keys, 0, sizeof(keys));
+  game_destroy(&application.game);
 }
 
 int main(void) {
+  test_pending_game_view();
   test_virtual_actions();
   test_passive_capture_and_ordering();
   /* Nearest-rank p95, maximum and mean retain spikes above the simulation cap. */
@@ -367,26 +402,27 @@ int main(void) {
   Application application = {0};
   input_init(&application.input);
   input_attach(&application.input, NULL);
-  assert(create_platform(&application.world, 16, (Vec3){0}, 1, 1));
+  assert(create_platform(&application.game.world, 16, (Vec3){0}, 1, 1));
   /* Keep editable terrain in reach: a leaked gameplay click must have an effect. */
-  assert(world_set_block(&application.world, 0, 5, -3, BLOCK_TYPE_STONE));
-  assert(world_set_block(&application.world, 0, 6, -3, BLOCK_TYPE_STONE));
-  application.player = (Player){.position = {0, 5, 0}, .eyeHeight = 1,
-      .camera = {.front = {0, 0, -1}, .up = {0, 1, 0}, .yaw = -90}};
+  assert(world_set_block(&application.game.world, 0, 5, -3, BLOCK_TYPE_STONE));
+  assert(world_set_block(&application.game.world, 0, 6, -3, BLOCK_TYPE_STONE));
+  application.game.player = (Player){.position = {0, 5, 0}, .eyeHeight = 1,
+      .aim = {.front = {0, 0, -1}, .yaw = -90}};
+  application.pendingAim = application.game.player.aim;
   keys[GLFW_KEY_W] = GLFW_PRESS;
   frame(&application, 0.05);
-  assert(application.player.position.z < 0 && application.player.position.y < 5);
+  assert(application.game.player.position.z < 0 && application.game.player.position.y < 5);
 
   keys[GLFW_KEY_ESCAPE] = GLFW_PRESS;
   frame(&application, 0.02);
   assert(application.paused && cursorMode == GLFW_CURSOR_NORMAL);
-  Player frozen = application.player;
-  const size_t voxels = application.world.voxelCount;
+  Player frozen = application.game.player;
+  const size_t voxels = application.game.world.voxelCount;
   /* Holding Escape must not repeatedly toggle pause, even with movement held. */
   for (int i = 0; i < 30; i++)
     frame(&application, 0.1);
   assert(application.paused);
-  assert_player_unchanged(&application.player, &frozen);
+  assert_player_unchanged(&application.game.player, &frozen);
   keys[GLFW_KEY_ESCAPE] = GLFW_RELEASE;
   keys[GLFW_KEY_SPACE] = GLFW_PRESS;
   cursorCallback(application.window, 100, 100);
@@ -394,23 +430,23 @@ int main(void) {
   pendingClick = GLFW_MOUSE_BUTTON_RIGHT + 1;
   frame(&application, 10);
   assert(fabs(application.rawFrame - 10) < 1e-9);
-  assert(application.world.voxelCount == voxels);
-  assert_player_unchanged(&application.player, &frozen);
+  assert(application.game.world.voxelCount == voxels);
+  assert_player_unchanged(&application.game.player, &frozen);
   /* Click outside the buttons: remain paused and do not place anything. */
   cursorX = 10; cursorY = 10;
   pendingClick = GLFW_MOUSE_BUTTON_LEFT + 1;
   frame(&application, 0.02);
-  assert(application.paused && application.world.voxelCount == voxels);
+  assert(application.paused && application.game.world.voxelCount == voxels);
 
   /* Resume with the mouse. The resume click and elapsed pause cannot affect gameplay. */
   click_button(&application, "RESUME");
   assert(!application.paused && cursorMode == GLFW_CURSOR_DISABLED);
-  assert_player_unchanged(&application.player, &frozen);
-  assert(application.world.voxelCount == voxels);
+  assert_player_unchanged(&application.game.player, &frozen);
+  assert(application.game.world.voxelCount == voxels);
   assert(!application.jumpQueued && !application.placeQueued && !application.removeQueued);
   frame(&application, 0.02);
-  assert(application.player.position.z < frozen.position.z);
-  assert(application.player.position.y < frozen.position.y);
+  assert(application.game.player.position.z < frozen.position.z);
+  assert(application.game.player.position.y < frozen.position.y);
 
   /* Escape also resumes, with no movement on the transition frame. */
   keys[GLFW_KEY_ESCAPE] = GLFW_PRESS;
@@ -418,11 +454,11 @@ int main(void) {
   assert(application.paused);
   keys[GLFW_KEY_ESCAPE] = GLFW_RELEASE;
   frame(&application, 0.02);
-  frozen = application.player;
+  frozen = application.game.player;
   keys[GLFW_KEY_ESCAPE] = GLFW_PRESS;
   frame(&application, 0.02);
   assert(!application.paused && cursorMode == GLFW_CURSOR_DISABLED);
-  assert_player_unchanged(&application.player, &frozen);
+  assert_player_unchanged(&application.game.player, &frozen);
 
   keys[GLFW_KEY_ESCAPE] = GLFW_RELEASE;
   frame(&application, 0.02);
@@ -431,7 +467,7 @@ int main(void) {
   assert(application.paused);
   click_button(&application, "QUIT");
   assert(closeRequested);
-  world_destroy(&application.world);
+  world_destroy(&application.game.world);
   test_view_distance_settings(640, 480, 1);
   test_view_distance_settings(1280, 720, 2);
   test_view_distance_settings(480, 800, 2);

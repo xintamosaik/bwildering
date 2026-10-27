@@ -3,9 +3,9 @@ CFLAGS = -Wall -Wextra -O2 -std=c99
 LDFLAGS = -lGLEW -lglfw -lGL -lm -lpthread
 
 TARGET = bwildering
-COMMON_SRC = game_logic.c voxel_world.c storage.c performance.c ui.c input.c renderer.c
+COMMON_SRC = game.c game_logic.c voxel_world.c storage.c performance.c ui.c input.c renderer.c
 SRC = main.c application.c $(COMMON_SRC)
-APP_HEADERS = application.h application_internal.h renderer.h renderer_internal.h ui_draw.h view_settings.h ui.h input.h performance.h storage.h game_logic.h
+APP_HEADERS = game.h view.h application.h application_internal.h renderer.h renderer_internal.h ui_draw.h view_settings.h ui.h input.h performance.h storage.h game_logic.h
 FIXTURE_FLAGS = -DBW_RENDERER_TEST
 # Headless routing fixture links production modules and captures registered callbacks.
 PAUSE_WRAP = -Wl,--wrap=glfwSetFramebufferSizeCallback -Wl,--wrap=glfwSetWindowUserPointer -Wl,--wrap=glfwSetMouseButtonCallback -Wl,--wrap=glfwSetCursorPosCallback -Wl,--wrap=glfwSetKeyCallback -Wl,--wrap=glfwGetKey -Wl,--wrap=glfwGetMouseButton -Wl,--wrap=glfwGetInputMode -Wl,--wrap=glfwSetInputMode -Wl,--wrap=glfwGetTime -Wl,--wrap=glfwGetWindowUserPointer -Wl,--wrap=glfwGetCursorPos -Wl,--wrap=glfwGetWindowSize -Wl,--wrap=glfwGetFramebufferSize -Wl,--wrap=glfwSetWindowShouldClose -Wl,--wrap=glfwPollEvents
@@ -29,7 +29,8 @@ test_renderer: tests/test_renderer.c $(SRC) $(APP_HEADERS) tests/renderer_test.h
 test_pause_menu: tests/test_pause_menu.c $(SRC) $(APP_HEADERS) tests/renderer_test.h
 	$(CC) $(CFLAGS) tests/test_pause_menu.c application.c $(COMMON_SRC) $(FIXTURE_FLAGS) $(PAUSE_WRAP) -o $@ $(LDFLAGS)
 
-test: $(TEST_TARGET) test_allocation_failures test_pause_menu test_storage
+test: test_game $(TEST_TARGET) test_allocation_failures test_pause_menu test_storage
+	./test_game
 	./$(TEST_TARGET)
 	./test_allocation_failures
 	./test_pause_menu
@@ -40,6 +41,8 @@ test-renderer: test_renderer
 	./test_renderer
 
 test-sanitize:
+	$(CC) -Wall -Wextra -O1 -g -std=c99 -fsanitize=address,undefined -fno-omit-frame-pointer tests/test_game.c game.c game_logic.c voxel_world.c storage.c -o test_game_sanitize -lm
+	./test_game_sanitize
 	$(CC) -Wall -Wextra -O1 -g -std=c99 -fsanitize=address,undefined -fno-omit-frame-pointer tests/test_storage.c game_logic.c voxel_world.c storage.c -o test_storage_sanitize -lm
 	./test_storage_sanitize
 	$(CC) -Wall -Wextra -O1 -g -std=c99 -fsanitize=address,undefined -fno-omit-frame-pointer $(TEST_SRC) -o test_game_logic_sanitize -lm
@@ -50,7 +53,7 @@ test-sanitize:
 	./test_pause_menu_sanitize
 
 clean:
-	rm -f local_vertex_capture test_storage test_storage_sanitize allocation_capture section_storage_benchmark mesh_query_benchmark mesh_query_profile streaming_capture terrain_capture visibility_capture performance_capture $(TARGET) $(TEST_TARGET) test_allocation_failures test_renderer test_pause_menu test_game_logic_sanitize test_allocation_failures_sanitize test_pause_menu_sanitize
+	rm -f test_game test_game_sanitize local_vertex_capture test_storage test_storage_sanitize allocation_capture section_storage_benchmark mesh_query_benchmark mesh_query_profile streaming_capture terrain_capture visibility_capture performance_capture $(TARGET) $(TEST_TARGET) test_allocation_failures test_renderer test_pause_menu test_game_logic_sanitize test_allocation_failures_sanitize test_pause_menu_sanitize
 
 run: all
 	./$(TARGET)
@@ -89,3 +92,6 @@ test_storage: tests/test_storage.c game_logic.c voxel_world.c storage.c storage.
 # Opt-in real-GL representation/precision comparison; run serially.
 local_vertex_capture: tests/local_vertex_capture.c $(SRC) $(APP_HEADERS) tests/renderer_test.h
 	$(CC) $(CFLAGS) tests/local_vertex_capture.c application.c $(COMMON_SRC) $(FIXTURE_FLAGS) -o $@ $(LDFLAGS)
+
+test_game: tests/test_game.c game.c game.h game_logic.c voxel_world.c storage.c game_logic.h storage.h view.h
+	$(CC) $(CFLAGS) tests/test_game.c game.c game_logic.c voxel_world.c storage.c -o $@ -lm

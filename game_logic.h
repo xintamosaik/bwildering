@@ -14,15 +14,14 @@ typedef struct {
   float yaw;
   float pitch;
   Vec3 front;
-  Vec3 up;
-} Camera;
+} GameplayAim;
 
 typedef struct {
   Vec3 position;
   float velocityY;
   int grounded;
   float eyeHeight;
-  Camera camera;
+  GameplayAim aim;
   int crouching;
 } Player;
 

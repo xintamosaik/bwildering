@@ -17,36 +17,18 @@ static const double MAX_FRAME_DELTA_TIME = 0.25;
 #pragma endregion
 
 #pragma region Camera
-static void update_camera_front(Camera *const camera) {
-  const float radYaw = camera->yaw * 3.14159265f / 180.0f;
-  const float radPitch = camera->pitch * 3.14159265f / 180.0f;
-
-  camera->front.x = cosf(radYaw) * cosf(radPitch);
-  camera->front.y = sinf(radPitch);
-  camera->front.z = sinf(radYaw) * cosf(radPitch);
-  camera->front = vec3_normalize(camera->front);
-}
-
-static void update_camera(Camera *const camera, MouseInput *const input) {
-  const float sensitivity = 0.1f;
-  camera->yaw += (float)input->deltaX * sensitivity;
-  camera->pitch += (float)input->deltaY * sensitivity;
+static void update_look(GameplayAim *const aim, MouseInput *const input) {
+  *aim = game_aim(aim->yaw + (float)input->deltaX * 0.1f,
+                  aim->pitch + (float)input->deltaY * 0.1f);
   input->deltaX = 0.0;
   input->deltaY = 0.0;
-
-  if (camera->pitch > 89.0f)
-    camera->pitch = 89.0f;
-  if (camera->pitch < -89.0f)
-    camera->pitch = -89.0f;
-
-  update_camera_front(camera);
 }
 
 #pragma endregion
 
 #pragma region Application
 void application_shutdown(Application *const application) {
-  world_destroy(&application->world);
+  game_destroy(&application->game);
   if (application->rendererInitialized) {
     renderer_destroy(&application->renderer);
     application->rendererInitialized = 0;
@@ -62,15 +44,7 @@ void application_shutdown(Application *const application) {
 }
 
 int application_init(Application *const application) {
-  *application = (Application){
-      .player = {.position = {.x = 0.5f, .y = 0.0f, .z = 0.5f},
-                 .grounded = 1,
-                 .eyeHeight = 1.0f,
-                 .camera = {.yaw = -90.0f,
-                            .pitch = 0.0f,
-                            .front = {.x = 0.0f, .y = 0.0f, .z = -1.0f},
-                            .up = {.x = 0.0f, .y = 1.0f, .z = 0.0f}}},
-  };
+  *application = (Application){0};
 
   input_init(&application->input);
 
@@ -156,37 +130,19 @@ int application_init(Application *const application) {
              application->renderer.framebufferHeight);
 
   const double worldStart = perf_clock(&application->performance);
-  if (!create_terrain_streamed(&application->world, worldSide, CENTER,
-                       BLOCK_SIZE, WORLD_SEED) || !renderer_storage_limits(&application->world)) {
+  const GameConfig config = {worldSide, CENTER, BLOCK_SIZE, WORLD_SEED};
+  if (!game_init(&application->game, config) ||
+      !renderer_storage_limits(game_streaming_world(&application->game))) {
     fprintf(stderr, "Failed to create voxel terrain\n");
     application_shutdown(application);
     return 0;
   }
   application->worldMetadataSeconds = perf_clock(&application->performance) - worldStart;
 
-  /* Bounded deterministic search: prefer a grassy lowland near the start. */
-  for (int ring = 0, found = 0; ring <= 64 && !found; ring++)
-    for (int dx = -ring; dx <= ring && !found; dx++)
-      for (int dz = -ring; dz <= ring && !found; dz++) {
-        if (abs(dx) != ring && abs(dz) != ring) continue;
-        const int x = (int)floorf((application->player.position.x - application->world.origin.x) / BLOCK_SIZE) + dx * 16;
-        const int z = (int)floorf((application->player.position.z - application->world.origin.z) / BLOCK_SIZE) + dz * 16;
-        if (x < application->world.minX || x >= application->world.minX + worldSide ||
-            z < application->world.minZ || z >= application->world.minZ + worldSide) continue;
-        const TerrainColumn c = terrain_sample_column(application->world.terrainSeed, x, z);
-        if (c.material != BLOCK_TYPE_GRASS || c.height < 8 || c.height > 80) continue;
-        application->player.position.x = application->world.origin.x + ((float)x + 0.5f) * BLOCK_SIZE;
-        application->player.position.z = application->world.origin.z + ((float)z + 0.5f) * BLOCK_SIZE;
-        found = 1;
-      }
-  if (!player_spawn_on_surface(&application->player, &application->world)) {
-    fprintf(stderr, "Failed to find safe terrain for spawning\n");
-    application_shutdown(application);
-    return 0;
-  }
+  application->pendingAim = game_player(&application->game)->aim;
 
   const double syncStart = perf_clock(&application->performance);
-  if (!renderer_sync_view(&application->renderer, &application->world, &application->player)) {
+  if (!renderer_sync_view(&application->renderer, game_streaming_world(&application->game), game_player(&application->game))) {
     fprintf(stderr,"Failed to build or upload section meshes\n");
     application_shutdown(application);
     return 0;
@@ -215,6 +171,7 @@ static void application_discard_gameplay(Application *const application) {
   application->jumpQueued = 0;
   application->placeQueued = 0;
   application->removeQueued = 0;
+  application->pendingAim = game_player(&application->game)->aim;
   input_discard(&application->input);
 }
 
@@ -302,7 +259,7 @@ void application_update(Application *const application) {
     return;
 
   /* Retain a new jump press until a simulation tick can consume it. */
-  update_camera(&application->player.camera, &application->input.mouse);
+  update_look(&application->pendingAim, &application->input.mouse);
   PlayerInput input = input_player(&application->input);
   if (application->input.pressed & INPUT_JUMP)
     application->jumpQueued = 1;
@@ -310,26 +267,23 @@ void application_update(Application *const application) {
   application->removeQueued |= (application->input.pressed & INPUT_REMOVE) != 0;
   input.jump = 0;
 
-  /* Advance physics at a fixed rate, independent of rendering frequency. */
+  /* One bounded command per fixed tick; one-shot presses coalesce until used. */
   application->simulationAccumulator += deltaTime;
   while (application->simulationAccumulator >= FIXED_DELTA_TIME) {
     input.jump = application->jumpQueued;
-    update_player(&application->player, input, (float)FIXED_DELTA_TIME,
-                  &application->world);
+    const int captured = glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED;
+    const GameCommand command = {
+        .movement = input, .yaw = application->pendingAim.yaw,
+        .pitch = application->pendingAim.pitch,
+        .place = captured && application->placeQueued,
+        .remove = captured && application->removeQueued,
+        .material = BLOCK_TYPE_STONE,
+    };
+    game_step(&application->game, command);
     application->jumpQueued = 0;
-    application->simulationAccumulator -= FIXED_DELTA_TIME;
-  }
-
-  /* Apply queued block edits once per rendered frame. */
-  if (application->placeQueued) {
-    if (glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED)
-      player_place_block(&application->world, &application->player, BLOCK_TYPE_STONE, 6.0f);
     application->placeQueued = 0;
-  }
-  if (application->removeQueued) {
-    if (glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED)
-      player_remove_block(&application->world, &application->player, 6.0f);
     application->removeQueued = 0;
+    application->simulationAccumulator -= FIXED_DELTA_TIME;
   }
 }
 
@@ -345,13 +299,14 @@ void application_render(Application *const application) {
   }
   glClearColor(0.15f, 0.15f, 0.2f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-  render_world(&application->renderer, &application->player);
+  render_world(&application->renderer, player_view(game_player(&application->game),
+                                                      application->pendingAim));
   const UiDrawContext draw = renderer_ui_context(&application->renderer);
   const UiFrame frame = {
       .fps = application->fps, .paused = application->paused,
       .viewDistance = renderer_view_distance(&application->renderer),
       .performance = p, .residentChunks = application->residentChunks,
-      .sections = application->world.sectionCount, .editedChunks = application->editedChunks,
+      .sections = game_world(&application->game)->sectionCount, .editedChunks = application->editedChunks,
       .dirtySections = application->dirtySections,
       .neighborhoodSlots = renderer_neighborhood_slots(&application->renderer),
       .gpuBytes = application->gpuBytes,
@@ -380,7 +335,7 @@ int application_frame(Application *const a) {
   }
 
   start = perf_clock(p);
-  const StreamResult result = renderer_step_view(&a->renderer, &a->world, &a->player);
+  const StreamResult result = renderer_step_view(&a->renderer, game_streaming_world(&a->game), game_player(&a->game));
   if (p->enabled) p->frame.sync = perf_clock(p) - start;
 
   application_render(a);

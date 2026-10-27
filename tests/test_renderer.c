@@ -132,11 +132,11 @@ static void assert_empty_gpu_world(Renderer *renderer) {
     assert(!renderer->meshes[i].vao && !renderer->meshes[i].vbo);
     assert(vertex_count(&renderer->meshes[i]) == 0);
   }
-  Player player = {.camera = {.front = {0, 0, -1}, .up = {0, 1, 0}}};
+  Player player = {.aim = {.front = {0, 0, -1}}};
   GLuint query, primitives;
   glGenQueries(1, &query);
   glBeginQuery(GL_PRIMITIVES_GENERATED, query);
-  render_world(renderer, &player);
+  render_world(renderer, player_committed_view(&player));
   glEndQuery(GL_PRIMITIVES_GENERATED);
   glGetQueryObjectuiv(query, GL_QUERY_RESULT, &primitives);
   assert(primitives == 0);
@@ -164,7 +164,7 @@ static DepthFrame capture_world(Renderer *renderer, const Player *player) {
   glEnable(GL_DEPTH_TEST);
   glClearDepth(1);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-  render_world(renderer, player);
+  render_world(renderer, player_committed_view(player));
   glReadPixels(0, 0, width, height, GL_DEPTH_COMPONENT, GL_FLOAT, frame.depth);
   for (size_t i = 0; i < frame.count; i++) {
     assert(isfinite(frame.depth[i]) && frame.depth[i] >= 0 && frame.depth[i] <= 1);
@@ -221,7 +221,7 @@ static void render_unculled(const Renderer *const renderer, const Player *const 
                   (float)AUDIT_WIDTH / (float)AUDIT_HEIGHT, 0.05f,
                   renderer->viewDistance, projection);
   const Vec3 eye = player_eye_position(player);
-  mat4_lookat(eye, vec3_add(eye, player->camera.front), player->camera.up, view);
+  mat4_lookat(eye, vec3_add(eye, player->aim.front), (Vec3){0.0f, 1.0f, 0.0f}, view);
   mat4_multiply(projection, view, mvp);
   glUseProgram(renderer->program);
   glUniformMatrix4fv(renderer->mvpLocation, 1, GL_FALSE, mvp);
@@ -270,7 +270,7 @@ static void assert_unculled_parity(Renderer *const renderer, const Player *const
     auditRangeCount = 0;
     glBeginQuery(GL_PRIMITIVES_GENERATED, query);
     if (reference) render_unculled(renderer, player);
-    else render_world(renderer, player);
+    else render_world(renderer, player_committed_view(player));
     glEndQuery(GL_PRIMITIVES_GENERATED);
     auditRenderer = NULL;
     GLuint primitives = 0;
@@ -321,7 +321,7 @@ static void test_unculled_transforms_seams_and_destruction(void) {
           assert(world_set_block(&world, x, y, z, x < 0 ? BLOCK_TYPE_STONE : BLOCK_TYPE_SNOW));
     assert(renderer_sync_world(&renderer, &world));
     Player player = {.eyeHeight = 0.0f,
-        .camera = {.front = {0, 0, -1}, .up = {0, 1, 0}}};
+        .aim = {.front = {0, 0, -1}}};
     const Vec3 positions[] = {{-0.5f, -0.5f, 0}, {-0.5f, -0.5f, -14.98f},
                               {-0.5f, -0.5f, 9.5f}, {-0.5f, -0.5f, 10.5f}};
     for (size_t pose = 0; pose < 4; pose++) {
@@ -334,15 +334,15 @@ static void test_unculled_transforms_seams_and_destruction(void) {
     /* Move the wall across both side planes and behind the camera. */
     const float yaws[] = {-0.8f, -0.7f, 0.0f, 0.7f, 0.8f, 3.14159265f};
     for (size_t pose = 0; pose < sizeof(yaws) / sizeof(*yaws); pose++) {
-      player.camera.front = (Vec3){sinf(yaws[pose]), 0, -cosf(yaws[pose])};
+      player.aim.front = (Vec3){sinf(yaws[pose]), 0, -cosf(yaws[pose])};
       assert_unculled_parity(&renderer, &player, pose == 2 ? 1 : pose == 5 ? 0 : -1);
     }
     const float pitches[] = {-0.8f, -0.7f, 0.7f, 0.8f};
     for (size_t pose = 0; pose < sizeof(pitches) / sizeof(*pitches); pose++) {
-      player.camera.front = (Vec3){0, sinf(pitches[pose]), -cosf(pitches[pose])};
+      player.aim.front = (Vec3){0, sinf(pitches[pose]), -cosf(pitches[pose])};
       assert_unculled_parity(&renderer, &player, -1);
     }
-    player.camera.front = (Vec3){0, 0, -1};
+    player.aim.front = (Vec3){0, 0, -1};
     player.position = vec3_add(origins[fixture], (Vec3){-0.5f * scales[fixture],
         -0.5f * scales[fixture], MAX_VIEW_DISTANCE - 15.0f * scales[fixture] - 0.5f});
     assert_unculled_parity(&renderer, &player, 1);
@@ -392,7 +392,7 @@ static void test_rendered_pending_edits_and_cancellation(void) {
   World world = {0}, referenceWorld = {0};
   Renderer reference = {0};
   Player player = {.position = {-0.5f, 400.5f, 0.0f}, .eyeHeight = 0.0f,
-      .camera = {.front = {0, 0, -1}, .up = {0, 1, 0}}};
+      .aim = {.front = {0, 0, -1}}};
   const StreamBudget paused = {.operations = 0, .bytes = SIZE_MAX};
   const StreamBudget batch = {.operations = 16, .bytes = SIZE_MAX};
   assert(renderer_init(&renderer));
@@ -471,14 +471,14 @@ static void test_rendered_movement(void) {
       assert(world_set_block(&world, 0, y, z, BLOCK_TYPE_STONE));
   assert(renderer_sync_world(renderer, &world));
   Player player = {.position = {-1, 0, 2}, .grounded = 1, .eyeHeight = 1,
-                   .camera = {.front = {0, 0, -1}, .up = {0, 1, 0}}};
+                   .aim = {.front = {0, 0, -1}}};
   DepthFrame initialView = capture_world(renderer, &player);
   assert_terrain_visible(&initialView);
   for (int frame = 0; frame < 60; frame++) {
     update_player(&player, (PlayerInput){.strafe = 1, .forward = 1},
                    1.0f / 60, &world);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    render_world(renderer, &player);
+    render_world(renderer, player_committed_view(&player));
     assert(glGetError() == GL_NO_ERROR);
   }
   assert(fabsf(player.position.x + 0.25f) < 0.0001f);
@@ -492,7 +492,7 @@ static void test_rendered_movement(void) {
     update_player(&player, (PlayerInput){.jump = frame == 0}, 1.0f / 60, &world);
     peak = fmaxf(peak, player.position.y);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    render_world(renderer, &player);
+    render_world(renderer, player_committed_view(&player));
     assert(glGetError() == GL_NO_ERROR);
     if (!capturedAirborneView && player.position.y > 0.5f) {
       DepthFrame airborneView = capture_world(renderer, &player);
@@ -531,7 +531,7 @@ static void test_view_distance_and_edits_change_rendered_geometry(void) {
       assert(world_set_block(&world, x, y, -50, BLOCK_TYPE_STONE));
   assert(renderer_sync_world(&renderer, &world));
   Player player = {.position = {0, 7.5f, 0}, .eyeHeight = 1,
-      .camera = {.front = {0, 0, -1}, .up = {0, 1, 0}}};
+      .aim = {.front = {0, 0, -1}}};
   renderer.viewDistance = 25;
   DepthFrame tooFar = capture_world(&renderer, &player);
   assert(tooFar.covered == 0);
@@ -569,11 +569,11 @@ static void test_view_distance_and_edits_change_rendered_geometry(void) {
     if (!attempt) renderer.drawMeshCapacity = 1;
   }
   renderer.performance = NULL;
-  player.camera.front.z = 1;
+  player.aim.front.z = 1;
   DepthFrame behind = capture_world(&renderer, &player);
   assert(!behind.covered && !renderer.drawMeshCount);
   free(behind.depth);
-  player.camera.front.z = -1;
+  player.aim.front.z = -1;
   free(visible.depth);
   renderer.viewDistance = 25;
   player.position.z = -24.5f; /* Wall straddles the far clip plane. */
@@ -612,7 +612,7 @@ static void test_streamed_exploration_revisits_edited_terrain(void) {
   renderer.viewDistance = 25;
   int height = terrain_sample_column(seed, 0, 0).height;
   Player player = {.position = {0.5f, (float)height + 8.0f, 4.5f}, .eyeHeight = 1,
-      .camera = {.front = {0, -0.8944272f, -0.4472136f}, .up = {0, 1, 0}}};
+      .aim = {.front = {0, -0.8944272f, -0.4472136f}}};
   assert(renderer_sync_view(&renderer, &world, &player));
   DepthFrame before = capture_world(&renderer, &player);
   assert_terrain_visible(&before);
@@ -812,21 +812,21 @@ static void test_performance_counters(void) {
   a.renderer.performance = &a.performance;
   a.renderer.framebufferWidth = 640;
   a.renderer.framebufferHeight = 480;
-  assert(world_init(&a.world, 16, (Vec3){0}, 1));
-  assert(renderer_sync_world(&a.renderer, &a.world));
+  assert(world_init(&a.game.world, 16, (Vec3){0}, 1));
+  assert(renderer_sync_world(&a.renderer, &a.game.world));
   Player player = {.position = {0, 0, 5}, .eyeHeight = 1,
-      .camera = {.front = {0, 0, -1}, .up = {0, 1, 0}}};
-  render_world(&a.renderer, &player);
+      .aim = {.front = {0, 0, -1}}};
+  render_world(&a.renderer, player_committed_view(&player));
   performance_snapshot(&a);
   assert(!a.residentChunks && !a.dirtySections && !a.gpuBytes);
   assert(!a.performance.frame.draws && !a.performance.frame.uploadCalls);
   assert(!a.performance.frame.distanceTests && !a.performance.frame.frustumTests);
   assert(!a.renderer.drawMeshCount && !a.renderer.drawMeshCapacity);
-  assert(world_set_block(&a.world, 0, 0, 0, BLOCK_TYPE_STONE));
+  assert(world_set_block(&a.game.world, 0, 0, 0, BLOCK_TYPE_STONE));
   performance_snapshot(&a);
   assert(a.residentChunks == 1 && a.dirtySections == 1);
-  assert(renderer_sync_world(&a.renderer, &a.world));
-  render_world(&a.renderer, &player);
+  assert(renderer_sync_world(&a.renderer, &a.game.world));
+  render_world(&a.renderer, player_committed_view(&player));
   performance_snapshot(&a);
   assert(a.performance.frame.rebuilds == 1 && a.performance.frame.uploadCalls == 1);
   assert(a.performance.frame.uploadBytes == 36 * sizeof(SurfaceVertex));
@@ -834,23 +834,23 @@ static void test_performance_counters(void) {
   assert(a.performance.frame.draws == 1 && a.performance.frame.triangles == 12);
   assert(a.performance.frame.distanceTests == 1 && a.performance.frame.frustumTests == 1);
   /* Multiple materials in the same section still need just one visibility test. */
-  assert(world_set_block(&a.world, 2, 0, 0, BLOCK_TYPE_GRASS));
-  assert(renderer_sync_world(&a.renderer, &a.world));
+  assert(world_set_block(&a.game.world, 2, 0, 0, BLOCK_TYPE_GRASS));
+  assert(renderer_sync_world(&a.renderer, &a.game.world));
   performance_reset(&a.performance);
-  render_world(&a.renderer, &player);
+  render_world(&a.renderer, player_committed_view(&player));
   assert(a.performance.frame.distanceTests == 1 && a.performance.frame.frustumTests == 1);
   assert(a.performance.frame.draws == 2 && a.performance.frame.triangles == 24);
-  assert(world_set_block(&a.world, 2, 0, 0, BLOCK_TYPE_EMPTY));
-  assert(renderer_sync_world(&a.renderer, &a.world));
+  assert(world_set_block(&a.game.world, 2, 0, 0, BLOCK_TYPE_EMPTY));
+  assert(renderer_sync_world(&a.renderer, &a.game.world));
   performance_snapshot(&a);
   assert(a.gpuBytes == 36 * sizeof(SurfaceVertex) && !a.dirtySections);
   /* Failed requests count as work while committed storage stays unchanged. */
-  assert(world_set_block(&a.world, 0, 0, 0, BLOCK_TYPE_GRASS));
+  assert(world_set_block(&a.game.world, 0, 0, 0, BLOCK_TYPE_GRASS));
   performance_reset(&a.performance);
   real_buffer_upload = __glewBufferData;
   uploads_before_failure = 0;
   __glewBufferData = fail_buffer_upload;
-  int uploaded = renderer_sync_world(&a.renderer, &a.world);
+  int uploaded = renderer_sync_world(&a.renderer, &a.game.world);
   __glewBufferData = real_buffer_upload;
   assert(!uploaded);
   performance_snapshot(&a);
@@ -858,20 +858,20 @@ static void test_performance_counters(void) {
   assert(a.performance.frame.uploadBytes == 36 * sizeof(SurfaceVertex));
   assert(a.gpuBytes == 36 * sizeof(SurfaceVertex) && a.dirtySections == 1);
   performance_reset(&a.performance);
-  assert(renderer_sync_world(&a.renderer, &a.world));
+  assert(renderer_sync_world(&a.renderer, &a.game.world));
   performance_snapshot(&a);
   assert(a.performance.frame.rebuilds == 1 && a.performance.frame.uploadCalls == 1);
   assert(a.performance.frame.uploadBytes == 36 * sizeof(SurfaceVertex));
   assert(a.gpuBytes == 36 * sizeof(SurfaceVertex) && !a.dirtySections);
-  assert(world_set_block(&a.world, 0, 0, 0, BLOCK_TYPE_EMPTY));
+  assert(world_set_block(&a.game.world, 0, 0, 0, BLOCK_TYPE_EMPTY));
   performance_reset(&a.performance);
-  assert(renderer_sync_world(&a.renderer, &a.world));
-  render_world(&a.renderer, &player);
+  assert(renderer_sync_world(&a.renderer, &a.game.world));
+  render_world(&a.renderer, player_committed_view(&player));
   performance_snapshot(&a);
-  assert(a.residentChunks == 1 && a.world.sectionCount == 1); /* Retirement marker. */
+  assert(a.residentChunks == 1 && a.game.world.sectionCount == 1); /* Retirement marker. */
   assert(!a.gpuBytes && !a.performance.frame.uploadBytes && !a.performance.frame.draws);
   renderer_destroy(&a.renderer);
-  world_destroy(&a.world);
+  world_destroy(&a.game.world);
 }
 
 static void test_sparse_vertical_renderer(void) {
@@ -1204,13 +1204,13 @@ int main(void) {
   double startup = 1000 * (glfwGetTime() - start);
   Player player = {.position = {0, 24, 32},
                    .eyeHeight = 1,
-                   .camera = {.front = {0, -0.4472136f, -0.8944272f}, .up = {0, 1, 0}}};
+                   .aim = {.front = {0, -0.4472136f, -0.8944272f}}};
   player.position.y = world_surface_height(&world, player.position.x, player.position.z) + 24;
   mat4 projection, view, mvp;
   mat4_perspective(75.0f * (3.14159f / 180), 640.0f / 480, 0.05f, 100, projection);
   Vec3 eye = player.position;
   eye.y += player.eyeHeight;
-  mat4_lookat(eye, vec3_add(eye, player.camera.front), player.camera.up, view);
+  mat4_lookat(eye, vec3_add(eye, player.aim.front), (Vec3){0.0f, 1.0f, 0.0f}, view);
   mat4_multiply(projection, view, mvp);
   size_t draws = 0;
   for (size_t i = 0; i < renderer.meshCount; i++)
@@ -1223,13 +1223,13 @@ int main(void) {
   glViewport(0, 0, 640, 480);
   for (int i = 0; i < 10; i++) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    render_world(&renderer, &player);
+    render_world(&renderer, player_committed_view(&player));
   }
   glFinish();
   start = glfwGetTime();
   for (int i = 0; i < 120; i++) {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    render_world(&renderer, &player);
+    render_world(&renderer, player_committed_view(&player));
     glFinish();
   }
   printf("GL renderer: %s; startup %.3f ms; frame %.3f ms\n", (const char *)glGetString(GL_RENDERER),
@@ -1266,21 +1266,21 @@ int main(void) {
   for (size_t n = 0; n < application.renderer.visibleMeshCount; n++)
     terrainVertices += vertex_count(&application.renderer.meshes[application.renderer.visibleMeshes[n]]);
   printf("Default %dx%d world: startup %.1f ms, %zu resident sections, %.1f MiB terrain vertices\n",
-         application.world.blocksPerSide, application.world.blocksPerSide,
-         1000 * (glfwGetTime() - applicationStart), application.world.sectionCount,
+         application.game.world.blocksPerSide, application.game.world.blocksPerSide,
+         1000 * (glfwGetTime() - applicationStart), application.game.world.sectionCount,
          (double)(terrainVertices * sizeof(SurfaceVertex)) / (1024.0 * 1024.0));
-  assert(application.world.blocksPerSide == PLATFORM_BLOCKS_PER_SIDE);
-  float spawnY = world_surface_height(&application.world, application.player.position.x,
-                                      application.player.position.z);
-  assert(isfinite(spawnY) && application.player.position.y == spawnY);
+  assert(application.game.world.blocksPerSide == PLATFORM_BLOCKS_PER_SIDE);
+  float spawnY = world_surface_height(&application.game.world, application.game.player.position.x,
+                                      application.game.player.position.z);
+  assert(isfinite(spawnY) && application.game.player.position.y == spawnY);
   for (int i = 0; i < 60; i++)
-    update_player(&application.player, (PlayerInput){0}, 1.0f / 60, &application.world);
-  assert(application.player.grounded && application.player.position.y == spawnY);
-  DepthFrame spawnView = capture_world(&application.renderer, &application.player);
+    game_step(&application.game, (GameCommand){.yaw = -90.0f});
+  assert(application.game.player.grounded && application.game.player.position.y == spawnY);
+  DepthFrame spawnView = capture_world(&application.renderer, &application.game.player);
   assert_terrain_visible(&spawnView);
   free(spawnView.depth);
-  update_player(&application.player, (PlayerInput){.jump = 1}, 1.0f / 60, &application.world);
-  assert(!application.player.grounded && application.player.position.y > spawnY);
+  game_step(&application.game, (GameCommand){.yaw = -90.0f, .movement.jump = 1});
+  assert(!application.game.player.grounded && application.game.player.position.y > spawnY);
   printf("Application spawn surface: %.1f; grounded and jump checks passed.\n", spawnY);
   /* A pending resize is applied exactly once, without polling window sizes. */
   const GLFWframebuffersizefun resize = glfwSetFramebufferSizeCallback(application.window, NULL);
@@ -1303,7 +1303,7 @@ int main(void) {
     assert(glGetError() == GL_NO_ERROR);
   }
   application_shutdown(&application);
-  assert(!application.world.chunks && !application.renderer.meshes);
+  assert(!application.game.world.chunks && !application.renderer.meshes);
   puts("All renderer and application smoke tests passed.");
   return 0;
 }

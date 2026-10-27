@@ -14,14 +14,14 @@ static void capture(Application *a, const char *label, int traversal, int edits)
     double start = glfwGetTime();
     if (traversal) {
       const int step = frame < 15 ? frame : 29 - frame;
-      a->player.position.x = 0.5f + (float)step * SECTION_SIZE;
-      assert(player_spawn_on_surface(&a->player, &a->world));
+      a->game.player.position.x = 0.5f + (float)step * SECTION_SIZE;
+      assert(player_spawn_on_surface(&a->game.player, &a->game.world));
     }
     if (edits && frame % 5 == 0) {
       /* A face shared in X and Y; alternately add/remove across section edges. */
       BlockType type = (frame / 5) % 2 ? BLOCK_TYPE_EMPTY : BLOCK_TYPE_STONE;
-      assert(world_set_block(&a->world, 15, 63, 0, type));
-      assert(world_set_block(&a->world, 16, 64, 0, type));
+      assert(world_set_block(&a->game.world, 15, 63, 0, type));
+      assert(world_set_block(&a->game.world, 16, 64, 0, type));
     }
     assert(application_frame(a));
     assert(glGetError() == GL_NO_ERROR);
@@ -38,7 +38,7 @@ static void capture(Application *a, const char *label, int traversal, int edits)
   perf_finish_window(&wall);
   printf("CAPTURE phase=%s instrumentation=%d overlay=%d side=%d distance=%.0f "
          "frames=%zu wall_ms=%.3f/%.3f/%.3f\n", label, a->performance.enabled,
-         a->performance.overlay, a->world.blocksPerSide, a->renderer.viewDistance,
+         a->performance.overlay, a->game.world.blocksPerSide, a->renderer.viewDistance,
          wall.count, wall.average*1000, wall.p95*1000, wall.maximum*1000);
 }
 
@@ -50,10 +50,10 @@ int main(void) {
   double start = glfwGetTime();
   assert(application_init(&a));
   printf("CAPTURE compiler=%s seed=%u resolution=%dx%d swap_interval=0 overlay=%d\n",
-         __VERSION__, a.world.terrainSeed, a.renderer.framebufferWidth,
+         __VERSION__, a.game.world.terrainSeed, a.renderer.framebufferWidth,
          a.renderer.framebufferHeight, a.performance.overlay);
   printf("CAPTURE startup_wall_ms=%.3f side=%d instrumentation=%d GL_renderer=%s\n",
-         (glfwGetTime()-start)*1000, a.world.blocksPerSide, a.performance.enabled,
+         (glfwGetTime()-start)*1000, a.game.world.blocksPerSide, a.performance.enabled,
          (const char *)glGetString(GL_RENDERER));
   const float distances[] = {25, 100, 300};
   for (size_t i = 0; i < sizeof(distances)/sizeof(*distances); i++) {

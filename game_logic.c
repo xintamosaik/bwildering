@@ -340,7 +340,7 @@ static int player_view_block(const World *const world, const Player *const playe
 
   /* Normalize the ray so face-crossing distances use world units. */
   const Vec3 eye = player_eye_position(player);
-  const Vec3 front = player->camera.front;
+  const Vec3 front = player->aim.front;
   const double length = sqrt((double)front.x * front.x + (double)front.y * front.y +
                        (double)front.z * front.z);
   if (!isfinite(length) || length == 0)
@@ -533,8 +533,8 @@ void update_player(Player *const updatedPlayer, const PlayerInput input, const f
   updatedPlayer->crouching = input.crouch != 0;
   const float speed = 4.0f * (input.crouch ? 0.75f : input.run ? 1.5f : 1.0f);
   const Vec3 forward =
-      vec3_normalize((Vec3){.x = updatedPlayer->camera.front.x, .y = 0, .z = updatedPlayer->camera.front.z});
-  const Vec3 right = vec3_normalize(vec3_cross(forward, updatedPlayer->camera.up));
+      vec3_normalize((Vec3){.x = updatedPlayer->aim.front.x, .y = 0, .z = updatedPlayer->aim.front.z});
+  const Vec3 right = vec3_normalize(vec3_cross(forward, (Vec3){0.0f, 1.0f, 0.0f}));
   Vec3 movement =
       vec3_add(vec3_scale(forward, input.forward), vec3_scale(right, input.strafe));
   if (vec3_dot(movement, movement) > 1)

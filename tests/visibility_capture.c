@@ -31,8 +31,8 @@ static void render_reference(Renderer *renderer, const Player *player) {
   const float viewDistance = renderer->viewDistance > 0 ? renderer->viewDistance : DEFAULT_VIEW_DISTANCE;
   mat4_perspective(75.0f * (3.14159f / 180.0f), aspectRatio, 0.05f, viewDistance, proj);
   const Vec3 cameraPosition = player_eye_position(player);
-  const Vec3 target = vec3_add(cameraPosition, player->camera.front);
-  mat4_lookat(cameraPosition, target, player->camera.up, view);
+  const Vec3 target = vec3_add(cameraPosition, player->aim.front);
+  mat4_lookat(cameraPosition, target, (Vec3){0.0f, 1.0f, 0.0f}, view);
   mat4_multiply(proj, view, mvp);
 
   glUniformMatrix4fv(renderer->mvpLocation, 1, GL_FALSE, (float *)mvp);
@@ -73,8 +73,8 @@ static void render_section_first(Renderer *renderer, const Player *player) {
   const float viewDistance = renderer->viewDistance > 0 ? renderer->viewDistance : DEFAULT_VIEW_DISTANCE;
   mat4_perspective(75.0f * (3.14159f / 180.0f), aspectRatio, 0.05f, viewDistance, proj);
   const Vec3 cameraPosition = player_eye_position(player);
-  const Vec3 target = vec3_add(cameraPosition, player->camera.front);
-  mat4_lookat(cameraPosition, target, player->camera.up, view);
+  const Vec3 target = vec3_add(cameraPosition, player->aim.front);
+  mat4_lookat(cameraPosition, target, (Vec3){0.0f, 1.0f, 0.0f}, view);
   mat4_multiply(proj, view, mvp);
 
   double start = perf_clock(renderer->performance);
@@ -111,8 +111,12 @@ static int compare_range(const void *a, const void *b) {
   return (x->count > y->count) - (x->count < y->count);
 }
 
+static void render_committed(Renderer *const renderer, const Player *const player) {
+  render_world(renderer, player_committed_view(player));
+}
+
 typedef void (*Draw)(Renderer *, const Player *);
-static Draw orders[] = {render_reference, render_world, render_section_first};
+static Draw orders[] = {render_reference, render_committed, render_section_first};
 static const char *names[] = {"reference", "material", "section"};
 
 typedef struct {
@@ -226,7 +230,7 @@ int main(void) {
     if (streamed) assert(create_terrain_streamed(&world, 4608, (Vec3){0}, 1, WORLD_SEED));
     else assert(create_terrain(&world, 192, (Vec3){0}, 1, WORLD_SEED));
     Player player = {.position = {0.5f, 0, 0.5f}, .eyeHeight = 1,
-        .camera = {.front = {0, -0.4472136f, -0.8944272f}, .up = {0, 1, 0}}};
+        .aim = {.front = {0, -0.4472136f, -0.8944272f}}};
     player.position.y = world_surface_height(&world, player.position.x, player.position.z) + 8;
     const float distances[] = {25, 100, 300};
     for (size_t i = 0; i < 3; i++) {

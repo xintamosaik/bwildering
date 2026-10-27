@@ -23,3 +23,6 @@ allocation_capture
 test_storage
 test_storage_sanitize
 local_vertex_capture
+
+/test_game
+/test_game_sanitize

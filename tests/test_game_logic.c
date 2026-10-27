@@ -18,7 +18,7 @@ static World single_block_world(void) {
 static Player make_player(Vec3 position, int grounded) {
   return (Player){.position = position,
                   .grounded = grounded,
-                  .camera = {.front = {0, 0, -1}, .up = {0, 1, 0}}};
+                  .aim = {.front = {0, 0, -1}}};
 }
 static void set_column(World *world, int gridX, int gridZ, int height, BlockType type) {
   for (int y = WORLD_MIN_SECTION_Y * SECTION_SIZE;
@@ -1258,7 +1258,7 @@ static void test_place_block_on_viewed_face(void) {
         Vec3 eye = vec3_sub(center, vec3_scale(direction, 5 * size));
         Player player = make_player(vec3_sub(eye, (Vec3){0, 1, 0}), 0);
         player.eyeHeight = 1;
-        player.camera.front = direction;
+        player.aim.front = direction;
         assert(player_place_block(&world, &player, BLOCK_TYPE_STONE, 12));
         assert(world_get_block(&world, x - directions[d][0], -directions[d][1],
                                z - directions[d][2]) == BLOCK_TYPE_STONE);
@@ -1275,7 +1275,7 @@ static void test_placement_reach_misses_and_player_overlap(void) {
   assert(world_init(&world, 32, (Vec3){0}, 1));
   Player player = make_player((Vec3){0.5f, 0, 0.5f}, 0);
   player.eyeHeight = 1;
-  player.camera.front = (Vec3){1, 0, 0};
+  player.aim.front = (Vec3){1, 0, 0};
   assert(!player_place_block(&world, &player, BLOCK_TYPE_STONE, 6));
   assert(world_set_block(&world, 7, 1, 0, BLOCK_TYPE_GRASS));
   assert(!player_place_block(&world, &player, BLOCK_TYPE_STONE, 6));
@@ -1303,7 +1303,7 @@ static void test_placement_reach_misses_and_player_overlap(void) {
   assert(world_set_block(&world, 0, 0, 0, BLOCK_TYPE_GRASS));
   player = make_player((Vec3){-2, -0.5f, 0.5f}, 0);
   player.eyeHeight = 1;
-  player.camera.front = (Vec3){1, 0, 0};
+  player.aim.front = (Vec3){1, 0, 0};
   assert(!player_place_block(&world, &player, BLOCK_TYPE_STONE, 6));
   assert(world_get_block(&world, -1, 0, 0) == BLOCK_TYPE_EMPTY);
   world_destroy(&world);
@@ -1315,13 +1315,13 @@ static void test_placement_oblique_view_and_reach_boundary(void) {
   assert(world_set_block(&world, 3, 1, 1, BLOCK_TYPE_GRASS));
   Player player = make_player((Vec3){0.5f, 0.5f, 0.5f}, 0);
   player.eyeHeight = 1;
-  player.camera.front = (Vec3){3, 0, 1};
+  player.aim.front = (Vec3){3, 0, 1};
   assert(player_place_block(&world, &player, BLOCK_TYPE_STONE, 6));
   assert(world_get_block(&world, 2, 1, 1) == BLOCK_TYPE_STONE);
   world_destroy(&world);
   assert(world_init(&world, 16, (Vec3){0}, 1));
   assert(world_set_block(&world, 3, 1, 0, BLOCK_TYPE_GRASS));
-  player.camera.front = (Vec3){1, 0, 0};
+  player.aim.front = (Vec3){1, 0, 0};
   assert(!player_place_block(&world, &player, BLOCK_TYPE_STONE, 2.49f));
   assert(player_place_block(&world, &player, BLOCK_TYPE_STONE, 2.5f));
   assert(world_get_block(&world, 2, 1, 0) == BLOCK_TYPE_STONE);
@@ -1352,7 +1352,7 @@ static void test_remove_nearest_block_and_update_mesh(void) {
       Vec3 eye = vec3_sub(center, vec3_scale(direction, 2 * size));
       Player player = make_player(vec3_sub(eye, (Vec3){0, 1, 0}), 0);
       player.eyeHeight = 1;
-      player.camera.front = direction;
+      player.aim.front = direction;
       size_t draws, sections;
       assert(mesh_world(&world, &draws, &sections) == 60);
       assert(player_remove_block(&world, &player, 6));
@@ -1372,7 +1372,7 @@ static void test_removal_reach_crouched_aim_and_collision(void) {
   assert(world_init(&world, 16, (Vec3){0}, 1));
   Player player = make_player((Vec3){0.5f, 0, 0.5f}, 0);
   player.eyeHeight = 1;
-  player.camera.front = (Vec3){1, 0, 0};
+  player.aim.front = (Vec3){1, 0, 0};
   assert(world_set_block(&world, 7, 1, 0, BLOCK_TYPE_STONE));
   assert(!player_remove_block(&world, &player, 6));
   assert(world_get_block(&world, 7, 1, 0) == BLOCK_TYPE_STONE);
@@ -1390,7 +1390,7 @@ static void test_removal_reach_crouched_aim_and_collision(void) {
   world = single_block_world();
   player = make_player((Vec3){0}, 1);
   player.eyeHeight = 1;
-  player.camera.front = (Vec3){0, -1, 0};
+  player.aim.front = (Vec3){0, -1, 0};
   assert(player_remove_block(&world, &player, 6));
   update_player(&player, (PlayerInput){0}, 0.1f, &world);
   assert(!player.grounded && player.position.y < 0);
@@ -1751,7 +1751,7 @@ static void test_layered_generation_and_sparse_edits(void) {
     assert(p.grounded);
     assert_near(p.position.y, y + 1);
     assert(world_set_block(&w, 0, y - 1, 0, BLOCK_TYPE_STONE));
-    p.camera.front = (Vec3){0, -1, 0};
+    p.aim.front = (Vec3){0, -1, 0};
     assert(player_remove_block(&w, &p, 4));
     assert(world_get_block(&w, 0, y, 0) == BLOCK_TYPE_EMPTY);
     assert(player_place_block(&w, &p, BLOCK_TYPE_GRAVEL, 4));

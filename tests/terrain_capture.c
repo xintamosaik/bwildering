@@ -43,14 +43,14 @@ int main(void) {
       }
     assert(found);
     Player p = {.position = {(float)wx + 0.5f, (float)column.height + 24.0f, (float)wz + 32.5f}, .eyeHeight = 1,
-                .camera = {.front = {0, -0.6f, -0.8f}, .up = {0, 1, 0}}};
+                .aim = {.front = {0, -0.6f, -0.8f}}};
     /* Steeper terrain can rise above the target at the camera's offset. */
     p.position.y = fmaxf(p.position.y, world_surface_height(&world, p.position.x, p.position.z) + 12);
-    p.camera.front = vec3_normalize((Vec3){0, (float)column.height - (p.position.y + p.eyeHeight), -32});
+    p.aim.front = vec3_normalize((Vec3){0, (float)column.height - (p.position.y + p.eyeHeight), -32});
     assert(renderer_sync_view(&r, &world, &p));
     glClearColor(0.62f, 0.72f, 0.80f, 1);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    render_world(&r, &p);
+    render_world(&r, player_committed_view(&p));
     unsigned char pixels[960 * 640 * 3];
     glReadPixels(0, 0, 960, 640, GL_RGB, GL_UNSIGNED_BYTE, pixels);
     assert(glGetError() == GL_NO_ERROR);

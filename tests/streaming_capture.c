@@ -8,21 +8,21 @@
 static void capture_sync_cost(Application *a) {
   a->performance.enabled = 0;
   a->renderer.viewDistance = 100;
-  a->player.position = (Vec3){0.5f, 410, 0.5f};
-  assert(renderer_sync_view(&a->renderer, &a->world, &a->player));
+  a->game.player.position = (Vec3){0.5f, 410, 0.5f};
+  assert(renderer_sync_view(&a->renderer, &a->game.world, &a->game.player));
   glFinish();
   printf("SYNC seed=%u side=%d distance=100 samples=5 frames=1000 GL=%s\n",
-         WORLD_SEED, a->world.blocksPerSide, (const char *)glGetString(GL_RENDERER));
+         WORLD_SEED, a->game.world.blocksPerSide, (const char *)glGetString(GL_RENDERER));
   for (int sample = 0; sample < 5; sample++) {
     double start = glfwGetTime();
     for (int frame = 0; frame < 1000; frame++)
-      assert(renderer_sync_view(&a->renderer, &a->world, &a->player));
+      assert(renderer_sync_view(&a->renderer, &a->game.world, &a->game.player));
     printf("SYNC stationary_sample=%d average_ms=%.6f\n", sample, glfwGetTime() - start);
   }
   double start = glfwGetTime();
   for (int frame = 0; frame < 120; frame++) {
-    a->player.position.x = 0.5f + (float)frame;
-    assert(renderer_sync_view(&a->renderer, &a->world, &a->player));
+    a->game.player.position.x = 0.5f + (float)frame;
+    assert(renderer_sync_view(&a->renderer, &a->game.world, &a->game.player));
   }
   printf("SYNC walking_frames=120 stride=1 average_ms=%.6f\n",
          (glfwGetTime() - start)*1000/120);
@@ -47,10 +47,10 @@ static void capture_frames(Application *const a, const int baseline) {
   puts("radius,scenario,sync_p50_ms,sync_p95_ms,sync_p99_ms,sync_max_ms,frame_p50_ms,frame_p95_ms,frame_p99_ms,frame_max_ms,materialize_ms,mesh_ms,upload_submission_ms,retire_ms,metadata_ms,operations,upload_bytes,peak_pending,peak_chunks,peak_sections,peak_gpu_bytes,atomic_max_ms,convergence_frames,peak_queue,peak_cpu_owned_bytes,materialized_chunks,section_builds,last_request_loading_frames,submission_p50_ms,submission_p95_ms,submission_p99_ms,submission_max_ms");
   for (size_t r = 0; r < sizeof(radii)/sizeof(*radii); r++) {
     a->renderer.viewDistance = radii[r];
-    a->player.position = (Vec3){-16.5f, 410.0f, -16.5f};
-    a->player.velocityY = 0.0f;
-    a->player.grounded = 0;
-    assert(renderer_sync_view(&a->renderer, &a->world, &a->player));
+    a->game.player.position = (Vec3){-16.5f, 410.0f, -16.5f};
+    a->game.player.velocityY = 0.0f;
+    a->game.player.grounded = 0;
+    assert(renderer_sync_view(&a->renderer, &a->game.world, &a->game.player));
     glFinish();
     for (int scenario = 0; scenario < 7; scenario++) {
       double sync[CAPTURE_FRAMES], frame[CAPTURE_FRAMES], submission[CAPTURE_FRAMES];
@@ -68,21 +68,21 @@ static void capture_frames(Application *const a, const int baseline) {
           requestFrame = f;
           loadingFrames = 0;
         }
-        if (scenario == 3 && f == 0) a->player.position = (Vec3){-1200.5f, 410.0f, -900.5f};
+        if (scenario == 3 && f == 0) a->game.player.position = (Vec3){-1200.5f, 410.0f, -900.5f};
         if (scenario == 5) a->renderer.viewDistance = f < 120 ? 25.0f : radii[r];
-        if (scenario == 6 && f == 0) a->player.position = (Vec3){2300.5f, 410.0f, -2300.5f};
+        if (scenario == 6 && f == 0) a->game.player.position = (Vec3){2300.5f, 410.0f, -2300.5f};
         if ((scenario == 3 || scenario == 6) && f == 0) {
-          a->player.position.y = world_surface_height(&a->world, a->player.position.x, a->player.position.z) + 8.0f;
-          a->player.velocityY = 0.0f;
-          a->player.grounded = 0;
+          a->game.player.position.y = world_surface_height(&a->game.world, a->game.player.position.x, a->game.player.position.z) + 8.0f;
+          a->game.player.velocityY = 0.0f;
+          a->game.player.grounded = 0;
         }
-        update_player(&a->player, (PlayerInput){
+        update_player(&a->game.player, (PlayerInput){
             .strafe = scenario == 4 ? -1.0f : (scenario == 1 || scenario == 2) ? 1.0f : 0.0f,
-            .run = scenario == 2}, 1.0f / 60.0f, &a->world);
+            .run = scenario == 2}, 1.0f / 60.0f, &a->game.world);
         const double start = glfwGetTime();
         const StreamResult result = baseline ?
-            renderer_sync_view_work(&a->renderer, &a->world, &a->player, NULL) :
-            renderer_step_view(&a->renderer, &a->world, &a->player);
+            renderer_sync_view_work(&a->renderer, &a->game.world, &a->game.player, NULL) :
+            renderer_step_view(&a->renderer, &a->game.world, &a->game.player);
         assert(result != STREAM_FAILED);
         if (waiting && result == STREAM_COMPLETE) {
           loadingFrames = (size_t)(f + 1 - requestFrame);
@@ -91,7 +91,7 @@ static void capture_frames(Application *const a, const int baseline) {
         sync[f] = glfwGetTime() - start;
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         const double submissionStart = glfwGetTime();
-        render_world(&a->renderer, &a->player);
+        render_world(&a->renderer, player_committed_view(&a->game.player));
         submission[f] = glfwGetTime() - submissionStart;
         glfwSwapBuffers(a->window);
         frame[f] = glfwGetTime() - frameStart;
@@ -111,16 +111,16 @@ static void capture_frames(Application *const a, const int baseline) {
         if (a->renderer.peakPending > peakQueue) peakQueue = a->renderer.peakPending;
         const size_t bound = (size_t)ceilf(2.0f * a->renderer.viewDistance / SECTION_SIZE) + 3;
         assert(a->residentChunks <= bound * bound);
-        assert(a->world.sectionCount <= bound * bound * WORLD_SECTION_COUNT);
+        assert(a->game.world.sectionCount <= bound * bound * WORLD_SECTION_COUNT);
         assert(a->renderer.pendingCount <= STREAM_TASK_CAPACITY);
         if (scenario == 0) assert(!work->operations && !work->rebuilds && !work->uploadCalls);
-        const size_t owned = sizeof(a->world) + a->world.chunkCount * sizeof(Chunk) +
-            (a->world.edits ? WORLD_EDIT_CAPACITY * sizeof(VoxelEdit) : 0) + a->residentVoxelBytes +
+        const size_t owned = sizeof(a->game.world) + a->game.world.chunkCount * sizeof(Chunk) +
+            (a->game.world.edits ? WORLD_EDIT_CAPACITY * sizeof(VoxelEdit) : 0) + a->residentVoxelBytes +
             sizeof(a->renderer) + a->renderer.meshCount * sizeof(SectionGpuMesh) +
             (a->renderer.visibleMeshCapacity + a->renderer.drawMeshCapacity) * sizeof(size_t);
         if (owned > peakCpu) peakCpu = owned;
         if (a->residentChunks > peakChunks) peakChunks = a->residentChunks;
-        if (a->world.sectionCount > peakSections) peakSections = a->world.sectionCount;
+        if (a->game.world.sectionCount > peakSections) peakSections = a->game.world.sectionCount;
         if (a->gpuBytes > peakGpu) peakGpu = a->gpuBytes;
       }
       size_t convergence = 0;
@@ -128,7 +128,7 @@ static void capture_frames(Application *const a, const int baseline) {
         StreamResult result;
         do {
           a->performance.frame = (FrameWork){0};
-          result = renderer_step_view(&a->renderer, &a->world, &a->player);
+          result = renderer_step_view(&a->renderer, &a->game.world, &a->game.player);
           assert(result != STREAM_FAILED);
           if (a->performance.frame.atomicMax > atomicMax) atomicMax = a->performance.frame.atomicMax;
           if (result != STREAM_COMPLETE) assert(++convergence < 100000);
@@ -171,15 +171,15 @@ int main(int argc, char **argv) {
   glViewport(0, 0, 640, 480);
   static Application a;
   a.window = window;
-  assert(create_terrain_streamed(&a.world, PLATFORM_BLOCKS_PER_SIDE, CENTER, 1, WORLD_SEED));
+  assert(create_terrain_streamed(&a.game.world, PLATFORM_BLOCKS_PER_SIDE, CENTER, 1, WORLD_SEED));
   assert(renderer_init(&a.renderer));
   a.performance.enabled = 1;
   a.renderer.performance = &a.performance;
   a.renderer.viewDistance = 25;
   a.renderer.framebufferWidth = 640;
   a.renderer.framebufferHeight = 480;
-  a.player = (Player){.eyeHeight = 1,
-      .camera = {.front = {0, -0.8944272f, -0.4472136f}, .up = {0, 1, 0}}};
+  a.game.player = (Player){.eyeHeight = 1,
+      .aim = {.front = {0, -0.8944272f, -0.4472136f}}};
   if (argc == 2 && (!strcmp(argv[1], "--frames") || !strcmp(argv[1], "--baseline"))) {
     capture_frames(&a, !strcmp(argv[1], "--baseline"));
     goto cleanup;
@@ -193,16 +193,16 @@ int main(int argc, char **argv) {
   size_t peakChunks = 0, peakSections = 0, peakGpu = 0, evictions = 0, retirements = 0;
   double total = 0, maximum = 0;
   printf("STREAM seed=%u side=%d distance=25 steps=64 stride=96 chunk_bound=%zu GL=%s\n",
-         WORLD_SEED, a.world.blocksPerSide, bound * bound, (const char *)glGetString(GL_RENDERER));
+         WORLD_SEED, a.game.world.blocksPerSide, bound * bound, (const char *)glGetString(GL_RENDERER));
   puts("step,x,sync_ms,materialize_ms,mesh_ms,upload_ms,gpu_drain_ms,chunks,sections,cpu_owned_bytes,rss_peak_kib,gpu_requested_bytes,evicted_chunks,retired_meshes,retired_bytes");
   for (int step = 0; step <= 64; step++) {
     int travel = step < 32 ? step : 63 - step;
-    a.player.position.x = step == 64 ? 10000 : -1487.5f + (float)travel * 96.0f;
-    a.player.position.z = 0.5f;
-    a.player.position.y = world_surface_height(&a.world, a.player.position.x, 0.5f) + 8;
+    a.game.player.position.x = step == 64 ? 10000 : -1487.5f + (float)travel * 96.0f;
+    a.game.player.position.z = 0.5f;
+    a.game.player.position.y = world_surface_height(&a.game.world, a.game.player.position.x, 0.5f) + 8;
     a.performance.frame = (FrameWork){0};
     double start = glfwGetTime();
-    assert(renderer_sync_view(&a.renderer, &a.world, &a.player));
+    assert(renderer_sync_view(&a.renderer, &a.game.world, &a.game.player));
     double sync = glfwGetTime() - start;
     start = glfwGetTime();
     glFinish();
@@ -210,19 +210,19 @@ int main(int argc, char **argv) {
     assert(glGetError() == GL_NO_ERROR);
     performance_snapshot(&a);
     assert(!a.editedChunks && a.residentChunks <= bound * bound);
-    assert(a.world.sectionCount <= bound * bound * WORLD_SECTION_COUNT);
-    assert(a.renderer.meshCount == a.world.sectionCount);
-    for (size_t c = 0; c < a.world.chunkCount; c++) {
-      const Chunk *chunk = &a.world.chunks[c];
+    assert(a.game.world.sectionCount <= bound * bound * WORLD_SECTION_COUNT);
+    assert(a.renderer.meshCount == a.game.world.sectionCount);
+    for (size_t c = 0; c < a.game.world.chunkCount; c++) {
+      const Chunk *chunk = &a.game.world.chunks[c];
       if (chunk->terrainReady) {
-        float cx = floorf(a.player.position.x / SECTION_SIZE);
-        float cz = floorf(a.player.position.z / SECTION_SIZE);
+        float cx = floorf(a.game.player.position.x / SECTION_SIZE);
+        float cz = floorf(a.game.player.position.z / SECTION_SIZE);
         assert(fabsf((float)chunk->x - cx) <= ceilf(25.0f / SECTION_SIZE) + 1);
         assert(fabsf((float)chunk->z - cz) <= ceilf(25.0f / SECTION_SIZE) + 1);
       }
     }
     if (a.residentChunks > peakChunks) peakChunks = a.residentChunks;
-    if (a.world.sectionCount > peakSections) peakSections = a.world.sectionCount;
+    if (a.game.world.sectionCount > peakSections) peakSections = a.game.world.sectionCount;
     if (a.gpuBytes > peakGpu) peakGpu = a.gpuBytes;
     evictions += a.performance.frame.evictedChunks;
     retirements += a.performance.frame.retiredMeshes;
@@ -230,24 +230,24 @@ int main(int argc, char **argv) {
     if (sync > maximum) maximum = sync;
     struct rusage usage;
     assert(getrusage(RUSAGE_SELF, &usage) == 0);
-    size_t owned = sizeof(a.world) + a.world.chunkCount * sizeof(Chunk) +
-        (a.world.edits ? WORLD_EDIT_CAPACITY * sizeof(VoxelEdit) : 0) +
+    size_t owned = sizeof(a.game.world) + a.game.world.chunkCount * sizeof(Chunk) +
+        (a.game.world.edits ? WORLD_EDIT_CAPACITY * sizeof(VoxelEdit) : 0) +
         a.residentVoxelBytes + sizeof(a.renderer) +
         a.renderer.meshCount * sizeof(SectionGpuMesh) +
         a.renderer.visibleMeshCapacity * sizeof(size_t) + a.renderer.drawMeshCapacity * sizeof(size_t);
     FrameWork *f = &a.performance.frame;
     printf("%d,%.1f,%.3f,%.3f,%.3f,%.3f,%.3f,%zu,%zu,%zu,%ld,%zu,%zu,%zu,%zu\n",
-           step, a.player.position.x, sync*1000, f->materialize*1000, f->mesh*1000,
-           f->upload*1000, drain*1000, a.residentChunks, a.world.sectionCount, owned,
+           step, a.game.player.position.x, sync*1000, f->materialize*1000, f->mesh*1000,
+           f->upload*1000, drain*1000, a.residentChunks, a.game.world.sectionCount, owned,
            usage.ru_maxrss, a.gpuBytes, f->evictedChunks, f->retiredMeshes, f->retiredBytes);
   }
-  assert(!a.residentChunks && !a.world.sectionCount && !a.gpuBytes && !a.renderer.meshCount);
+  assert(!a.residentChunks && !a.game.world.sectionCount && !a.gpuBytes && !a.renderer.meshCount);
   assert(evictions && retirements);
   printf("STREAM peak_chunks=%zu peak_sections=%zu peak_gpu_bytes=%zu evictions=%zu retired_meshes=%zu sync_avg_ms=%.3f sync_max_ms=%.3f\n",
          peakChunks, peakSections, peakGpu, evictions, retirements, total*1000/65, maximum*1000);
 cleanup:
   renderer_destroy(&a.renderer);
-  world_destroy(&a.world);
+  world_destroy(&a.game.world);
   glfwDestroyWindow(window);
   glfwTerminate();
   return 0;

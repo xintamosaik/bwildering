@@ -256,7 +256,7 @@ static const Chunk *find_chunk(const World *const world, const int x, const int 
   return find_chunk_index(world, x, z, &index) ? &world->chunks[index] : NULL;
 }
 
-static Chunk *find_chunk_mut(World *const world, const int x, const int z) {
+static Chunk *find_chunk_mut(const World *const world, const int x, const int z) {
   size_t index;
   return find_chunk_index(world, x, z, &index) ? &world->chunks[index] : NULL;
 }
@@ -279,7 +279,7 @@ const Subchunk *world_section(const World *const world, const int x, const int y
   return s && s->sectionY == y ? s : NULL;
 }
 
-Subchunk *world_section_mut(World *const world, const int x, const int y, const int z) {
+Subchunk *world_section_mut(const World *const world, const int x, const int y, const int z) {
   return (Subchunk *)world_section(world, x, y, z);
 }
 
@@ -630,10 +630,11 @@ int world_set_block(World *const world, const int x, const int y, const int z, c
 
   /* Only face neighbors depend on the changed voxel. Keep empty sections as
      tombstones so the renderer can retire their previous GPU meshes. */
-  const int dx[6] = {-1, 1, 0, 0, 0, 0}, dy[6] = {0, 0, -1, 1, 0, 0},
-            dz[6] = {0, 0, 0, 0, -1, 1};
   const int local[3] = {voxel_local_coord(x), voxel_local_coord(y), voxel_local_coord(z)};
   for (int d = 0; d < 6; d++) {
+    const int dz[6] = {0, 0, 0, 0, -1, 1};
+    const int dy[6] = {0, 0, -1, 1, 0, 0};
+    const int dx[6] = {-1, 1, 0, 0, 0, 0};
     if ((d == 0 && local[0] != 0) || (d == 1 && local[0] != 15) ||
         (d == 2 && local[1] != 0) || (d == 3 && local[1] != 15) ||
         (d == 4 && local[2] != 0) || (d == 5 && local[2] != 15))
@@ -758,8 +759,9 @@ static int mesh_build(const World *const world, const int cx, const int sy, cons
 
   /* Nearby edits can expose a section previously classified as buried. */
   int editedNeighbor = chunk->edited;
-  const int neighborX[4] = {-1, 1, 0, 0}, neighborZ[4] = {0, 0, -1, 1};
   for (int d = 0; d < 4; d++) {
+    const int neighborZ[4] = {0, 0, -1, 1};
+    const int neighborX[4] = {-1, 1, 0, 0};
     const Chunk *const neighbor = find_chunk(world, cx + neighborX[d], cz + neighborZ[d]);
     if (neighbor && neighbor->edited) editedNeighbor = 1;
   }
@@ -847,9 +849,9 @@ static int mesh_build(const World *const world, const int cx, const int sy, cons
           for (int v = 0; v < 6; v++) {
             const int *const corner = corners[d][order[v]];
             result.vertices[cursors[type]++] =
-                (SurfaceVertex){world->origin.x + (float)(wx + corner[0]) * world->blockSize,
-                                world->origin.y + (float)(wy + corner[1]) * world->blockSize,
-                                world->origin.z + (float)(wz + corner[2]) * world->blockSize};
+                (SurfaceVertex){.x = world->origin.x + (float)(wx + corner[0]) * world->blockSize,
+                                .y = world->origin.y + (float)(wy + corner[1]) * world->blockSize,
+                                .z = world->origin.z + (float)(wz + corner[2]) * world->blockSize};
           }
         }
       }

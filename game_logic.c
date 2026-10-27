@@ -14,10 +14,10 @@ static const Vec3 BLOCK_TYPE_COLORS[BLOCK_TYPE_COUNT] = {
   [BLOCK_TYPE_GRASS] = {.x = 0.46f, .y = 0.52f, .z = 0.38f},
   [BLOCK_TYPE_STONE] = {.x = 0.53f, .y = 0.51f, .z = 0.48f},
   [BLOCK_TYPE_WATER] = {.x = 0.36f, .y = 0.50f, .z = 0.52f},
-  [BLOCK_TYPE_DIRT] = {0.40f, 0.28f, 0.18f},
-  [BLOCK_TYPE_GRAVEL] = {0.43f, 0.46f, 0.49f},
-  [BLOCK_TYPE_DARK_STONE] = {0.24f, 0.25f, 0.28f},
-  [BLOCK_TYPE_SNOW] = {0.92f, 0.94f, 0.96f},
+  [BLOCK_TYPE_DIRT] = {.x = 0.40f, .y = 0.28f, .z = 0.18f},
+  [BLOCK_TYPE_GRAVEL] = {.x = 0.43f, .y = 0.46f, .z = 0.49f},
+  [BLOCK_TYPE_DARK_STONE] = {.x = 0.24f, .y = 0.25f, .z = 0.28f},
+  [BLOCK_TYPE_SNOW] = {.x = 0.92f, .y = 0.94f, .z = 0.96f},
   [BLOCK_TYPE_SAND] = {.x = 0.68f, .y = 0.60f, .z = 0.44f},
 };
 
@@ -533,7 +533,7 @@ void update_player(Player *const player, const PlayerInput input, const float dt
   player->crouching = input.crouch != 0;
   const float speed = 4.0f * (input.crouch ? 0.75f : input.run ? 1.5f : 1.0f);
   const Vec3 forward =
-      vec3_normalize((Vec3){player->camera.front.x, 0, player->camera.front.z});
+      vec3_normalize((Vec3){.x = player->camera.front.x, .y = 0, .z = player->camera.front.z});
   const Vec3 right = vec3_normalize(vec3_cross(forward, player->camera.up));
   Vec3 movement =
       vec3_add(vec3_scale(forward, input.forward), vec3_scale(right, input.strafe));

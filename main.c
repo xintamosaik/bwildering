@@ -10,7 +10,7 @@
 
 #pragma region Constants
 /** World-space origin used to center the starter platform. */
-static const Vec3 CENTER = {0.0f, 0.0f, 0.0f};
+static const Vec3 CENTER = {.x = 0.0f, .y = 0.0f, .z = 0.0f};
 /** Width, height, and depth of each default platform block, in world units. */
 static const float BLOCK_SIZE = 1.0f;
 static const uint32_t WORLD_SEED = UINT32_C(0x4B1D2A37);
@@ -222,7 +222,7 @@ static int renderer_upload_section_mesh(SectionGpuMesh *const target,
   }
   if (mesh->vertexCount) {
     result.boundsMin = result.boundsMax =
-        (Vec3){mesh->vertices[0].x, mesh->vertices[0].y, mesh->vertices[0].z};
+        (Vec3){.x = mesh->vertices[0].x, .y = mesh->vertices[0].y, .z = mesh->vertices[0].z};
     for (size_t i = 1; i < mesh->vertexCount; i++) {
       const SurfaceVertex v = mesh->vertices[i];
       result.boundsMin.x = fminf(result.boundsMin.x, v.x);
@@ -711,7 +711,7 @@ static int renderer_collect_draw_meshes(Renderer *const renderer, const Vec3 eye
     if (p && p->enabled) p->frame.frustumTests++;
     if (!section_in_frustum(mesh, mvp)) continue;
     if (renderer->drawMeshCount == renderer->drawMeshCapacity) {
-      size_t capacity = renderer->drawMeshCapacity ? renderer->drawMeshCapacity * 2 : 64;
+      const size_t capacity = renderer->drawMeshCapacity ? renderer->drawMeshCapacity * 2 : 64;
       size_t *const indices = capacity < renderer->drawMeshCapacity || capacity > SIZE_MAX / sizeof(size_t) ?
           NULL : storage_alloc(STORAGE_DRAW, capacity * sizeof(*indices));
       if (!indices) {

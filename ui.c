@@ -33,15 +33,15 @@ typedef struct {
    all use these controls rather than maintaining separate layouts. */
 static int menu_buttons(const Application *const application, MenuButton buttons[const 3]) {
   if (application->settingsOpen) {
-    buttons[0] = (MenuButton){MENU_DISTANCE_DOWN, "-", -116, -24, 48,
-        application->renderer.viewDistance > MIN_VIEW_DISTANCE};
-    buttons[1] = (MenuButton){MENU_DISTANCE_UP, "+", 116, -24, 48,
-        application->renderer.viewDistance < MAX_VIEW_DISTANCE};
-    buttons[2] = (MenuButton){MENU_BACK, "BACK", 0, 40, 280, 1};
+    buttons[0] = (MenuButton){.action = MENU_DISTANCE_DOWN, .label = "-", .centerX = -116, .top = -24, .width = 48,
+        .enabled = application->renderer.viewDistance > MIN_VIEW_DISTANCE};
+    buttons[1] = (MenuButton){.action = MENU_DISTANCE_UP, .label = "+", .centerX = 116, .top = -24, .width = 48,
+        .enabled = application->renderer.viewDistance < MAX_VIEW_DISTANCE};
+    buttons[2] = (MenuButton){.action = MENU_BACK, .label = "BACK", .centerX = 0, .top = 40, .width = 280, .enabled = 1};
   } else {
-    buttons[0] = (MenuButton){MENU_RESUME, "RESUME", 0, -88, 280, 1};
-    buttons[1] = (MenuButton){MENU_SETTINGS, "SETTINGS", 0, -24, 280, 1};
-    buttons[2] = (MenuButton){MENU_QUIT, "QUIT", 0, 40, 280, 1};
+    buttons[0] = (MenuButton){.action = MENU_RESUME, .label = "RESUME", .centerX = 0, .top = -88, .width = 280, .enabled = 1};
+    buttons[1] = (MenuButton){.action = MENU_SETTINGS, .label = "SETTINGS", .centerX = 0, .top = -24, .width = 280, .enabled = 1};
+    buttons[2] = (MenuButton){.action = MENU_QUIT, .label = "QUIT", .centerX = 0, .top = 40, .width = 280, .enabled = 1};
   }
   return 3;
 }

@@ -239,7 +239,7 @@ static void test_passive_capture_and_ordering(void) {
   assert(application.renderer.viewDistance == DEFAULT_VIEW_DISTANCE);
   frame(&application, 0.02);
   assert(!application.paused && !application.ui.settingsOpen && !closeRequested);
-  assert(application.renderer.viewDistance == DEFAULT_VIEW_DISTANCE + VIEW_DISTANCE_STEP);
+  assert(application.renderer.viewDistance == fminf(DEFAULT_VIEW_DISTANCE + VIEW_DISTANCE_STEP, MAX_VIEW_DISTANCE));
   assert(!application.input.clickCount && !application.input.pressed);
   assert(application.game.world.voxelCount == voxels);
   assert_player_unchanged(&application.game.player, &frozen);
@@ -270,6 +270,7 @@ static void test_passive_capture_and_ordering(void) {
 }
 
 static void test_view_distance_settings(int width, int height, int density) {
+  const float initialDistance = MAX_VIEW_DISTANCE - VIEW_DISTANCE_STEP;
   windowWidth = width; windowHeight = height; pixelScale = density;
   Application application = {0};
   input_init(&application.input);
@@ -279,7 +280,7 @@ static void test_view_distance_settings(int width, int height, int density) {
   memset(keys, 0, sizeof(keys));
   closeRequested = 0;
   now = 0;
-  application.renderer.viewDistance = DEFAULT_VIEW_DISTANCE;
+  application.renderer.viewDistance = initialDistance;
   application.game.player = (Player){.position = {0, 5, 0}, .eyeHeight = 1,
       .aim = {.front = {0, 0, -1}, .yaw = -90}};
   application.pendingAim = application.game.player.aim;
@@ -296,16 +297,16 @@ static void test_view_distance_settings(int width, int height, int density) {
   click_button(&application, "SETTINGS"); /* Settings */
   assert(application.paused && application.ui.settingsOpen);
 
-  const float beyond = DEFAULT_VIEW_DISTANCE + VIEW_DISTANCE_STEP * 0.5f;
+  const float beyond = initialDistance + VIEW_DISTANCE_STEP * 0.5f;
   SectionGpuMesh distant = {.boundsMin = {beyond, -8, -8}, .boundsMax = {beyond + 16, 8, 8}};
   SectionGpuMesh nearby = {.boundsMin = {-8, -8, -8}, .boundsMax = {8, 8, 8}};
   assert(!section_within_view_distance(&distant, (Vec3){0}, application.renderer.viewDistance));
   click_button(&application, "+"); /* Increase */
-  assert(application.renderer.viewDistance == DEFAULT_VIEW_DISTANCE + VIEW_DISTANCE_STEP);
+  assert(application.renderer.viewDistance == initialDistance + VIEW_DISTANCE_STEP);
   assert(section_within_view_distance(&distant, (Vec3){0}, application.renderer.viewDistance));
   assert(section_within_view_distance(&nearby, (Vec3){0}, application.renderer.viewDistance));
   click_button(&application, "-"); /* Decrease */
-  assert(application.renderer.viewDistance == DEFAULT_VIEW_DISTANCE);
+  assert(application.renderer.viewDistance == initialDistance);
   assert(!section_within_view_distance(&distant, (Vec3){0}, application.renderer.viewDistance));
   const int steps = (int)ceilf((MAX_VIEW_DISTANCE - MIN_VIEW_DISTANCE) / VIEW_DISTANCE_STEP) + 2;
   for (int i = 0; i < steps; i++)

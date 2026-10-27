@@ -247,7 +247,7 @@ starting hypotheses; the final configuration must enforce valid layer ordering.
   only scale references, not substitutes for traversable routes.
 - Record generation/loading stalls, resident sections, mesh cost, and save sizes
   and latency. Oceans must remain cheap through uniform section encoding.
-- Current view distance defaults to 100 world units, with a maximum setting of
+- Current view distance defaults to 300 world units, with a maximum setting of
   300. Large gaps can therefore hide the opposite shore. First hold visibility
   fixed; then compare visibility independently before changing island spacing.
 - Current walking speed is 4 world units/second. At block size 1, a flat

@@ -174,7 +174,7 @@ static float terrain_lattice(const int x, const int z, const uint32_t seed) {
 
 float terrain_noise(const int worldX, const int worldZ, const int scale,
                            const uint32_t seed) {
-  if (scale < 8 || scale > 2048 || (scale & scale - 1) != 0)
+  if (scale < 8 || scale > 2048 || (scale & (scale - 1)) != 0)
     return NAN;
 
   const int gx = voxel_floor_div(worldX, scale);

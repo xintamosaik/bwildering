@@ -399,7 +399,7 @@ static int stream_priority_compare(const void *const a, const void *const b) {
 
 static void stream_admit(Renderer *const r, const StreamTask task, const size_t retained,
                          const size_t ordinal, const int pass, size_t *const nextCursor) {
-  if (ordinal < r->scanCursor != (pass != 0) || r->pendingCount == STREAM_TASK_CAPACITY) return;
+  if ((ordinal < r->scanCursor) != (pass != 0) || r->pendingCount == STREAM_TASK_CAPACITY) return;
   if (bsearch(&task, r->pending, retained, sizeof(task), stream_identity_compare)) return;
   r->pending[r->pendingCount++] = task;
   *nextCursor = ordinal + 1;

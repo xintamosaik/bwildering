@@ -17,7 +17,7 @@ static const uint32_t WORLD_SEED = UINT32_C(0x4B1D2A37);
 struct Application {
   GLFWwindow *window;
   Game game;
-  GameplayAim pendingAim;
+  GameplayAim pendingAim; /* Responsive view aim; committed only by game_step. */
   InputState input;
   Renderer renderer;
   Performance performance;
@@ -29,6 +29,8 @@ struct Application {
   double simulationAccumulator;
   int fpsFrameCount;
   int fps;
+  /* One flag per action, retained across zero-tick frames. Repeated presses
+     coalesce; the first available tick consumes them, capture changes discard. */
   int jumpQueued;
   int placeQueued;
   int removeQueued;

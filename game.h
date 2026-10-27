@@ -20,7 +20,10 @@ typedef struct {
 } Game;
 
 /* Values for one tick. Aim is in degrees; no device or presentation state.
-   The caller assigns one-shot actions to a tick and supplies held movement. */
+   Direct/replay commands are already assigned to ticks. Each call consumes
+   jump/place/remove once; held movement/run/crouch must be supplied every tick.
+   The live application coalesces presses until a tick, sampling latest held
+   state and pending aim without reconstructing event timestamps. */
 typedef struct {
   PlayerInput movement;
   float yaw, pitch;

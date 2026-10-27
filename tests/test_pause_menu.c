@@ -374,11 +374,122 @@ static void test_pending_game_view(void) {
   frame(&application, 0.001);
   assert(application.paused && application.game.tick == 1);
   assert(application.pendingAim.yaw == application.game.player.aim.yaw);
+  keys[GLFW_KEY_ESCAPE] = GLFW_RELEASE;
+  frame(&application, 10.0);
+  assert(application.game.tick == 1 && application.simulationAccumulator == 0.0);
+  keys[GLFW_KEY_ESCAPE] = GLFW_PRESS;
+  frame(&application, 10.0);
+  assert(!application.paused && application.game.tick == 1);
+  assert(application.simulationAccumulator == 0.0);
+  keys[GLFW_KEY_ESCAPE] = GLFW_RELEASE;
+  /* The first recaptured position seeds the mouse instead of producing a
+     jump from the old cursor location. Resume does not accumulate pause debt. */
+  cursorCallback(NULL, 5000.0, 5000.0);
+  frame(&application, 0.001);
+  assert(application.game.tick == 1);
+  assert(application.pendingAim.yaw == application.game.player.aim.yaw);
+  frame(&application, 0.02);
+  assert(application.game.tick == 2);
   memset(keys, 0, sizeof(keys));
   game_destroy(&application.game);
 }
 
+/* Real frame scheduler versus explicitly assigned commands. Two targets reveal
+   replayed removes; simultaneous place/remove must leave the original intact. */
+static void test_tick_consumption(void) {
+  Application application = {0};
+  Game expected = {0};
+  input_init(&application.input);
+  input_attach(&application.input, NULL);
+  memset(keys, 0, sizeof(keys));
+  memset(mouseButtons, 0, sizeof(mouseButtons));
+  cursorMode = GLFW_CURSOR_DISABLED;
+  pendingClick = 0;
+  now = 0.0;
+  Game *const actual = &application.game;
+  Game *const games[] = {actual, &expected};
+  for (size_t i = 0; i < sizeof(games) / sizeof(*games); i++) {
+    Game *const game = games[i];
+    assert(world_init_region(&game->world, -8, -8, 16, (Vec3){0}, 1.0f));
+    for (int x = -8; x < 8; x++)
+      for (int z = -8; z < 8; z++)
+        assert(world_set_block(&game->world, x, -1, z, BLOCK_TYPE_STONE));
+    game->player = (Player){.position = {0.5f, 0.0f, 0.5f}, .grounded = 1,
+        .eyeHeight = 1.0f, .aim = game_aim(-90.0f, 0.0f)};
+    assert(world_set_block(&game->world, 3, 1, 0, BLOCK_TYPE_GRASS));
+    assert(world_set_block(&game->world, 4, 1, 0, BLOCK_TYPE_SAND));
+  }
+  application.pendingAim = actual->player.aim;
+  cursorCallback(NULL, 0.0, 0.0);
+  /* Press/release twice, across separate zero-tick frames. Latest aim and
+     held state at consumption win, even though the presses happened earlier. */
+  for (int i = 0; i < 2; i++) {
+    keyCallback(NULL, GLFW_KEY_SPACE, 0, GLFW_PRESS, 0);
+    keyCallback(NULL, GLFW_KEY_SPACE, 0, GLFW_RELEASE, 0);
+    buttonCallback(NULL, GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    buttonCallback(NULL, GLFW_MOUSE_BUTTON_RIGHT, GLFW_PRESS, 0);
+    cursorCallback(NULL, i == 0 ? 450.0 : 900.0, 0.0);
+    frame(&application, 0.001);
+    assert(actual->tick == 0 && actual->player.aim.yaw == -90.0f);
+    assert(application.jumpQueued && application.placeQueued && application.removeQueued);
+    assert(world_get_block(&actual->world, 2, 1, 0) == BLOCK_TYPE_EMPTY);
+    assert(world_get_block(&actual->world, 3, 1, 0) == BLOCK_TYPE_GRASS);
+  }
+  keys[GLFW_KEY_W] = keys[GLFW_KEY_LEFT_CONTROL] = keys[GLFW_KEY_LEFT_SHIFT] = GLFW_PRESS;
+  keys[GLFW_KEY_SPACE] = GLFW_PRESS;
+  frame(&application, 0.05);
+  assert(actual->tick == 3);
+  assert(!application.jumpQueued && !application.placeQueued && !application.removeQueued);
+  for (int tick = 0; tick < 3; tick++)
+    game_step(&expected, (GameCommand){.yaw = 0.0f,
+        .movement = {.forward = 1.0f, .run = 1, .crouch = 1, .jump = tick == 0},
+        .place = tick == 0, .remove = tick == 0, .material = BLOCK_TYPE_STONE});
+  assert_player_unchanged(&actual->player, &expected.player);
+  assert(actual->player.position.x > 0.5f && !actual->player.grounded);
+  assert(world_get_block(&actual->world, 2, 1, 0) == BLOCK_TYPE_EMPTY);
+  assert(world_get_block(&actual->world, 3, 1, 0) == BLOCK_TYPE_GRASS);
+
+  /* Remove once despite several catch-up ticks and repeated pending presses. */
+  buttonCallback(NULL, GLFW_MOUSE_BUTTON_RIGHT, GLFW_PRESS, 0);
+  buttonCallback(NULL, GLFW_MOUSE_BUTTON_RIGHT, GLFW_PRESS, 0);
+  frame(&application, 0.05);
+  assert(actual->tick == 6);
+  for (int tick = 0; tick < 3; tick++)
+    game_step(&expected, (GameCommand){.yaw = 0.0f,
+        .movement = {.forward = 1.0f, .run = 1, .crouch = 1}, .remove = tick == 0});
+  assert_player_unchanged(&actual->player, &expected.player);
+  assert(world_get_block(&actual->world, 3, 1, 0) == BLOCK_TYPE_EMPTY);
+  assert(world_get_block(&actual->world, 4, 1, 0) == BLOCK_TYPE_SAND);
+
+  /* A long render frame contributes only 0.25 seconds; raw timing retains it. */
+  frame(&application, 10.0);
+  assert(actual->tick == 21 && fabs(application.rawFrame - 10.0) < 1e-9);
+  assert(application.simulationAccumulator >= 0.0);
+  assert(application.simulationAccumulator < 1.0 / 60.0);
+  for (int tick = 0; tick < 15; tick++)
+    game_step(&expected, (GameCommand){.yaw = 0.0f,
+        .movement = {.forward = 1.0f, .run = 1, .crouch = 1}});
+  assert_player_unchanged(&actual->player, &expected.player);
+  /* Clock reversal cannot run a tick or subtract accumulated time. */
+  const double remainder = application.simulationAccumulator;
+  frame(&application, -1.0);
+  assert(actual->tick == 21 && application.rawFrame == 0.0);
+  assert(application.simulationAccumulator == remainder);
+  /* Holding jump through landing must not generate another press. */
+  keys[GLFW_KEY_W] = GLFW_RELEASE;
+  for (int frameIndex = 0; frameIndex < 4; frameIndex++)
+    frame(&application, 0.25);
+  for (int tick = 0; tick < 60; tick++)
+    game_step(&expected, (GameCommand){.yaw = 0.0f, .movement = {.run = 1, .crouch = 1}});
+  assert(actual->tick == 81 && actual->player.grounded);
+  assert_player_unchanged(&actual->player, &expected.player);
+  memset(keys, 0, sizeof(keys));
+  game_destroy(actual);
+  game_destroy(&expected);
+}
+
 int main(void) {
+  test_tick_consumption();
   test_pending_game_view();
   test_virtual_actions();
   test_passive_capture_and_ordering();

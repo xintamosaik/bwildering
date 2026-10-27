@@ -91,7 +91,83 @@ static void test_commands_and_view(void) {
   game_destroy(&game);
 }
 
+/* Preassigned commands are independent of when a renderer asks for ticks.
+   Dyadic frame durations avoid ambiguous tick boundaries from decimal clocks. */
+static void test_replay_schedules(void) {
+  enum { COMMAND_COUNT = 120 };
+  GameCommand commands[COMMAND_COUNT] = {0};
+  for (int tick = 0; tick < COMMAND_COUNT; tick++)
+    commands[tick] = (GameCommand){
+        .yaw = tick < 60 ? 0.0f : 180.0f,
+        .movement = {.forward = tick < 90 ? 1.0f : 0.0f,
+                     .jump = tick == 20 || tick == 95,
+                     .run = tick < 30, .crouch = tick >= 60 && tick < 90},
+        .place = tick == 0 || tick == 2, .remove = tick == 1 || tick == 2,
+        .material = BLOCK_TYPE_SNOW};
+  Game reference = {0};
+  setup_flat(&reference);
+  assert(world_set_block(&reference.world, 3, 1, 0, BLOCK_TYPE_GRASS));
+  for (int tick = 0; tick < COMMAND_COUNT; tick++)
+    game_step(&reference, commands[tick]);
+  const double schedules[][4] = {
+      {1.0 / 256.0, 1.0 / 256.0, 1.0 / 256.0, 1.0 / 256.0},
+      {1.0 / 8.0, 0.0, 1.0 / 64.0, 1.0 / 32.0},
+  };
+  for (size_t schedule = 0; schedule < sizeof(schedules) / sizeof(*schedules); schedule++) {
+    Game replay = {0};
+    setup_flat(&replay);
+    assert(world_set_block(&replay.world, 3, 1, 0, BLOCK_TYPE_GRASS));
+    double accumulator = 0.0;
+    int next = 0;
+    for (size_t frame = 0; next < COMMAND_COUNT; frame++) {
+      accumulator += schedules[schedule][frame % 4];
+      while (accumulator >= 1.0 / 60.0 && next < COMMAND_COUNT) {
+        game_step(&replay, commands[next++]);
+        accumulator -= 1.0 / 60.0;
+      }
+    }
+    assert(replay.tick == reference.tick);
+    const Player *const a = &reference.player;
+    const Player *const b = &replay.player;
+    /* Same operation order should be exact; 1e-6 world units also allows
+       harmless float rounding far below collision's 0.001 separation. */
+    assert(fabsf(a->position.x - b->position.x) < 1e-6f);
+    assert(fabsf(a->position.y - b->position.y) < 1e-6f);
+    assert(fabsf(a->position.z - b->position.z) < 1e-6f);
+    assert(fabsf(a->velocityY - b->velocityY) < 1e-6f);
+    assert(a->grounded == b->grounded && a->crouching == b->crouching);
+    assert(a->eyeHeight == b->eyeHeight);
+    assert(a->aim.yaw == b->aim.yaw && a->aim.pitch == b->aim.pitch);
+    assert(reference.world.voxelCount == replay.world.voxelCount);
+    for (int x = -8; x < 8; x++)
+      for (int z = -8; z < 8; z++)
+        for (int y = -1; y <= 4; y++)
+          assert(world_get_block(&reference.world, x, y, z) ==
+                 world_get_block(&replay.world, x, y, z));
+    game_destroy(&replay);
+  }
+  game_destroy(&reference);
+}
+
+static void test_movement_before_edit(void) {
+  Game game = {0};
+  setup_flat(&game);
+  game.player.position.x = 0.95f;
+  assert(world_set_block(&game.world, 7, 1, 0, BLOCK_TYPE_GRASS));
+  game_step(&game, (GameCommand){.yaw = 0.0f, .remove = 1});
+  assert(world_get_block(&game.world, 7, 1, 0) == BLOCK_TYPE_GRASS);
+  /* Movement crosses the six-unit reach boundary during this tick. Both the
+     movement and targeting must use this command's aim, not the previous aim. */
+  game.player.aim = game_aim(-90.0f, 0.0f);
+  game_step(&game, (GameCommand){.yaw = 0.0f, .movement.forward = 1.0f, .remove = 1});
+  assert(game.player.position.x > 1.0f && game.tick == 2);
+  assert(world_get_block(&game.world, 7, 1, 0) == BLOCK_TYPE_EMPTY);
+  game_destroy(&game);
+}
+
 int main(void) {
+  test_movement_before_edit();
+  test_replay_schedules();
   test_lifetime_and_spawn();
   test_commands_and_view();
   puts("Headless game ownership tests passed.");

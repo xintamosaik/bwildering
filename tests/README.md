@@ -63,6 +63,23 @@ are dropped while gameplay/action bits continue to coalesce. UI owns the shared
 layout used to locate displayed controls. It does not verify GLFW's delivery of physical
 keyboard/mouse events or the visual appearance of menu text.
 
+Tick timing is checked in `test_game` and the headless menu suite. Live input
+samples latest held movement/run/crouch and pending aim for every catch-up tick.
+Jump/place/remove each occupy one pending flag: repeated presses coalesce, zero-tick
+frames retain them, and the next tick consumes them once. Commands supplied directly
+to Game are already assigned to ticks. Tick order is aim, movement/collision,
+placement, removal, then tick increment; CPU edits are immediate, meshing may lag.
+The local menu stops ticking and discards pending input/aim and accumulated time
+on capture transitions; a future remote session would keep ticking with its menu open.
+
+Tests compare the real frame scheduler with assigned commands through coalesced
+presses, held input, catch-up, landing, frame clamping and clock reversal. They
+also cover next-tick targeting, movement before edits, pending view look,
+pause/resume and recapture. A 120-command replay compares player and voxel state
+under frequent zero-tick frames and irregular catch-up schedules, using a 1e-6
+world-unit player tolerance (well below collision separation). The actual GL
+presentation and physical event delivery still require a display/manual check.
+
 `make performance_capture` builds the opt-in scripted performance runner. See
 [the performance note](../performance-note.md) for scenarios,
 controls, metric definitions, captured results and their limits.

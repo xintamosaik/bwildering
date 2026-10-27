@@ -164,8 +164,9 @@ int application_init(Application *const application) {
   return 1;
 }
 
-/* Application policy: transitions retain held actions but clear all transient
-   input, queued gameplay work and accumulated simulation time. */
+/* Local-session policy: menus stop simulation. A future remote session would
+   continue ticking while its menu is open. Capture transitions retain held
+   actions but discard transients, pending aim and accumulated simulation time. */
 static void application_discard_gameplay(Application *const application) {
   application->simulationAccumulator = 0.0;
   application->jumpQueued = 0;
@@ -258,22 +259,25 @@ void application_update(Application *const application) {
   if (application_route_input(application))
     return;
 
-  /* Retain a new jump press until a simulation tick can consume it. */
+  /* Live sampling uses the latest held state and aim for every tick this frame,
+     not a timestamped reconstruction. Pending jump/place/remove are three
+     bounded flags: repeated presses coalesce until the next tick consumes them. */
   update_look(&application->pendingAim, &application->input.mouse);
-  PlayerInput input = input_player(&application->input);
+  const PlayerInput held = input_player(&application->input);
   if (application->input.pressed & INPUT_JUMP)
     application->jumpQueued = 1;
   application->placeQueued |= (application->input.pressed & INPUT_PLACE) != 0;
   application->removeQueued |= (application->input.pressed & INPUT_REMOVE) != 0;
-  input.jump = 0;
 
-  /* One bounded command per fixed tick; one-shot presses coalesce until used. */
+  const int captured = glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED;
+  /* No tick means no consumption. Only the first catch-up tick gets presses;
+     every tick gets the same sampled held movement/run/crouch and latest aim. */
   application->simulationAccumulator += deltaTime;
   while (application->simulationAccumulator >= FIXED_DELTA_TIME) {
-    input.jump = application->jumpQueued;
-    const int captured = glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED;
+    PlayerInput movement = held;
+    movement.jump = application->jumpQueued;
     const GameCommand command = {
-        .movement = input, .yaw = application->pendingAim.yaw,
+        .movement = movement, .yaw = application->pendingAim.yaw,
         .pitch = application->pendingAim.pitch,
         .place = captured && application->placeQueued,
         .remove = captured && application->removeQueued,

@@ -1,6 +1,7 @@
 # Stage 4: make command timing independent of render frames
 
-Status: planned. Order: 4 of 5. Prerequisite: [stage 3](03-game-ownership.md).
+Status: implemented, 27 October 2026; GL runtime verification limited by the
+unavailable X11 display. Order: 4 of 5. Prerequisite: [stage 3](03-game-ownership.md).
 
 [Architecture overview and shared verification](../application-architecture.md).
 
@@ -55,4 +56,61 @@ Apply the [shared verification requirements](../application-architecture.md#veri
 Clang-Tidy checks. Record commands, results, limitations and any intentional
 behavior changes here when implementing this stage.
 
-Implementation has not started; no acceptance criterion is claimed as verified.
+Stage 3 already introduced the fixed-tick command entry and pending view aim as
+part of Game ownership. This stage makes that live sampling policy explicit,
+samples capture state once per frame, keeps held input immutable during catch-up,
+and adds timing/replay regression coverage. No second scheduler or new allocation
+is introduced. The 60 Hz step, 0.25-second clamp and residual accumulator are retained.
+
+Live input uses the latest aim and held movement/run/crouch for the next available
+tick and all remaining catch-up ticks. Jump/place/remove use exactly three pending
+flags; multiple presses coalesce until consumed, with no click history or event
+timestamp reconstruction. A zero-tick frame consumes nothing. The first available
+tick consumes each pending action once, in Game's aim, movement/collision,
+placement, removal, tick-increment order. Direct commands are already tick-assigned.
+
+Pending look derives the view without changing committed player aim. Local pause
+stops simulation; pause/resume discards pending motion/actions and accumulator
+remainder, and recapture reseeds the mouse. This is session policy: a future
+remote session would continue ticking while the local menu is open.
+
+The intentional edit-timing change described above landed with stage 3: block
+edits now occur in a simulation tick, including aim and movement from that command,
+rather than once per rendered frame. CPU edits are visible immediately to later
+ticks; GPU meshing may still lag. This stage preserves that behavior.
+
+Coverage:
+
+- Real application update/callback fixture: repeated presses across zero-tick
+  frames coalesce; latest aim and held state are sampled at consumption; jump,
+  place and remove run once through catch-up; run/crouch/movement remain held.
+  Holding jump through landing does not trigger another jump.
+- Simultaneous placement/removal preserves the original target. A later coalesced
+  remove deletes only the nearest of two targets despite multiple catch-up ticks.
+- A ten-second frame advances only 15 ticks and preserves raw timing; the
+  accumulator retains its fractional remainder. Clock reversal adds no time.
+- Pending view aim remains responsive with zero ticks, commits next tick, and
+  is discarded on pause. Long pause/resume frames execute no ticks, incur no
+  catch-up debt, and the first recaptured mouse position produces no motion.
+- Game targeting uses command aim after movement: crossing the six-unit reach
+  boundary allows removal in that tick. A 120-command replay with jump, movement,
+  aim, run/crouch and edits produces equivalent player and voxel state with
+  frequent zero-tick frames or irregular multi-tick catch-up frames. The 1e-6
+  world-unit player tolerance is below the 0.001 collision separation; discrete
+  state and voxel materials compare exactly.
+
+Verification:
+
+- `make all` and `make test`: passed, including existing physics, terrain,
+  collision, storage and allocation-failure tests.
+- `make test-sanitize`: LeakSanitizer cannot run under this environment's ptrace.
+  `ASAN_OPTIONS=detect_leaks=0 make test-sanitize`: passed all five suites under
+  AddressSanitizer/UndefinedBehaviorSanitizer. Leak detection remains unverified.
+- `make test-renderer`: built, but runtime could not open X11 display `:0`.
+  No GL runtime pass or visual responsiveness check is claimed.
+- `make streaming_capture visibility_capture terrain_capture performance_capture
+  allocation_capture local_vertex_capture -j4`: passed.
+- All changed C files checked with `clang-tidy
+  -checks=-*,bugprone-narrowing-conversions -- -Wall -Wextra -O2 -std=c99`,
+  adding `-DBW_RENDERER_TEST` for `tests/test_pause_menu.c`: no warnings.
+- `git diff --check`: passed.

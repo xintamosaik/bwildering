@@ -309,7 +309,7 @@ static void render_performance(const Application *const a) {
   glDisable(GL_DEPTH_TEST);
   for (int i = 0; i < 5; i++)
     draw_menu_text(&a->renderer, lines[i], (float)a->renderer.framebufferWidth * 0.5f,
-                   48.0f + (float)i * 18.0f, 0.6f, (Vec3){0.95f, 0.98f, 0.92f});
+                   48.0f + (float)i * 18.0f, 0.6f, (Vec3){.x = 0.95f, .y = 0.98f, .z = 0.92f});
   glEnable(GL_DEPTH_TEST);
 }
 
@@ -354,14 +354,14 @@ static void render_pause_menu(const Application *const application) {
                        360 * scale, 300 * scale, (Vec3){.x = 0.09f, .y = 0.12f, .z = 0.10f});
   draw_menu_text(renderer, application->settingsOpen ? "SETTINGS" : "PAUSED",
                  centerX, centerY - 130 * scale, scale * 1.2f,
-                 (Vec3){0.95f, 0.98f, 0.92f});
+                 (Vec3){.x = 0.95f, .y = 0.98f, .z = 0.92f});
   if (application->settingsOpen) {
     char value[16];
     snprintf(value, sizeof(value), "%.0f UNITS", renderer->viewDistance);
     draw_menu_text(renderer, "VIEW DISTANCE", centerX, centerY - 65 * scale,
                    scale, (Vec3){.x = 0.95f, .y = 0.98f, .z = 0.92f});
     draw_menu_text(renderer, value, centerX, centerY - 9 * scale,
-                   scale * 0.85f, (Vec3){0.95f, 0.98f, 0.92f});
+                   scale * 0.85f, (Vec3){.x = 0.95f, .y = 0.98f, .z = 0.92f});
   }
   MenuButton buttons[3];
   const int count = menu_buttons(application, buttons);
@@ -373,7 +373,7 @@ static void render_pause_menu(const Application *const application) {
   }
   draw_menu_text(renderer, application->settingsOpen ? "ESC TO PAUSE" : "ESC TO RESUME",
                  centerX, centerY + 110 * scale,
-                 scale * 0.7f, (Vec3){0.65f, 0.73f, 0.62f});
+                 scale * 0.7f, (Vec3){.x = 0.65f, .y = 0.73f, .z = 0.62f});
   if (depthEnabled)
     glEnable(GL_DEPTH_TEST);
   if (cullEnabled)

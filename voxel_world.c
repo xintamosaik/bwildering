@@ -2,7 +2,6 @@
 #include "storage.h"
 
 #include <math.h>
-#include <stdlib.h>
 #include <string.h>
 
 /* Benchmark hooks compile away in normal builds. */
@@ -177,21 +176,21 @@ void world_destroy(World *const world) {
   *world = (World){0};
 }
 
-int world_init(World *const world, const int side, const Vec3 center, const float size) {
+int world_init(World *const world, const int side, const Vec3 center, const float blockSize) {
   Vec3 origin = center;
-  origin.x -= (float)(side % 2) * size * 0.5f;
-  origin.z -= (float)(side % 2) * size * 0.5f;
-  return world_init_region(world, -(side / 2), -(side / 2), side, origin, size);
+  origin.x -= (float)(side % 2) * blockSize * 0.5f;
+  origin.z -= (float)(side % 2) * blockSize * 0.5f;
+  return world_init_region(world, -(side / 2), -(side / 2), side, origin, blockSize);
 }
 
 int world_init_region(World *const world, const int minX, const int minZ, const int side, const Vec3 origin,
-                       const float size) {
+                       const float blockSize) {
   /* Validate in wide arithmetic before endpoint, chunk or neighbour arithmetic. */
   if (!world || side <= 0 || side > WORLD_MAX_BLOCKS_PER_SIDE ||
       minX < WORLD_COORD_MIN || minZ < WORLD_COORD_MIN ||
       (int64_t)minX + side - 1 > WORLD_COORD_MAX ||
-      (int64_t)minZ + side - 1 > WORLD_COORD_MAX || !isfinite(size) ||
-      size < 0.001f || !isfinite(origin.x) || !isfinite(origin.y) || !isfinite(origin.z))
+      (int64_t)minZ + side - 1 > WORLD_COORD_MAX || !isfinite(blockSize) ||
+      blockSize < 0.001f || !isfinite(origin.x) || !isfinite(origin.y) || !isfinite(origin.z))
     return 0;
 
   /* Keep each block at least one float ULP wide throughout the bounded world. */
@@ -201,8 +200,8 @@ int world_init_region(World *const world, const int minX, const int minZ, const 
       WORLD_SECTION_COUNT * SECTION_SIZE,
       fmaxf(fabsf((float)minZ), fabsf((float)(minZ + side)))};
   for (int axis = 0; axis < 3; axis++) {
-    const float limit = fabsf(origins[axis]) + extents[axis] * size;
-    if (!isfinite(limit) || nextafterf(limit, INFINITY) - limit > size)
+    const float limit = fabsf(origins[axis]) + extents[axis] * blockSize;
+    if (!isfinite(limit) || nextafterf(limit, INFINITY) - limit > blockSize)
       return 0;
   }
 
@@ -217,7 +216,7 @@ int world_init_region(World *const world, const int minX, const int minZ, const 
   result.chunksPerSide = chunksX > chunksZ ? chunksX : chunksZ;
   result.chunkCount = (size_t)result.chunksPerSide * result.chunksPerSide;
   result.blocksPerSide = side;
-  result.blockSize = size;
+  result.blockSize = blockSize;
   result.origin = origin;
   result.chunks = storage_alloc(STORAGE_WORLD, result.chunkCount * sizeof(*result.chunks));
   if (!result.chunks)
@@ -267,20 +266,20 @@ static Subchunk **section_slot(Chunk *const chunk, const int y) {
   return slot;
 }
 
-const Subchunk *world_section(const World *const world, const int x, const int y, const int z) {
+const Subchunk *world_section(const World *const world, const int chunkX, const int sectionY, const int chunkZ) {
   MESH_BENCH_LOOKUP_BEGIN();
-  const Chunk *const chunk = find_chunk(world, x, z);
+  const Chunk *const chunk = find_chunk(world, chunkX, chunkZ);
   const Subchunk *s = chunk ? chunk->sections : NULL;
-  while (s && s->sectionY < y) {
+  while (s && s->sectionY < sectionY) {
     MESH_BENCH_VISIT();
     s = s->next;
   }
   MESH_BENCH_LOOKUP_END();
-  return s && s->sectionY == y ? s : NULL;
+  return s && s->sectionY == sectionY ? s : NULL;
 }
 
-Subchunk *world_section_mut(const World *const world, const int x, const int y, const int z) {
-  return (Subchunk *)world_section(world, x, y, z);
+Subchunk *world_section_mut(const World *const world, const int chunkX, const int sectionY, const int chunkZ) {
+  return (Subchunk *)world_section(world, chunkX, sectionY, chunkZ);
 }
 
 static int in_bounds(const World *const world, const int x, const int y, const int z) {
@@ -396,8 +395,8 @@ static Subchunk *terrain_section(const World *const world, const int cx, const i
   return section;
 }
 
-int world_materialize_chunk(World *const world, const int cx, const int cz) {
-  Chunk *const chunk = find_chunk_mut(world, cx, cz);
+int world_materialize_chunk(World *const world, const int chunkX, const int chunkZ) {
+  Chunk *const chunk = find_chunk_mut(world, chunkX, chunkZ);
   if (!chunk || !world->proceduralTerrain)
     return 0;
   if (chunk->terrainReady)
@@ -408,7 +407,7 @@ int world_materialize_chunk(World *const world, const int cx, const int cz) {
   int highest = TERRAIN_BASE_Y;
   for (int x = 0; x < SECTION_SIZE; x++)
     for (int z = 0; z < SECTION_SIZE; z++) {
-      const int wx = cx * SECTION_SIZE + x, wz = cz * SECTION_SIZE + z;
+      const int wx = chunkX * SECTION_SIZE + x, wz = chunkZ * SECTION_SIZE + z;
       columns[x][z] = (TerrainColumn){.height = TERRAIN_BASE_Y, .material = BLOCK_TYPE_STONE};
       if (wx >= world->minX && wx < world->minX + world->blocksPerSide &&
           wz >= world->minZ && wz < world->minZ + world->blocksPerSide) {
@@ -423,7 +422,7 @@ int world_materialize_chunk(World *const world, const int cx, const int cz) {
   int edge = 0;
   for (int x = -1; x <= SECTION_SIZE; x++)
     for (int z = -1; z <= SECTION_SIZE; z++) {
-      const int wx = cx * SECTION_SIZE + x, wz = cz * SECTION_SIZE + z;
+      const int wx = chunkX * SECTION_SIZE + x, wz = chunkZ * SECTION_SIZE + z;
       if (wx < world->minX || wx >= world->minX + world->blocksPerSide ||
           wz < world->minZ || wz >= world->minZ + world->blocksPerSide) { edge = 1; continue; }
       const int h = x >= 0 && x < SECTION_SIZE && z >= 0 && z < SECTION_SIZE ?
@@ -435,10 +434,10 @@ int world_materialize_chunk(World *const world, const int cx, const int cz) {
   Subchunk *pending[WORLD_SECTION_COUNT] = {0};
   for (int s = 0; s < WORLD_SECTION_COUNT; s++) {
     const int sy = WORLD_MIN_SECTION_Y + s;
-    if (world_section(world, cx, sy, cz) || sy * SECTION_SIZE >= highest ||
+    if (world_section(world, chunkX, sy, chunkZ) || sy * SECTION_SIZE >= highest ||
         (sy + 1) * SECTION_SIZE <= TERRAIN_BASE_Y)
       continue;
-    pending[s] = terrain_section(world, cx, sy, cz, columns);
+    pending[s] = terrain_section(world, chunkX, sy, chunkZ, columns);
     if (pending[s]) pending[s]->meshCandidate = edge || sy == WORLD_MIN_SECTION_Y ||
         (sy + 1) * SECTION_SIZE >= lowest;
     if (!pending[s]) {
@@ -452,10 +451,10 @@ int world_materialize_chunk(World *const world, const int cx, const int cz) {
   for (uint32_t i = chunk->editHead; i; i = world->edits[i - 1].next) {
     const int sy = voxel_section_coord(world->edits[i - 1].y);
     Subchunk **const slot = section_slot(&extra, sy);
-    if (world_section(world, cx, sy, cz) || (*slot && (*slot)->sectionY == sy) ||
+    if (world_section(world, chunkX, sy, chunkZ) || (*slot && (*slot)->sectionY == sy) ||
         (sy >= WORLD_MIN_SECTION_Y && sy < WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT &&
          pending[sy - WORLD_MIN_SECTION_Y])) continue;
-    Subchunk *const section = terrain_section(world, cx, sy, cz, columns);
+    Subchunk *const section = terrain_section(world, chunkX, sy, chunkZ, columns);
     if (!section) {
       for (int j = 0; j < WORLD_SECTION_COUNT; j++) section_destroy(pending[j]);
       while (extra.sections) {
@@ -489,12 +488,12 @@ int world_materialize_chunk(World *const world, const int cx, const int cz) {
     }
 
   chunk->terrainReady = 1;
-  include_resident_chunk(world, cx, cz);
+  include_resident_chunk(world, chunkX, chunkZ);
   return 1;
 }
 
-void world_release_chunk(World *const world, const int cx, const int cz) {
-  Chunk *const chunk = find_chunk_mut(world, cx, cz);
+void world_release_chunk(World *const world, const int chunkX, const int chunkZ) {
+  Chunk *const chunk = find_chunk_mut(world, chunkX, chunkZ);
   if (!chunk || !world->proceduralTerrain)
     return;
   Subchunk *section = chunk->sections;
@@ -862,9 +861,9 @@ static int mesh_build(const World *const world, const int cx, const int sy, cons
   return 1;
 }
 
-int section_mesh_build(const World *const world, const int cx, const int sy, const int cz,
+int section_mesh_build(const World *const world, const int chunkX, const int sectionY, const int chunkZ,
                        SectionMesh *const mesh) {
-  return mesh_build(world, cx, sy, cz, mesh, NULL, 0, 0);
+  return mesh_build(world, chunkX, sectionY, chunkZ, mesh, NULL, 0, 0);
 }
 int section_mesh_build_scratch(const World *const world, const int cx, const int sy, const int cz,
                                SurfaceVertex *const scratch, const size_t capacity,

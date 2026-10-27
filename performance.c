@@ -109,52 +109,52 @@ static void perf_report(Performance *const p, const PerformanceSnapshot *const s
 }
 
 /* Expensive metadata scans happen only at explicit capture/window boundaries. */
-void performance_snapshot(Application *const a) {
-  a->residentChunks = a->editedChunks = a->dirtySections = a->gpuBytes = 0;
-  a->residentVoxelBytes = 0;
-  for (size_t c = 0; c < a->world.chunkCount; c++) {
-    const Chunk *const chunk = &a->world.chunks[c];
+void performance_snapshot(Application *const application) {
+  application->residentChunks = application->editedChunks = application->dirtySections = application->gpuBytes = 0;
+  application->residentVoxelBytes = 0;
+  for (size_t c = 0; c < application->world.chunkCount; c++) {
+    const Chunk *const chunk = &application->world.chunks[c];
     int resident = chunk->terrainReady;
-    a->editedChunks += chunk->edited != 0;
+    application->editedChunks += chunk->edited != 0;
     for (const Subchunk *section = chunk->sections; section; section = section->next) {
-      a->residentVoxelBytes += sizeof(*section) +
+      application->residentVoxelBytes += sizeof(*section) +
           (section->storage == SECTION_DENSE ? SECTION_VOLUME : 0);
       resident |= section != NULL;
-      a->dirtySections += section && section->dirty;
+      application->dirtySections += section && section->dirty;
     }
-    a->residentChunks += resident != 0;
+    application->residentChunks += resident != 0;
   }
-  for (size_t i = 0; i < a->renderer.meshCount; i++)
+  for (size_t i = 0; i < application->renderer.meshCount; i++)
     for (int t = 0; t < BLOCK_TYPE_COUNT; t++)
-      a->gpuBytes += (size_t)a->renderer.meshes[i].vertexCount[t] * sizeof(SurfaceVertex);
+      application->gpuBytes += (size_t)application->renderer.meshes[i].vertexCount[t] * sizeof(SurfaceVertex);
 }
 
-void performance_report(Application *const a, const char *const phase) {
-  if (!a->performance.enabled) return;
-  performance_snapshot(a);
+void performance_report(Application *const application, const char *const phase) {
+  if (!application->performance.enabled) return;
+  performance_snapshot(application);
   const PerformanceSnapshot snapshot = {
-      .residentChunks = a->residentChunks,
-      .sections = a->world.sectionCount,
-      .editedChunks = a->editedChunks,
-      .dirtySections = a->dirtySections,
-      .neighborhoodSlots = a->renderer.visibleMeshCount,
-      .worldMetadataBytes = sizeof(World) + a->world.chunkCount * sizeof(Chunk) +
-          (a->world.edits ? WORLD_EDIT_CAPACITY * sizeof(VoxelEdit) : 0),
-      .rendererMetadataBytes = sizeof(Renderer) + a->renderer.meshCount * sizeof(SectionGpuMesh),
-      .residentVoxelBytes = a->residentVoxelBytes,
-      .visibleIndexBytes = a->renderer.visibleMeshCapacity * sizeof(size_t),
-      .drawIndexBytes = a->renderer.drawMeshCapacity * sizeof(size_t),
-      .gpuBytes = a->gpuBytes,
-      .worldMetadataSeconds = a->worldMetadataSeconds,
-      .rendererMetadataSeconds = a->renderer.metadataSeconds,
-      .startupSeconds = a->startupSeconds,
-      .seed = a->world.terrainSeed,
-      .side = a->world.blocksPerSide,
-      .viewDistance = a->renderer.viewDistance,
-      .framebufferWidth = a->renderer.framebufferWidth,
-      .framebufferHeight = a->renderer.framebufferHeight,
-      .paused = a->paused,
+      .residentChunks = application->residentChunks,
+      .sections = application->world.sectionCount,
+      .editedChunks = application->editedChunks,
+      .dirtySections = application->dirtySections,
+      .neighborhoodSlots = application->renderer.visibleMeshCount,
+      .worldMetadataBytes = sizeof(World) + application->world.chunkCount * sizeof(Chunk) +
+          (application->world.edits ? WORLD_EDIT_CAPACITY * sizeof(VoxelEdit) : 0),
+      .rendererMetadataBytes = sizeof(Renderer) + application->renderer.meshCount * sizeof(SectionGpuMesh),
+      .residentVoxelBytes = application->residentVoxelBytes,
+      .visibleIndexBytes = application->renderer.visibleMeshCapacity * sizeof(size_t),
+      .drawIndexBytes = application->renderer.drawMeshCapacity * sizeof(size_t),
+      .gpuBytes = application->gpuBytes,
+      .worldMetadataSeconds = application->worldMetadataSeconds,
+      .rendererMetadataSeconds = application->renderer.metadataSeconds,
+      .startupSeconds = application->startupSeconds,
+      .seed = application->world.terrainSeed,
+      .side = application->world.blocksPerSide,
+      .viewDistance = application->renderer.viewDistance,
+      .framebufferWidth = application->renderer.framebufferWidth,
+      .framebufferHeight = application->renderer.framebufferHeight,
+      .paused = application->paused,
   };
-  perf_report(&a->performance, &snapshot, phase);
+  perf_report(&application->performance, &snapshot, phase);
 }
 

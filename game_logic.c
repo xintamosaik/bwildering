@@ -172,15 +172,15 @@ static float terrain_lattice(const int x, const int z, const uint32_t seed) {
   return (float)(hash & UINT32_C(0xFFFF)) / 65535.0f;
 }
 
-float terrain_noise(const int x, const int z, const int scale,
+float terrain_noise(const int worldX, const int worldZ, const int scale,
                            const uint32_t seed) {
   if (scale < 8 || scale > 2048 || (scale & (scale - 1)) != 0)
     return NAN;
 
-  const int gx = voxel_floor_div(x, scale);
-  const int gz = voxel_floor_div(z, scale);
-  float tx = (float)voxel_floor_mod(x, scale) / (float)scale;
-  float tz = (float)voxel_floor_mod(z, scale) / (float)scale;
+  const int gx = voxel_floor_div(worldX, scale);
+  const int gz = voxel_floor_div(worldZ, scale);
+  float tx = (float)voxel_floor_mod(worldX, scale) / (float)scale;
+  float tz = (float)voxel_floor_mod(worldZ, scale) / (float)scale;
   tx = tx * tx * (3.0f - 2.0f * tx);
   tz = tz * tz * (3.0f - 2.0f * tz);
 
@@ -197,22 +197,22 @@ static int layer_thickness(const float n, const int lo, const int hi) {
   return v > hi ? hi : v;
 }
 
-TerrainColumn terrain_sample_column(const uint32_t seed, const int x, const int z) {
+TerrainColumn terrain_sample_column(const uint32_t seed, const int worldX, const int worldZ) {
   /* Compact relief: the main shapes are four times narrower than the initial
      tuning, giving the same height changes much steeper sides. */
-  const float broad = terrain_noise(x, z, TERRAIN_RELIEF_SCALE, seed);
-  const float region = terrain_noise(x, z, TERRAIN_MOUNTAIN_REGION_SCALE, seed ^ UINT32_C(0xA341316C));
+  const float broad = terrain_noise(worldX, worldZ, TERRAIN_RELIEF_SCALE, seed);
+  const float region = terrain_noise(worldX, worldZ, TERRAIN_MOUNTAIN_REGION_SCALE, seed ^ UINT32_C(0xA341316C));
   float mask = fmaxf(0, fminf(1, (region - 0.45f) / 0.35f));
   mask = mask * mask * (3 - 2 * mask);
-  const float ridge = 1 - fabsf(2 * terrain_noise(x, z, TERRAIN_RIDGE_SCALE, seed ^ UINT32_C(0xC8013EA4)) - 1);
-  const float hills = terrain_noise(x, z, TERRAIN_HILL_SCALE, seed ^ UINT32_C(0x7F4A7C15));
-  const float detail = terrain_noise(x, z, TERRAIN_DETAIL_SCALE, seed ^ UINT32_C(0x912AC318));
+  const float ridge = 1 - fabsf(2 * terrain_noise(worldX, worldZ, TERRAIN_RIDGE_SCALE, seed ^ UINT32_C(0xC8013EA4)) - 1);
+  const float hills = terrain_noise(worldX, worldZ, TERRAIN_HILL_SCALE, seed ^ UINT32_C(0x7F4A7C15));
+  const float detail = terrain_noise(worldX, worldZ, TERRAIN_DETAIL_SCALE, seed ^ UINT32_C(0x912AC318));
   int height = (int)floorf(TERRAIN_SURFACE_MIN + 175 * broad + 285 * mask * ridge + 18 * hills + 4 * detail);
   if (height > TERRAIN_SURFACE_MAX) height = TERRAIN_SURFACE_MAX;
 
   /* Choose surface layers after fixing the column height. */
-  const float local = terrain_noise(x, z, 64, seed ^ UINT32_C(0xFE321AB7));
-  const float deposit = terrain_noise(x, z, 128, seed ^ UINT32_C(0xBC219841));
+  const float local = terrain_noise(worldX, worldZ, 64, seed ^ UINT32_C(0xFE321AB7));
+  const float deposit = terrain_noise(worldX, worldZ, 128, seed ^ UINT32_C(0xBC219841));
   const int offset = (int)floorf(12 * local - 6);
   TerrainColumn c = {.height = height, .material = BLOCK_TYPE_STONE,
                     .deepRockY = TERRAIN_DEEP_ROCK_Y + offset};
@@ -235,24 +235,24 @@ TerrainColumn terrain_sample_column(const uint32_t seed, const int x, const int 
   return c;
 }
 
-BlockType terrain_column_block(const TerrainColumn c, const int y) {
-  if (y < TERRAIN_BASE_Y || y >= c.height) return BLOCK_TYPE_EMPTY;
-  if (y < c.deepRockY) return BLOCK_TYPE_DARK_STONE;
-  const int depth = c.height - 1 - y;
-  if (depth < c.snowDepth) return BLOCK_TYPE_SNOW;
-  if (depth < c.sandDepth) return BLOCK_TYPE_SAND;
-  if (depth < c.sandDepth + c.gravelDepth) return BLOCK_TYPE_GRAVEL;
-  if (c.soilDepth && depth == 0) return BLOCK_TYPE_GRASS;
-  if (c.soilDepth && depth <= c.soilDepth) return BLOCK_TYPE_DIRT;
+BlockType terrain_column_block(const TerrainColumn column, const int y) {
+  if (y < TERRAIN_BASE_Y || y >= column.height) return BLOCK_TYPE_EMPTY;
+  if (y < column.deepRockY) return BLOCK_TYPE_DARK_STONE;
+  const int depth = column.height - 1 - y;
+  if (depth < column.snowDepth) return BLOCK_TYPE_SNOW;
+  if (depth < column.sandDepth) return BLOCK_TYPE_SAND;
+  if (depth < column.sandDepth + column.gravelDepth) return BLOCK_TYPE_GRAVEL;
+  if (column.soilDepth && depth == 0) return BLOCK_TYPE_GRASS;
+  if (column.soilDepth && depth <= column.soilDepth) return BLOCK_TYPE_DIRT;
   return BLOCK_TYPE_STONE;
 }
 
 /* The flat platform retains its global shuffle fixture. */
-int create_platform(World *const world, const int side, const Vec3 center, const float size, const uint32_t seed) {
+int create_platform(World *const world, const int blocksPerSide, const Vec3 center, const float blockSize, const uint32_t seed) {
   World result = {0};
-  if (world == NULL || !world_init(&result, side, center, size))
+  if (world == NULL || !world_init(&result, blocksPerSide, center, blockSize))
     return 0;
-  const int count = side * side;
+  const int count = blocksPerSide * blocksPerSide;
   uint8_t *const tiles = malloc((size_t)count);
   if (tiles == NULL) {
     world_destroy(&result);
@@ -269,10 +269,10 @@ int create_platform(World *const world, const int side, const Vec3 center, const
   }
 
   /* Apply the shuffled palette to the platform cells. */
-  for (int x = 0; x < side; x++) {
-    for (int z = 0; z < side; z++) {
+  for (int x = 0; x < blocksPerSide; x++) {
+    for (int z = 0; z < blocksPerSide; z++) {
       const int height = 0;
-      const BlockType type = (BlockType)tiles[x * side + z];
+      const BlockType type = (BlockType)tiles[x * blocksPerSide + z];
       for (int y = -1; y < height; y++) {
         if (!world_set_block(&result, result.minX + x, y, result.minZ + z, type)) {
           free(tiles);
@@ -290,9 +290,9 @@ int create_platform(World *const world, const int side, const Vec3 center, const
 }
 
 int create_terrain_region(World *const world, const int minX, const int minZ, const int side,
-                          const Vec3 origin, const float size, const uint32_t seed) {
+                          const Vec3 origin, const float blockSize, const uint32_t seed) {
   World result = {0};
-  if (!world || !world_init_region(&result, minX, minZ, side, origin, size))
+  if (!world || !world_init_region(&result, minX, minZ, side, origin, blockSize))
     return 0;
   result.proceduralTerrain = 1;
   result.terrainSeed = seed;
@@ -310,16 +310,16 @@ int create_terrain_region(World *const world, const int minX, const int minZ, co
   return 1;
 }
 
-int create_terrain(World *const world, const int side, const Vec3 center, const float size, const uint32_t seed) {
+int create_terrain(World *const world, const int blocksPerSide, const Vec3 center, const float blockSize, const uint32_t seed) {
   Vec3 origin = center;
-  origin.x -= (float)(side % 2) * size * 0.5f;
-  origin.z -= (float)(side % 2) * size * 0.5f;
-  return create_terrain_region(world, -(side / 2), -(side / 2), side, origin, size, seed);
+  origin.x -= (float)(blocksPerSide % 2) * blockSize * 0.5f;
+  origin.z -= (float)(blocksPerSide % 2) * blockSize * 0.5f;
+  return create_terrain_region(world, -(blocksPerSide / 2), -(blocksPerSide / 2), blocksPerSide, origin, blockSize, seed);
 }
 
-int create_terrain_streamed(World *const world, const int side, const Vec3 center, const float size, const uint32_t seed) {
+int create_terrain_streamed(World *const world, const int blocksPerSide, const Vec3 center, const float blockSize, const uint32_t seed) {
   World result = {0};
-  if (!world || !world_init(&result, side, center, size))
+  if (!world || !world_init(&result, blocksPerSide, center, blockSize))
     return 0;
   result.proceduralTerrain = 1;
   result.terrainSeed = seed;
@@ -525,8 +525,8 @@ int player_spawn_on_surface(Player *const player, const World *const world) {
   return 1;
 }
 
-void update_player(Player *const updatedPlayer, const PlayerInput input, const float dt, const World *const world) {
-  if (!updatedPlayer || !isfinite(dt) || dt <= 0 || dt > 10)
+void update_player(Player *const updatedPlayer, const PlayerInput input, const float deltaTime, const World *const world) {
+  if (!updatedPlayer || !isfinite(deltaTime) || deltaTime <= 0 || deltaTime > 10)
     return;
 
   /* Resolve horizontal motion one axis at a time to slide along walls. */
@@ -539,8 +539,8 @@ void update_player(Player *const updatedPlayer, const PlayerInput input, const f
       vec3_add(vec3_scale(forward, input.forward), vec3_scale(right, input.strafe));
   if (vec3_dot(movement, movement) > 1)
     movement = vec3_normalize(movement);
-  move_axis(updatedPlayer, world, movement.x * speed * dt, 0);
-  move_axis(updatedPlayer, world, movement.z * speed * dt, 2);
+  move_axis(updatedPlayer, world, movement.x * speed * deltaTime, 0);
+  move_axis(updatedPlayer, world, movement.z * speed * deltaTime, 2);
 
   /* Recheck support after moving, then accept a grounded jump. */
   Vec3 below = updatedPlayer->position;
@@ -555,9 +555,9 @@ void update_player(Player *const updatedPlayer, const PlayerInput input, const f
     return;
 
   const float gravity = GRAVITY * (updatedPlayer->velocityY <= 0 ? FALL_GRAVITY_MULTIPLIER : 1);
-  updatedPlayer->velocityY -= gravity * dt;
+  updatedPlayer->velocityY -= gravity * deltaTime;
   const int falling = updatedPlayer->velocityY < 0;
-  if (move_axis(updatedPlayer, world, updatedPlayer->velocityY * dt, 1)) {
+  if (move_axis(updatedPlayer, world, updatedPlayer->velocityY * deltaTime, 1)) {
     updatedPlayer->velocityY = 0;
     updatedPlayer->grounded = falling;
   }

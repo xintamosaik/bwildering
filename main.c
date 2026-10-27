@@ -329,7 +329,7 @@ static int renderer_prepare_world(Renderer *const renderer, const World *const w
   return 1;
 }
 
-static int renderer_sync_section(Renderer *const renderer, World *const world, const size_t i) {
+static int renderer_sync_section(Renderer *const renderer, const World *const world, const size_t i) {
   SectionGpuMesh *const gpu = &renderer->meshes[i];
   Subchunk *const section = world_section_mut(world, gpu->chunkX, gpu->sectionY, gpu->chunkZ);
   if (!section) {

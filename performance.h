@@ -9,6 +9,8 @@ typedef struct {
   double raw, update, sync, materialize, mesh, upload, render, swap, visibility;
   size_t distanceTests, frustumTests, materialChanges, visibilityFallbacks;
   size_t rebuilds, uploadCalls, uploadBytes, draws, triangles, peakMeshBytes;
+  double retirement, metadata, atomicMax;
+  size_t operations, materializedChunks;
   size_t evictedChunks, retiredMeshes, retiredBytes;
 } FrameWork;
 typedef struct {

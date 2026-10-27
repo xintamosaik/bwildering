@@ -99,3 +99,13 @@ section allocations (including glibc overhead) on three mountainous regions and
 prints generation timings and complete voxel checksums. See
 [section storage](../section-storage.md) for before/after results and transition
 tests.
+
+`./streaming_capture --baseline` and `./streaming_capture --frames` compare
+synchronous loading with the gameplay scheduler across fixed-step stationary,
+walking, running, teleport, reverse, radius-change and world-edge scenarios at
+radii 25/100/300. Run serially; GPU drains stay outside measured frame loops.
+`test_stream_budget` in the GL suite uses operation/byte limits to check bounded
+queue exhaustion, eventual convergence, aging, nearest work, revision refresh,
+edit/upload/metadata failure retries, old drawable geometry, shrink/cancellation
+and revisits. Converged GPU bytes and material ranges match synchronous meshes;
+a stationary completed view starts no further operations.

@@ -41,6 +41,8 @@ void perf_record(Performance *const p) {
   PERF_SUM(raw); PERF_SUM(update); PERF_SUM(sync); PERF_SUM(materialize);
   PERF_SUM(mesh); PERF_SUM(upload); PERF_SUM(render); PERF_SUM(swap);
   PERF_SUM(rebuilds); PERF_SUM(uploadCalls); PERF_SUM(uploadBytes);
+  PERF_SUM(retirement); PERF_SUM(metadata); PERF_SUM(operations); PERF_SUM(materializedChunks);
+  if (p->frame.atomicMax > p->total.atomicMax) p->total.atomicMax = p->frame.atomicMax;
   PERF_SUM(evictedChunks); PERF_SUM(retiredMeshes); PERF_SUM(retiredBytes);
   PERF_SUM(draws); PERF_SUM(triangles); PERF_SUM(visibility);
   PERF_SUM(distanceTests); PERF_SUM(frustumTests);

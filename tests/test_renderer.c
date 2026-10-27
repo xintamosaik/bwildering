@@ -603,6 +603,132 @@ static void test_sparse_vertical_renderer(void) {
   world_destroy(&world);
 }
 
+/* Counts, not wall-clock thresholds, define these scheduler assertions. */
+static void test_stream_budget(void) {
+  World world = {0};
+  Renderer r = {0};
+  Performance perf = {.enabled = 1};
+  Player player = {.position = {-0.5f, 410.0f, -0.5f}, .eyeHeight = 1.0f};
+  assert(create_terrain_streamed(&world, 256, (Vec3){0}, 1.0f, WORLD_SEED));
+  assert(renderer_init(&r));
+  r.performance = &perf;
+  r.viewDistance = 100.0f;
+  const StreamBudget paused = {.operations = 0, .bytes = SIZE_MAX};
+  const StreamBudget one = {.operations = 1, .bytes = SIZE_MAX};
+  const StreamBudget batch = {.operations = 256, .bytes = SIZE_MAX};
+  assert(renderer_sync_view_work(&r, &world, &player, &paused) == STREAM_DEFERRED);
+  assert(!world.sectionCount && r.pendingCount && r.pendingCount <= STREAM_TASK_CAPACITY);
+  /* Nearest missing column wins, with signed identities and stable ties. */
+  const StreamTask first = r.pending[0];
+  assert(first.materialize && first.x == -1 && first.z == -1);
+  perf.frame = (FrameWork){0};
+  assert(renderer_sync_view_work(&r, &world, &player, &one) == STREAM_DEFERRED);
+  assert(perf.frame.operations == 1 && stream_chunk(&world, -1, -1)->terrainReady);
+  /* A zero byte budget also prevents starting work. */
+  const StreamBudget noBytes = {.operations = 256, .bytes = 0};
+  perf.frame = (FrameWork){0};
+  assert(renderer_sync_view_work(&r, &world, &player, &noBytes) == STREAM_DEFERRED);
+  assert(!perf.frame.operations);
+  /* Materialize without meshing to exceed the bounded queue's capacity. */
+  for (int x = world.minChunkX; x < world.minChunkX + world.chunksPerSide; x++)
+    for (int z = world.minChunkZ; z < world.minChunkZ + world.chunksPerSide; z++)
+      {
+        assert(world_materialize_chunk(&world, x, z));
+        for (int j = 0; j < 12; j++)
+          assert(world_set_block(&world, x * SECTION_SIZE + 8, 500 + j * SECTION_SIZE,
+                                 z * SECTION_SIZE + 8, BLOCK_TYPE_STONE));
+      }
+  assert(renderer_sync_view_work(&r, &world, &player, &paused) == STREAM_DEFERRED);
+  assert(r.pendingCount == STREAM_TASK_CAPACITY && r.pendingWork > r.pendingCount);
+  /* A long-waiting distant task overtakes newer nearby work. */
+  const StreamTask aged = r.pending[r.pendingCount - 1];
+  for (size_t i = 0; i < r.pendingCount; i++) r.pending[i].born = 10000;
+  r.pending[r.pendingCount - 1].born = 0;
+  r.streamFrame = 10000;
+  assert(renderer_sync_view_work(&r, &world, &player, &paused) == STREAM_DEFERRED);
+  assert(!stream_identity_compare(&aged, &r.pending[0]));
+  size_t passes = 0;
+  while (renderer_sync_view_work(&r, &world, &player, &batch) != STREAM_COMPLETE) {
+    assert(r.pendingCount <= STREAM_TASK_CAPACITY && ++passes < 1000);
+  }
+  assert(passes > 1);
+  for (size_t n = 0; n < r.visibleMeshCount; n++) {
+    const SectionGpuMesh *const gpu = &r.meshes[r.visibleMeshes[n]];
+    SectionMesh cpu = {0};
+    assert(section_mesh_build(&world, gpu->chunkX, gpu->sectionY, gpu->chunkZ, &cpu));
+    assert_gpu_geometry(gpu, &cpu);
+    section_mesh_destroy(&cpu);
+  }
+  perf.frame = (FrameWork){0};
+  assert(renderer_sync_view_work(&r, &world, &player, &one) == STREAM_COMPLETE);
+  assert(!perf.frame.operations && !perf.frame.uploadCalls && !perf.frame.rebuilds);
+
+  /* An edit is authoritative immediately; queued revisions refresh on retry. */
+  assert(world_set_block(&world, -1, 410, -1, BLOCK_TYPE_STONE));
+  assert(renderer_sync_view_work(&r, &world, &player, &paused) == STREAM_DEFERRED);
+  const uint64_t revision = world_section(&world, -1, voxel_section_coord(410), -1)->revision;
+  assert(world_set_block(&world, -1, 410, -1, BLOCK_TYPE_SNOW));
+  assert(world_section(&world, -1, voxel_section_coord(410), -1)->revision > revision);
+  assert(world_get_block(&world, -1, 410, -1) == BLOCK_TYPE_SNOW);
+  while (renderer_sync_view_work(&r, &world, &player, &batch) != STREAM_COMPLETE) {}
+  SectionGpuMesh *mesh = gpu_section(&r, -1, voxel_section_coord(410), -1);
+  assert(mesh && mesh->vertexCount[BLOCK_TYPE_SNOW] == 36);
+  const GLuint oldVbo = mesh->vbo;
+  assert(world_set_block(&world, -1, 450, -1, BLOCK_TYPE_WATER));
+  metadata_allocations_before_failure = 0;
+  assert(renderer_sync_view_work(&r, &world, &player, &paused) == STREAM_FAILED);
+  metadata_allocations_before_failure = -1;
+  int oldVisible = 0;
+  for (size_t n = 0; n < r.visibleMeshCount; n++)
+    oldVisible |= r.meshes[r.visibleMeshes[n]].vbo == oldVbo;
+  assert(oldVisible);
+  visible_allocations_before_failure = 0;
+  assert(renderer_sync_view_work(&r, &world, &player, &paused) == STREAM_FAILED);
+  visible_allocations_before_failure = -1;
+  oldVisible = 0;
+  for (size_t n = 0; n < r.visibleMeshCount; n++)
+    oldVisible |= r.meshes[r.visibleMeshes[n]].vbo == oldVbo;
+  assert(oldVisible);
+  while (renderer_sync_view_work(&r, &world, &player, &batch) != STREAM_COMPLETE) {}
+  mesh = gpu_section(&r, -1, voxel_section_coord(410), -1);
+  assert(world_set_block(&world, -1, 410, -1, BLOCK_TYPE_GRASS));
+  assert(renderer_sync_view_work(&r, &world, &player, &paused) == STREAM_DEFERRED);
+  assert(mesh->vbo == oldVbo && glIsBuffer(oldVbo));
+  real_buffer_upload = __glewBufferData;
+  uploads_before_failure = 0;
+  __glewBufferData = fail_buffer_upload;
+  assert(renderer_sync_view_work(&r, &world, &player, &one) == STREAM_FAILED);
+  __glewBufferData = real_buffer_upload;
+  assert(mesh->vbo == oldVbo && world_section(&world, -1, voxel_section_coord(410), -1)->dirty);
+  assert(r.pendingCount);
+  while (renderer_sync_view_work(&r, &world, &player, &batch) != STREAM_COMPLETE) {}
+  SectionMesh reference = {0};
+  assert(section_mesh_build(&world, -1, voxel_section_coord(410), -1, &reference));
+  assert_gpu_geometry(gpu_section(&r, -1, voxel_section_coord(410), -1), &reference);
+  section_mesh_destroy(&reference);
+
+  /* Shrink, leave while work is queued, then revisit. No departing task survives. */
+  assert(world_set_block(&world, 90, 410, 0, BLOCK_TYPE_SAND));
+  assert(renderer_sync_view_work(&r, &world, &player, &paused) == STREAM_DEFERRED);
+  r.viewDistance = 25.0f;
+  assert(renderer_sync_view_work(&r, &world, &player, &paused) == STREAM_COMPLETE);
+  assert(!r.pendingCount && world_get_block(&world, 90, 410, 0) == BLOCK_TYPE_SAND);
+  player.position.x = 10000.0f;
+  assert(renderer_sync_view_work(&r, &world, &player, &paused) == STREAM_COMPLETE);
+  assert(!r.pendingCount && !r.visibleMeshCount);
+  player.position.x = 90.0f;
+  assert(world_set_block(&world, 90, 450, 0, BLOCK_TYPE_WATER));
+  metadata_allocations_before_failure = 0;
+  assert(renderer_sync_view_work(&r, &world, &player, &batch) == STREAM_FAILED);
+  metadata_allocations_before_failure = -1;
+  while (renderer_sync_view_work(&r, &world, &player, &batch) != STREAM_COMPLETE) {}
+  assert(section_mesh_build(&world, voxel_section_coord(90), voxel_section_coord(410), 0, &reference));
+  assert_gpu_geometry(gpu_section(&r, voxel_section_coord(90), voxel_section_coord(410), 0), &reference);
+  section_mesh_destroy(&reference);
+  renderer_destroy(&r);
+  world_destroy(&world);
+}
+
 int main(void) {
   test_frustum();
   glfwSetErrorCallback(glfw_test_error);
@@ -619,6 +745,7 @@ int main(void) {
   assert(glewInit() == GLEW_OK);
   while (glGetError() != GL_NO_ERROR) {
   }
+  test_stream_budget();
   test_performance_counters();
   test_sparse_vertical_renderer();
   Renderer renderer = {0};

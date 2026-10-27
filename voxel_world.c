@@ -427,6 +427,7 @@ int world_set_block(World *const world, const int x, const int y, const int z, c
   section->blocks[index] = (uint8_t)type;
   section_compact(section);
   section->dirty = 1;
+  section->revision++;
   if (world->proceduralTerrain)
     chunk->edited = 1;
 
@@ -443,6 +444,7 @@ int world_set_block(World *const world, const int x, const int y, const int z, c
     Subchunk *const neighbor = world_section_mut(world, cx + dx[d], sy + dy[d], cz + dz[d]);
     if (neighbor) {
       neighbor->dirty = 1;
+      neighbor->revision++;
       neighbor->meshCandidate = 1;
     }
   }

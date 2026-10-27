@@ -1,253 +1,111 @@
-# Code review — Bwildering, 26 October 2026
+# Code review — Bwildering, 27 October 2026
 
-Overall assessment: The architecture is moving in the right direction. You're no longer building a collection of independently positioned cubes. You have a voxel world with spatially organized storage, deterministic terrain generation, section-level meshing and explicit resource ownership.
+Overall assessment: The architecture is substantially stronger than in the previous review. The most valuable improvements are that you've optimized a measured bottleneck, introduced a compact storage representation, and retained relatively simple ownership rules.
 
-More importantly, your code increasingly reflects the engineering philosophy you've been aiming for:
+I reviewed the supplied implementation, benchmark reports, tests, and issue tracker. I haven't independently compiled or executed the project, and the supplied snapshot excludes `main.c`, so renderer integration cannot be fully verified here.
 
-- TigerBeetle: explicit invariants, failure handling, deterministic behaviour and transactional updates.
-- id Software (Doom–Quake 3): specialized data structures, spatial partitioning, visibility-driven rendering and measurable performance.
-- Casey Muratori: straightforward C, understandable execution paths, explicit data transformations and relatively little abstraction.
+## 1. What has improved
 
-However, I see some important architectural limitations, particularly around memory allocation, terrain representation and the distinction between world data and rendering data.
+| Area                        | Assessment            | Reason                                              |
+| --------------------------- | --------------------- | --------------------------------------------------- |
+| Chunk/subchunk architecture | Good                  | Spatial organization and signed coordinates         |
+| Empty/uniform/dense storage | Very good             | Explicit states and substantial measured savings    |
+| Meshing performance         | Excellent progress    | Repeated neighbour queries eliminated               |
+| Allocation failure handling | Strong                | Prepare before committing changes                   |
+| Streaming                   | Functional foundation | Residency and GPU retirement have explicit policies |
+| Testing                     | Strong                | Equality tests, lifecycle tests, failure injection  |
+| Frame-time predictability   | Needs work            | Synchronous generation remains expensive            |
+| Long-term edit storage      | Needs work            | Edited chunks accumulate indefinitely               |
 
-## 1. What's working well
+The most important architectural quality is that the voxel data remains authoritative and meshes are disposable derived data.
 
-| Area                               | Assessment                           |
-| ---------------------------------- | ------------------------------------ |
-| Chunk/subchunk organization        | Good foundation                      |
-| Signed voxel coordinates           | Good, including negative coordinates |
-| Deterministic terrain sampling     | Good                                 |
-| Surface-only mesh generation       | Correct direction                    |
-| Dirty subchunk tracking            | Good                                 |
-| Transactional CPU mesh replacement | Particularly good                    |
-| Allocation-failure testing         | Excellent direction                  |
-| Memory locality                    | Still needs improvement              |
-| Large-world scalability            | Not there yet                        |
-| Separation of responsibilities     | Improving, but incomplete            |
+You haven't accidentally built a framework around the problem. Most of the operations remain relatively direct.
 
-The strongest architectural decision is that the voxel world is authoritative, while the mesh is derived data.
+## 2. Findings, in priority order
 
-That's precisely what you want for a Minecraft-style game:
+P1
 
-```
-Voxel coordinates + block types
-              |
-              v
-       Chunk / Subchunk
-              |
-              v
-        Surface builder
-              |
-              v
-         GPU geometry
-```
+Synchronous streaming creates substantial frame-time spikes
 
-Changing a block changes world data. The relevant surfaces are then regenerated.
+Your `streaming.md` measurements show mean synchronization of about 78 ms and a maximum around 195 ms during cold travel. These are stressful benchmark conditions, not normal walking frames, but they're significant.
 
-That design can support dynamic blocks without requiring the world to know anything about OpenGL.
+The algorithm isn't fundamentally wrong. However, the game currently performs generation, meshing and upload synchronously. I'd make bounded work per frame the next performance objective, preferably beginning with a simple queue rather than an elaborate asynchronous system.
 
-## 2. Main concerns, ranked by priority
+P2
 
-### P1 — Your terrain storage is still too expensive
+Edited chunks remain permanently materialized
 
-`voxel_world.c`, `world_materialize_chunk()`
+In `world_set_block()`, every successful procedural edit marks the chunk `edited`. In `world_release_chunk()`, edited chunks cannot be evicted.
 
-You allocate an entire `Subchunk` for each vertical section containing terrain, including sections completely filled with stone.
+This is correct under your current ownership policy, but one modification can retain an entire generated column. I'd eventually store modifications independently of regenerated baseline terrain. Issue 011 already identifies this.
 
-Each subchunk contains:
+P2
 
-```
-uint8_t blocks[SECTION_VOLUME];
-```
+Section lookup is still linked-list based
 
-That's 4,096 bytes for 4,096 blocks, plus metadata and allocation overhead.
+This is not a recommendation to change it now. The neighbour-cache optimization reduced section lookups to seven per mesh build, so the previous justification for replacing the linked list has largely disappeared.
 
-APPROXIMATE VOXEL STORAGE
+Keep the current representation until another profile demonstrates an actual problem. That's consistent with your performance-first approach.
 
-# 4 KiB
+P2
 
-One subchunk
+Mesh memory remains an important next measurement
 
-# 80 KiB
+`section_mesh_build()` emits six `SurfaceVertex` entries per visible face, each with three floats. That's 72 bytes per face before allocator and GPU overhead. The CPU mesh is temporary, but the GPU representation retains this cost.
 
-20 subchunks
+Greedy meshing or indexed quads could reduce it considerably. I wouldn't implement both at once. Measure representative geometry first.
 
-# 5 MiB
+P3
 
-8×8 chunks
+The documentation is becoming stale
 
-Illustrative figures for block arrays alone, excluding mesh storage, allocations and chunk metadata.
+`review.md` still describes uniform storage and neighbour-query caching as future improvements. Both are implemented. Your issue tracker clarifies this, but the primary review document is no longer a reliable snapshot of current shortcomings.
 
-The problem isn't the 4 KiB itself. It's allocating it when all 4,096 blocks are identical.
+I'd mark resolved observations as historical rather than repeatedly reviewing already-fixed problems.
 
-Consider three storage states:
+## 3. Specific correctness observations
 
-```
-typedef enum {
-    SECTION_EMPTY,
-    SECTION_UNIFORM,
-    SECTION_DENSE
-} SectionStorage;
-```
+`world_set_block()` is particularly well structured. It prepares an expandable section before linking it into the world or changing voxel counts. That gives you meaningful failure atomicity, not just error checking.
 
-A uniform stone section needs only a material identifier. A dense section needs the full array.
+I would still finish two pending investigations:
 
-My recommendation: Keep your existing dense representation for now, but make uniform sections your next memory optimization once streaming works reliably.
+- Issue 003 — surface-height consistency: Compare surface queries before and after materialization with deleted surface blocks, added high blocks, and multiple edited sections.
+- Issue 004 — mesh-candidate correctness: Compare optimized meshes against a simple face-by-face reference, especially when edits expose previously buried faces.
 
-This is especially relevant to your mountainous terrain, where many underground sections contain mostly homogeneous material.
+I also noticed that `world_surface_height()` accepts coordinates exactly on the upper world boundary and maps them to the final cell. That may be intentional, but it differs from the half-open bounds used elsewhere. I'd standardize or explicitly document that convention.
 
-### P1 — Materialization and eviction need to become a complete lifecycle
+None of these observations establishes a critical corruption bug in the supplied code.
 
-`world_materialize_chunk()` and `world_release_chunk()` give you the beginnings of this.
+## 4. Alignment with your engineering influences
 
-The important remaining question is: who decides when a chunk enters or leaves memory?
+| Philosophy          | Current alignment                                                                                                 |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| TigerBeetle         | Strong: explicit ownership, transactional changes, deterministic operations, failure injection                    |
+| id Software / Quake | Good: spatial organization, visible geometry, measured performance; predictable streaming still needs improvement |
+| Casey Muratori      | Good: direct C code, limited abstraction, build-local caches, measurable optimizations                            |
 
-You want one clear lifecycle:
+The most compelling example is issue 005. You measured a concrete problem, changed the hot path without altering persistent world state, compared exact mesh output, and recorded before/after performance. The resident surface fixture improved from approximately 866 µs to 56 µs per build in the documented run.
 
-You've documented that edited chunks remain resident, while unedited chunks can be regenerated. That's reasonable as an initial policy, but eventually an explored world containing many edits will accumulate resident chunks indefinitely.
+That is much more valuable than redesigning the section lookup structure because a different data structure looks theoretically faster.
 
-I'd distinguish:
+## 5. Recommended next steps
 
-- Procedurally generated baseline terrain.
-- Player modifications.
-- Currently resident voxel storage.
-- Currently resident GPU meshes.
+I'd keep the next iteration narrow:
 
-You don't need a sophisticated paging system yet. What you do need is a predictable radius-based residency policy, with CPU and GPU retirement coordinated.
+1. Close issues 003 and 004 with targeted correctness tests.
+2. Verify the complete renderer lifecycle under a working OpenGL environment, including edits and eviction.
+3. Add instrumentation for the maximum work performed in a single frame during ordinary movement.
+4. Introduce a bounded streaming-work queue only after measuring those frame-time costs.
+5. Defer persistent edit storage, greedy meshing and section-local vertices until their costs become relevant.
 
-### P2 — Linked subchunks are simple but not especially cache-friendly
-
-Your chunks contain:
-
-```
-Subchunk *sections;
-```
-
-And the sections form a linked list sorted by vertical coordinate.
-
-I understand why: this accommodates sparse vertical storage and arbitrary edit elevations without allocating a massive vertical array.
-
-But each lookup potentially traverses several allocations. During mesh generation, you call `world_get_block()` for neighboring voxels repeatedly.
-
-For a 16³ section, that's potentially 24,576 neighbor queries before accounting for the other passes.
-
-Because you have a fixed normal terrain range of 32 sections, a direct indexed representation would be worth considering, with separate sparse storage for edits outside that range.
-
-I would not rewrite this immediately. First measure how much time is spent in neighbor lookups. Linked lists are not automatically a problem at 10–30 nodes, but they are not a natural endpoint for an engine seeking high throughput.
-
-### P2 — Your vertex representation repeats world-space coordinates
-
-In `section_mesh_build()` you emit vertices like:
-
-```
-world->origin.x + (wx + corner[0]) * world->blockSize
-```
-
-Every vertex stores absolute world coordinates.
-
-For a section with many exposed faces, this repeats large quantities of position information that could be derived from its section origin.
-
-You already know a mesh belongs to `(chunkX, sectionY, chunkZ)`.
-
-Eventually, consider generating local coordinates within a section and applying a section transform during rendering.
-
-Advantages include smaller possible vertex formats, better precision for distant chunks and simpler mesh relocation.
-
-However, your present three-float vertex representation is easy to understand and validate. I'd measure GPU bandwidth and vertex-memory usage before replacing it.
-
-### P2 — Your terrain-generation sampling can become expensive
-
-`world_get_block()` synthesizes unmaterialized terrain using `terrain_sample_column()`.
-
-That's useful for correctness: querying unloaded terrain doesn't necessarily require a chunk allocation.
-
-But `terrain_sample_column()` evaluates several noise layers. If a mesher repeatedly queries an unloaded neighboring chunk, you're potentially repeating expensive terrain calculations.
-
-You already cache columns during chunk materialization. Good.
-
-The next optimization should be to obtain neighbor section or column data once per mesh build, rather than going through generic world lookup for every exposed face.
-
-This gives you a cleaner hot path without introducing a complex abstraction hierarchy.
-
-## 3. Two concrete correctness issues to investigate
-
-### A. `world_surface_height()` may ignore blocks above a synthesized terrain surface
-
-In an unmaterialized streamed chunk, it starts with the procedural surface, works downward through allocated edits, and then searches allocated sections for higher blocks.
-
-That is sensible overall, but the search in the procedural branch needs particular scrutiny when the highest procedural blocks have been deleted, or when there are multiple edited sections separated by still-synthetic sections.
-
-Test this sequence:
-
-1. Generate a streamed chunk.
-2. Remove several topmost blocks without materializing the whole chunk.
-3. Query the surface height.
-4. Materialize the chunk.
-5. Query the surface height again.
-
-The two values should agree. Repeat with an added block above the procedural surface.
-
-I haven't established a definite failure from the code alone, but this interaction deserves a targeted invariant test.
-
-### B. Section exposure and mesh-candidate classification must stay consistent
-
-You use:
-
-```
-if (!section || section->voxelCount == 0 ||
-    (!section->meshCandidate && !editedNeighbor))
-```
-
-This optimization assumes that a noncandidate section cannot expose geometry unless an appropriate edit has occurred.
-
-The classification in `world_materialize_chunk()` is conservative, which is good.
-
-But I would specifically test an initially hidden section becoming exposed after edits to an adjacent section, including across chunk boundaries and at negative Y coordinates.
-
-A brute-force reference mesher for small test worlds would be valuable here. It can compute visible faces without any `meshCandidate` optimization and compare them with your optimized output.
-
-## 4. Where your engineering philosophies stand
-
-| Philosophy     | What you're applying well                                       | What needs attention                              |
-| -------------- | --------------------------------------------------------------- | ------------------------------------------------- |
-| TigerBeetle    | Failure injection, transactional generation, explicit contracts | More state-transition invariants                  |
-| Doom / Quake   | Spatial organization, surface geometry, visibility optimization | Cache behaviour, residency and draw submission    |
-| Casey Muratori | Direct code, few layers, concrete data structures               | Avoid scattered special cases and duplicated work |
-
-The allocation-failure test suite particularly impressed me. You're testing that failed operations preserve existing data and object ownership rather than merely checking return codes.
-
-One potential concern is defensive-code accumulation. There are quite a few repeated bounds, floating-point and state checks distributed throughout the implementation.
-
-Defensive validation is appropriate at public boundaries. But in performance-critical internal functions, you should eventually make stronger guarantees upstream rather than repeatedly revalidating everything.
-
-This is a design choice to revisit, not an instruction to remove safety checks prematurely.
-
-## 5. What I would do next
-
-In order:
-
-1. Finish and benchmark chunk streaming. Measure materialization time, section count, RAM consumption and GPU mesh retirement while moving through the world.
-2. Add lifecycle invariant tests. Verify that materialize → edit → rebuild → revisit preserves exactly the expected world state.
-3. Benchmark mesh neighbor queries. Determine whether noise sampling and linked-list traversal are genuine bottlenecks.
-4. Introduce uniform subchunk storage. This is likely to deliver substantial memory savings for underground terrain.
-5. Only then consider greedy meshing. Your current face-culling approach is a solid baseline. Greedy meshing can considerably reduce geometry, but introduces its own complexity, especially at material boundaries.
-
-I would not introduce an ECS, a generalized resource manager, a job graph or an elaborate renderer abstraction at this stage. None is justified by the demonstrated requirements.
-
-## 6. Review limitations
-
-The uploaded snapshot contains `game_logic.c`, `voxel_world.c`, the headers, Makefile and several tests, but not `main.c`.
-
-Your renderer tests include `main.c` directly, so the snapshot gives evidence of the testing strategy, but not enough to independently review the actual renderer synchronization, OpenGL resource lifecycle, frustum culling or frame-time budgeting. I also haven't compiled or executed the tests.
-
-That limits my confidence in the end-to-end streaming behaviour.
+One important design consideration: moving to a work queue introduces partially prepared states. Keep CPU terrain authoritative and publish completed meshes only. Avoid a proliferation of partially initialized objects and independent lifecycle flags.
 
 ## Verdict
 
-Your strongest improvement is conceptual: you now have a world representation that can exist independently of the geometry used to render it.
+The project is now at the point where I would stop pursuing broad architectural refactors.
 
-The next architectural milestone isn't more abstraction. It's establishing a bounded, measurable working set of chunks and subchunks.
+You've established the essential Minecraft-like pipeline, optimized expensive neighbour queries, reduced voxel storage dramatically, and started enforcing lifecycle invariants.
 
-That would bring you closer to the common ground between TigerBeetle, classic id Software and Casey Muratori: systems whose data, ownership, resource costs and state transitions are explicit and understandable.
+The next challenge is predictable execution cost, rather than data structure sophistication.
 
-My priority would be streaming correctness first, memory efficiency second, and mesh sophistication third.
+The current architecture looks suitable for continuing development. I would not replace the sparse sections, introduce an ECS, or add a generalized job system at this stage.

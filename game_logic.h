@@ -101,6 +101,7 @@ typedef struct Subchunk {
   uint8_t *blocks; /* Owned SECTION_VOLUME bytes only in SECTION_DENSE. */
   size_t voxelCount;
   int dirty;
+  uint64_t revision; /* Changes when voxel data or a meshing dependency changes. */
 } Subchunk;
 
 /* index must be in [0, SECTION_VOLUME). Missing sections read as air. */

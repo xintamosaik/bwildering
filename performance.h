@@ -19,22 +19,13 @@ typedef struct {
   int enabled, overlay;
 } Performance;
 
-/* Application and renderer metadata collected at reporting boundaries. */
-typedef struct {
-  size_t residentChunks, sections, editedChunks, dirtySections, neighborhoodSlots;
-  size_t worldMetadataBytes, rendererMetadataBytes, residentVoxelBytes;
-  size_t visibleIndexBytes, drawIndexBytes, gpuBytes;
-  double worldMetadataSeconds, rendererMetadataSeconds, startupSeconds;
-  unsigned int seed;
-  int side;
-  float viewDistance;
-  int framebufferWidth, framebufferHeight, paused;
-} PerformanceSnapshot;
+typedef struct Application Application;
 
 void perf_configure(Performance *p);
 double perf_clock(const Performance *p);
 void perf_record(Performance *p);
 void perf_finish_window(Performance *p);
 void performance_reset(Performance *p);
-void perf_report(Performance *p, const PerformanceSnapshot *snapshot, const char *phase);
+void performance_snapshot(Application *application);
+void performance_report(Application *application, const char *phase);
 #endif

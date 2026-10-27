@@ -1,9 +1,20 @@
-#include "performance.h"
+#include "application.h"
 
-#include <GLFW/glfw3.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* Application and renderer metadata collected at reporting boundaries. */
+typedef struct {
+  size_t residentChunks, sections, editedChunks, dirtySections, neighborhoodSlots;
+  size_t worldMetadataBytes, rendererMetadataBytes, residentVoxelBytes;
+  size_t visibleIndexBytes, drawIndexBytes, gpuBytes;
+  double worldMetadataSeconds, rendererMetadataSeconds, startupSeconds;
+  unsigned int seed;
+  int side;
+  float viewDistance;
+  int framebufferWidth, framebufferHeight, paused;
+} PerformanceSnapshot;
 
 void perf_configure(Performance *const p) {
   p->enabled = getenv("BW_PERF") && strcmp(getenv("BW_PERF"), "0");
@@ -59,7 +70,7 @@ void performance_reset(Performance *const p) {
   p->frame = (FrameWork){0};
 }
 
-void perf_report(Performance *const p, const PerformanceSnapshot *const s, const char *const phase) {
+static void perf_report(Performance *const p, const PerformanceSnapshot *const s, const char *const phase) {
   if (!p->enabled) return;
   perf_finish_window(p);
   const double n = p->count ? (double)p->count : 1;
@@ -93,5 +104,54 @@ void perf_report(Performance *const p, const PerformanceSnapshot *const s, const
       s->viewDistance, s->framebufferWidth, s->framebufferHeight,
       p->overlay, s->paused);
   fflush(stdout);
+}
+
+/* Expensive metadata scans happen only at explicit capture/window boundaries. */
+void performance_snapshot(Application *const a) {
+  a->residentChunks = a->editedChunks = a->dirtySections = a->gpuBytes = 0;
+  a->residentVoxelBytes = 0;
+  for (size_t c = 0; c < a->world.chunkCount; c++) {
+    const Chunk *const chunk = &a->world.chunks[c];
+    int resident = chunk->terrainReady;
+    a->editedChunks += chunk->edited != 0;
+    for (const Subchunk *section = chunk->sections; section; section = section->next) {
+      a->residentVoxelBytes += sizeof(*section) +
+          (section->storage == SECTION_DENSE ? SECTION_VOLUME : 0);
+      resident |= section != NULL;
+      a->dirtySections += section && section->dirty;
+    }
+    a->residentChunks += resident != 0;
+  }
+  for (size_t i = 0; i < a->renderer.meshCount; i++)
+    for (int t = 0; t < BLOCK_TYPE_COUNT; t++)
+      a->gpuBytes += (size_t)a->renderer.meshes[i].vertexCount[t] * sizeof(SurfaceVertex);
+}
+
+void performance_report(Application *const a, const char *const phase) {
+  if (!a->performance.enabled) return;
+  performance_snapshot(a);
+  const PerformanceSnapshot snapshot = {
+      .residentChunks = a->residentChunks,
+      .sections = a->world.sectionCount,
+      .editedChunks = a->editedChunks,
+      .dirtySections = a->dirtySections,
+      .neighborhoodSlots = a->renderer.visibleMeshCount,
+      .worldMetadataBytes = sizeof(World) + a->world.chunkCount * sizeof(Chunk),
+      .rendererMetadataBytes = sizeof(Renderer) + a->renderer.meshCount * sizeof(SectionGpuMesh),
+      .residentVoxelBytes = a->residentVoxelBytes,
+      .visibleIndexBytes = a->renderer.visibleMeshCapacity * sizeof(size_t),
+      .drawIndexBytes = a->renderer.drawMeshCapacity * sizeof(size_t),
+      .gpuBytes = a->gpuBytes,
+      .worldMetadataSeconds = a->worldMetadataSeconds,
+      .rendererMetadataSeconds = a->renderer.metadataSeconds,
+      .startupSeconds = a->startupSeconds,
+      .seed = a->world.terrainSeed,
+      .side = a->world.blocksPerSide,
+      .viewDistance = a->renderer.viewDistance,
+      .framebufferWidth = a->renderer.framebufferWidth,
+      .framebufferHeight = a->renderer.framebufferHeight,
+      .paused = a->paused,
+  };
+  perf_report(&a->performance, &snapshot, phase);
 }
 

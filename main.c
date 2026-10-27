@@ -1,6 +1,4 @@
-#include <GL/glew.h>
-#include <GLFW/glfw3.h>
-#include "game_logic.h"
+#include "application.h"
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
@@ -8,74 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "performance.h"
-
-#pragma region Types & Constants
-typedef struct {
-  double lastX;
-  double lastY;
-  double deltaX;
-  double deltaY;
-  int firstMouse;
-} MouseInput;
-
-typedef struct {
-  int chunkX, sectionY, chunkZ;
-  GLuint vao, vbo;
-  Vec3 boundsMin, boundsMax;
-  GLint firstVertex[BLOCK_TYPE_COUNT];
-  GLsizei vertexCount[BLOCK_TYPE_COUNT];
-} SectionGpuMesh;
-
-typedef struct {
-  /* Owns GPU resources for one bounded world layout. Destroy while its GL
-     context is current, before destroying the window/context. */
-  SectionGpuMesh *meshes;
-  size_t meshCount;
-  size_t *visibleMeshes;
-  size_t visibleMeshCount, visibleMeshCapacity;
-  /* Final camera-visible sections; independent of streaming residency. */
-  size_t *drawMeshes;
-  size_t drawMeshCount, drawMeshCapacity;
-  int streamed;
-  Performance *performance;
-  double metadataSeconds;
-  GLuint textVao;
-  GLuint textVbo;
-  GLuint program;
-  GLint mvpLocation;
-  GLint colorLocation;
-  int framebufferWidth;
-  int framebufferHeight;
-  float viewDistance;
-} Renderer;
-
-typedef struct {
-  GLFWwindow *window;
-  Player player;
-  MouseInput mouseInput;
-  Renderer renderer;
-  World world;
-  Performance performance;
-  size_t residentChunks, editedChunks, dirtySections, gpuBytes, residentVoxelBytes;
-  double worldMetadataSeconds, startupSeconds;
-  double rawFrame;
-  double lastFrame;
-  double fpsWindowStart;
-  double simulationAccumulator;
-  int fpsFrameCount;
-  int fps;
-  int jumpWasDown;
-  int jumpQueued;
-  int placeQueued;
-  int removeQueued;
-  int paused;
-  int settingsOpen;
-  int escapeWasDown;
-  int glfwInitialized;
-  int rendererInitialized;
-} Application;
-
+#pragma region Constants
 /** World-space origin used to center the starter platform. */
 static const Vec3 CENTER = {0.0f, 0.0f, 0.0f};
 /** Width, height, and depth of each default platform block, in world units. */
@@ -1034,55 +965,6 @@ static void framebuffer_size_callback(GLFWwindow *const window, const int width,
   application->renderer.framebufferWidth = width;
   application->renderer.framebufferHeight = height;
   glViewport(0, 0, width, height);
-}
-
-/* Expensive metadata scans happen only at explicit capture/window boundaries. */
-static void performance_snapshot(Application *const a) {
-  a->residentChunks = a->editedChunks = a->dirtySections = a->gpuBytes = 0;
-  a->residentVoxelBytes = 0;
-  for (size_t c = 0; c < a->world.chunkCount; c++) {
-    const Chunk *const chunk = &a->world.chunks[c];
-    int resident = chunk->terrainReady;
-    a->editedChunks += chunk->edited != 0;
-    for (const Subchunk *section = chunk->sections; section; section = section->next) {
-      a->residentVoxelBytes += sizeof(*section) +
-          (section->storage == SECTION_DENSE ? SECTION_VOLUME : 0);
-      resident |= section != NULL;
-      a->dirtySections += section && section->dirty;
-    }
-    a->residentChunks += resident != 0;
-  }
-  for (size_t i = 0; i < a->renderer.meshCount; i++)
-    for (int t = 0; t < BLOCK_TYPE_COUNT; t++)
-      a->gpuBytes += (size_t)a->renderer.meshes[i].vertexCount[t] * sizeof(SurfaceVertex);
-}
-
-static void performance_report(Application *const a, const char *const phase) {
-  if (!a->performance.enabled) return;
-  performance_snapshot(a);
-  const PerformanceSnapshot snapshot = {
-      .residentChunks = a->residentChunks,
-      .sections = a->world.sectionCount,
-      .editedChunks = a->editedChunks,
-      .dirtySections = a->dirtySections,
-      .neighborhoodSlots = a->renderer.visibleMeshCount,
-      .worldMetadataBytes = sizeof(World) + a->world.chunkCount * sizeof(Chunk),
-      .rendererMetadataBytes = sizeof(Renderer) + a->renderer.meshCount * sizeof(SectionGpuMesh),
-      .residentVoxelBytes = a->residentVoxelBytes,
-      .visibleIndexBytes = a->renderer.visibleMeshCapacity * sizeof(size_t),
-      .drawIndexBytes = a->renderer.drawMeshCapacity * sizeof(size_t),
-      .gpuBytes = a->gpuBytes,
-      .worldMetadataSeconds = a->worldMetadataSeconds,
-      .rendererMetadataSeconds = a->renderer.metadataSeconds,
-      .startupSeconds = a->startupSeconds,
-      .seed = a->world.terrainSeed,
-      .side = a->world.blocksPerSide,
-      .viewDistance = a->renderer.viewDistance,
-      .framebufferWidth = a->renderer.framebufferWidth,
-      .framebufferHeight = a->renderer.framebufferHeight,
-      .paused = a->paused,
-  };
-  perf_report(&a->performance, &snapshot, phase);
 }
 
 static void application_shutdown(Application *const application) {

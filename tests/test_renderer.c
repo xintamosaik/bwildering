@@ -1338,8 +1338,9 @@ int main(void) {
          (double)(terrainVertices * sizeof(SurfaceVertex)) / (1024.0 * 1024.0));
   assert(application.game.world.blocksPerSide == PLATFORM_BLOCKS_PER_SIDE);
   const float spawnY = application.game.player.position.y;
-  assert(spawnY == 0.0f && !application.game.player.grounded);
-  /* Look down through water at the stone seabed. */
+  assert(spawnY == 2.0f && application.game.player.grounded);
+  assert(application.game.player.position.x == 170.0f && application.game.player.position.z == 170.0f);
+  /* Look down at the dry beach and its shoreline. */
   Player foundationView = application.game.player;
   foundationView.aim = game_aim(-90.0f, -45.0f);
   DepthFrame spawnView = capture_world(&application.renderer, &foundationView);
@@ -1347,12 +1348,10 @@ int main(void) {
   free(spawnView.depth);
   for (int i = 0; i < 600; i++)
     game_step(&application.game, (GameCommand){.yaw = -90.0f});
-  const float floatingY = application.game.player.position.y;
-  assert(!application.game.player.grounded && floatingY > spawnY && floatingY < 1.0f);
-  for (int i = 0; i < 30; i++)
-    game_step(&application.game, (GameCommand){.yaw = -90.0f, .movement.swimUp = 1});
-  assert(!application.game.player.grounded && application.game.player.position.y > floatingY);
-  printf("Application spawn: sea-level start, floating, swimming and foundation visibility checks passed.\n");
+  assert(application.game.player.grounded && fabsf(application.game.player.position.y - spawnY) < 0.001f);
+  game_step(&application.game, (GameCommand){.yaw = -90.0f, .movement.jump = 1});
+  assert(!application.game.player.grounded && application.game.player.position.y > spawnY);
+  printf("Application spawn: dry beach, grounding, jumping and shoreline visibility checks passed.\n");
   /* A pending resize is applied exactly once, without polling window sizes. */
   const GLFWframebuffersizefun resize = glfwSetFramebufferSizeCallback(application.window, NULL);
   assert(resize);

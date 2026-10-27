@@ -164,7 +164,7 @@ static void renderer_destroy(Renderer *const renderer) {
 static int renderer_storage_limits(World *const world) {
   const double span = (double)world->blockSize * SECTION_SIZE;
   const size_t columns = (size_t)fmin(ceil(2.0 * (double)MAX_VIEW_DISTANCE / span) + 3.0,
-                                      (double)world->chunksPerSide);
+                                       world->chunksPerSide);
   const size_t slots = columns * columns * WORLD_SECTION_COUNT +
       WORLD_EDIT_CAPACITY + WORLD_SECTION_COUNT;
   return world_storage_limits(world, slots, slots);

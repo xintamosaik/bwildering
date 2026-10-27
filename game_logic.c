@@ -162,8 +162,8 @@ void mat4_multiply(const float a[const 16], const float b[const 16], float dest[
 
 /* Integer hashing makes the seed independent of global RNG state. */
 static float terrain_lattice(const int x, const int z, const uint32_t seed) {
-  uint32_t hash = seed ^ ((uint32_t)x * UINT32_C(0x9E3779B9)) ^
-                         ((uint32_t)z * UINT32_C(0x85EBCA6B));
+  uint32_t hash = seed ^ (uint32_t)x * UINT32_C(0x9E3779B9) ^
+                         (uint32_t)z * UINT32_C(0x85EBCA6B);
   hash ^= hash >> 16;
   hash *= UINT32_C(0x7FEB352D);
   hash ^= hash >> 15;
@@ -174,7 +174,7 @@ static float terrain_lattice(const int x, const int z, const uint32_t seed) {
 
 float terrain_noise(const int worldX, const int worldZ, const int scale,
                            const uint32_t seed) {
-  if (scale < 8 || scale > 2048 || (scale & (scale - 1)) != 0)
+  if (scale < 8 || scale > 2048 || (scale & scale - 1) != 0)
     return NAN;
 
   const int gx = voxel_floor_div(worldX, scale);

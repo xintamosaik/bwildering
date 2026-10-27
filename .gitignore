@@ -22,3 +22,4 @@ section_storage_benchmark
 allocation_capture
 test_storage
 test_storage_sanitize
+local_vertex_capture

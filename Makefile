@@ -45,7 +45,7 @@ test-sanitize:
 	./test_pause_menu_sanitize
 
 clean:
-	rm -f test_storage test_storage_sanitize allocation_capture section_storage_benchmark mesh_query_benchmark mesh_query_profile streaming_capture terrain_capture visibility_capture performance_capture $(TARGET) $(TEST_TARGET) test_allocation_failures test_renderer test_pause_menu test_game_logic_sanitize test_allocation_failures_sanitize test_pause_menu_sanitize
+	rm -f local_vertex_capture test_storage test_storage_sanitize allocation_capture section_storage_benchmark mesh_query_benchmark mesh_query_profile streaming_capture terrain_capture visibility_capture performance_capture $(TARGET) $(TEST_TARGET) test_allocation_failures test_renderer test_pause_menu test_game_logic_sanitize test_allocation_failures_sanitize test_pause_menu_sanitize
 
 run: all
 	./$(TARGET)
@@ -80,3 +80,7 @@ allocation_capture: tests/allocation_capture.c $(SRC) storage.h game_logic.h app
 
 test_storage: tests/test_storage.c game_logic.c voxel_world.c storage.c storage.h game_logic.h
 	$(CC) $(CFLAGS) tests/test_storage.c game_logic.c voxel_world.c storage.c -o $@ -lm
+
+# Opt-in real-GL representation/precision comparison; run serially.
+local_vertex_capture: tests/local_vertex_capture.c $(SRC) storage.h game_logic.h performance.h application.h ui.h input.h
+	$(CC) $(CFLAGS) tests/local_vertex_capture.c game_logic.c voxel_world.c storage.c performance.c ui.c input.c -o $@ $(LDFLAGS)

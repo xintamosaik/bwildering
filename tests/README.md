@@ -134,3 +134,13 @@ captures, reproduction commands, capacity/exhaustion contracts and test evidence
 `test_storage` exercises independent node/payload limits, partial staging rollback,
 reuse after eviction/compaction, world isolation and borrowed mesh overflow/parity.
 Failure injection operates on logical reservations, including reused slots.
+
+`make local_vertex_capture && ./local_vertex_capture` runs the opt-in, serial
+real-GL comparison of absolute floats, local floats, local unsigned-byte triples
+and camera-relative unsigned-byte triples. It checks decoded geometry, material
+ranges, actual buffer bytes, depth/coverage and culling against independent
+references, then records payload bytes, CPU upload/draw submission and supported
+GPU query timings. Precision fixtures cover distant signed coordinates, section
+seams, translated origins, scale 2.5, camera movement and edits. See
+[issue 007](../issues/007-section-local-vertices.md) for raw captures, limits and
+the completed defer decision. This experiment does not change production vertices.

@@ -1,6 +1,7 @@
 # Section-local and compact vertices
 
-Priority: deferred, measurement-gated. Status: planned evaluation.
+Priority: deferred, measurement-gated. Status: evaluation complete; adoption deferred
+(27 October 2026).
 Related: [issue 007](../../issues/007-section-local-vertices.md).
 
 ## Problem description
@@ -41,3 +42,19 @@ Compare reconstructed face coverage, depth, section seams, culling bounds,
 negative/distant placement and edits against the current renderer. Run shared
 checks and real GL tests. Record before/after memory, CPU/GPU costs and precision
 results in issue 007; a documented defer decision completes the evaluation.
+
+## Completed evaluation
+
+Added the opt-in `local_vertex_capture` experiment with absolute float, local
+float, local u8 and camera-relative u8 paths, an independent double precision
+reference, buffer readback, depth/coverage and culling checks, and serial CPU/GPU
+measurements. Production rendering remains unchanged.
+
+[Issue 007](../../issues/007-section-local-vertices.md) records the methodology,
+three raw captures, memory/submission costs, distant-coordinate precision
+results, validation and defer decision. Compact payload is 75% smaller, but the
+prototypes increase CPU draw submission with no demonstrated GPU benefit on the
+measured device. Local floats alone do not improve precision. Camera-relative
+rendering fixes the measured distant depth discrepancy in these fixtures and is
+recorded for separate consideration, without claiming an isolated seam/jitter
+fix. The documented defer decision completes this plan's evaluation gate.

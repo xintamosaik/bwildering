@@ -3,6 +3,7 @@
 
 #include <GL/glew.h>
 #include "renderer.h"
+#include "distant_terrain.h"
 
 /* Private renderer layout, embedded by the application; not a drawing API. */
 typedef struct {
@@ -32,6 +33,9 @@ struct Renderer {
   GLuint textVao;
   GLuint textVbo;
   GLuint program;
+  DistantTerrain distant;
+  int distantEnabled;
+  GLint distantPassLocation;
   GLint mvpLocation;
   GLint colorLocation;
   GLint blockGridLocation;

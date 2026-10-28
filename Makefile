@@ -3,9 +3,9 @@ CFLAGS = -Wall -Wextra -O2 -std=c99
 LDFLAGS = -lGLEW -lglfw -lGL -lm -lpthread
 
 TARGET = bwildering
-COMMON_SRC = world_streaming.c game.c game_logic.c world_generation.c voxel_world.c storage.c performance.c ui.c input.c renderer.c
+COMMON_SRC = world_streaming.c game.c game_logic.c world_generation.c voxel_world.c storage.c performance.c ui.c input.c renderer.c distant_terrain.c
 SRC = main.c application.c $(COMMON_SRC)
-APP_HEADERS = world_streaming.h game.h view.h application.h application_internal.h renderer.h renderer_internal.h water_shader.h ui_draw.h view_settings.h ui.h input.h performance.h storage.h game_logic.h world_generation.h block_type.h
+APP_HEADERS = world_streaming.h game.h view.h application.h application_internal.h renderer.h renderer_internal.h distant_terrain.h water_shader.h ui_draw.h view_settings.h ui.h input.h performance.h storage.h game_logic.h world_generation.h block_type.h
 FIXTURE_FLAGS = -DBW_RENDERER_TEST
 # Headless routing fixture links production modules and captures registered callbacks.
 PAUSE_WRAP = -Wl,--wrap=glfwSetFramebufferSizeCallback -Wl,--wrap=glfwSetWindowUserPointer -Wl,--wrap=glfwSetMouseButtonCallback -Wl,--wrap=glfwSetCursorPosCallback -Wl,--wrap=glfwSetKeyCallback -Wl,--wrap=glfwGetKey -Wl,--wrap=glfwGetMouseButton -Wl,--wrap=glfwGetInputMode -Wl,--wrap=glfwSetInputMode -Wl,--wrap=glfwGetTime -Wl,--wrap=glfwGetWindowUserPointer -Wl,--wrap=glfwGetCursorPos -Wl,--wrap=glfwGetWindowSize -Wl,--wrap=glfwGetFramebufferSize -Wl,--wrap=glfwSetWindowShouldClose -Wl,--wrap=glfwPollEvents
@@ -63,6 +63,7 @@ test-sanitize:
 	./test_pause_menu_sanitize
 
 clean:
+	rm -f distant_terrain_capture
 	rm -f test_beach_generation test_beach_generation_sanitize
 	rm -f test_world_streaming test_world_streaming_sanitize test_game test_game_sanitize local_vertex_capture test_storage test_storage_sanitize allocation_capture section_storage_benchmark mesh_query_benchmark mesh_query_profile streaming_capture terrain_capture visibility_capture performance_capture $(TARGET) $(TEST_TARGET) test_allocation_failures test_renderer test_pause_menu test_game_logic_sanitize test_allocation_failures_sanitize test_pause_menu_sanitize
 
@@ -82,6 +83,9 @@ visibility_capture: tests/visibility_capture.c $(SRC) $(APP_HEADERS) tests/rende
 
 terrain_capture: tests/terrain_capture.c $(SRC) $(APP_HEADERS)
 	$(CC) $(CFLAGS) tests/terrain_capture.c application.c $(COMMON_SRC) -o $@ $(LDFLAGS)
+
+distant_terrain_capture: tests/distant_terrain_capture.c $(SRC) $(APP_HEADERS)
+	$(CC) $(CFLAGS) tests/distant_terrain_capture.c application.c $(COMMON_SRC) -o $@ $(LDFLAGS)
 
 # Headless CPU benchmark; profile timings include instrumentation overhead.
 mesh_query_benchmark: tests/mesh_query_benchmark.c tests/mesh_query_baseline.inc voxel_world.c game_logic.c world_generation.c game_logic.h world_generation.h block_type.h storage.h storage.c

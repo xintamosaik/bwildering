@@ -51,6 +51,11 @@ int application_init(Application *const application) {
   input_init(&application->input);
 
   int worldSide = PLATFORM_BLOCKS_PER_SIDE;
+  const char *const configuredDistant = getenv("BW_DISTANT_TERRAIN");
+  if (configuredDistant && strcmp(configuredDistant, "0") != 0 && strcmp(configuredDistant, "1") != 0) {
+    fprintf(stderr, "BW_DISTANT_TERRAIN must be 0 or 1\n");
+    return 0;
+  }
   unsigned int relief = TERRAIN_RELIEF_ALL;
   const char *const configuredRelief = getenv("BW_RELIEF");
   if (configuredRelief) {
@@ -133,6 +138,7 @@ int application_init(Application *const application) {
     application_shutdown(application);
     return 0;
   }
+  application->renderer.distantEnabled = !configuredDistant || strcmp(configuredDistant, "0") != 0;
   application->rendererInitialized = 1;
   application->renderer.performance = &application->performance;
 
@@ -307,6 +313,13 @@ void application_update(Application *const application) {
 void application_render(Application *const application) {
   Performance *const p = &application->performance;
   double start = perf_clock(p);
+  if (application->renderer.distantEnabled) {
+    /* Optional rendering cache only. Collision, edits and residency retain the
+       full voxel world; upload failure leaves full rendering as the fallback. */
+    distant_terrain_update(&application->renderer.distant, game_world(&application->game),
+                          player_eye_position(game_player(&application->game)),
+                          renderer_view_distance(&application->renderer), p);
+  } else application->renderer.distant.active = 0;
   /* Resize callbacks capture dimensions without touching renderer state. Avoid
      window-system queries and redundant viewport calls on ordinary frames. */
   if (application->input.framebufferResized) {

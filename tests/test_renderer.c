@@ -1147,6 +1147,106 @@ static void test_water_transparency(void) {
   puts("Water transparency, opaque depth and GL state restoration checks passed.");
 }
 
+/* Coarse rendering is an optional GPU cache, never a substitute for voxel
+   queries, edits, near geometry, or underwater views. */
+static void test_distant_terrain(void) {
+  World world = {0};
+  Renderer renderer = {0};
+  WorldStreaming streaming = {0};
+  Performance performance = {.enabled = 1};
+  assert(create_terrain_streamed(&world, 2048, (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 1));
+  assert(renderer_init(&renderer));
+  renderer.performance = &performance;
+  renderer_set_viewport(&renderer, AUDIT_WIDTH, AUDIT_HEIGHT);
+  const Player player = {.position = {640.5f, 2.0f, 256.5f}, .eyeHeight = 1.0f,
+                         .aim = {.front = {1.0f, -0.15f, 0.0f}}};
+  assert(application_stream_view(&streaming, &renderer, &world, &player, NULL));
+  static float reference[AUDIT_WIDTH * AUDIT_HEIGHT], coarse[AUDIT_WIDTH * AUDIT_HEIGHT];
+  glEnable(GL_DEPTH_TEST);
+  glDisable(GL_CULL_FACE);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  performance_reset(&performance);
+  render_world(&renderer, player_committed_view(&player));
+  const size_t fullDraws = performance.frame.draws, fullTriangles = performance.frame.triangles;
+  glReadPixels(0, 0, AUDIT_WIDTH, AUDIT_HEIGHT, GL_DEPTH_COMPONENT, GL_FLOAT, reference);
+  const Vec3 eye = player_eye_position(&player);
+  assert(distant_terrain_update(&renderer.distant, &world, eye, 300.0f, &performance));
+  assert(renderer.distant.active);
+  assert(!distant_terrain_replaces(&renderer.distant, 40, 16));
+  assert(distant_terrain_replaces(&renderer.distant, 48, 16));
+  const GLuint cachedVbo = renderer.distant.vbo;
+  performance_reset(&performance);
+  assert(distant_terrain_update(&renderer.distant, &world, eye, 300.0f, &performance));
+  assert(renderer.distant.vbo == cachedVbo && !performance.frame.uploadCalls);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  render_world(&renderer, player_committed_view(&player));
+  assert(performance.frame.draws < fullDraws && performance.frame.triangles < fullTriangles);
+  glReadPixels(0, 0, AUDIT_WIDTH, AUDIT_HEIGHT, GL_DEPTH_COMPONENT, GL_FLOAT, coarse);
+  size_t nearPixels = 0, visiblePixels = 0;
+  for (size_t i = 0; i < AUDIT_WIDTH * AUDIT_HEIGHT; i++) {
+    assert(isfinite(coarse[i]) && coarse[i] >= 0.0f && coarse[i] <= 1.0f);
+    visiblePixels += coarse[i] < 1.0f;
+    const float forward = 2.0f * 0.05f * 300.0f /
+        (300.0f + 0.05f - (2.0f * reference[i] - 1.0f) * (300.0f - 0.05f));
+    if (reference[i] < 1.0f && forward < 64.0f) {
+      assert(fabsf(reference[i] - coarse[i]) < 0.000001f);
+      nearPixels++;
+    }
+  }
+  assert(nearPixels > 1000 && visiblePixels > 10000);
+  printf("Distant terrain: %zu -> %zu draws, %zu -> %zu triangles; %zu near pixels unchanged\n",
+         fullDraws, performance.frame.draws, fullTriangles, performance.frame.triangles, nearPixels);
+  /* Same edit count, different edited column: invalidate by actual mask. */
+  assert(world_set_block(&world, 776, 80, 256, BLOCK_TYPE_STONE));
+  assert(distant_terrain_update(&renderer.distant, &world, eye, 300.0f, &performance));
+  assert(!distant_terrain_replaces(&renderer.distant, 48, 16));
+  assert(!distant_terrain_replaces(&renderer.distant, 49, 16));
+  assert(world_set_block(&world, 824, 80, 256, BLOCK_TYPE_STONE));
+  assert(world_set_block(&world, 776, 80, 256, BLOCK_TYPE_EMPTY));
+  assert(distant_terrain_update(&renderer.distant, &world, eye, 300.0f, &performance));
+  assert(distant_terrain_replaces(&renderer.distant, 48, 16));
+  assert(!distant_terrain_replaces(&renderer.distant, 51, 16));
+  assert(world_set_block(&world, 824, 80, 256, BLOCK_TYPE_EMPTY));
+  assert(distant_terrain_update(&renderer.distant, &world, eye, 300.0f, &performance));
+  assert(distant_terrain_replaces(&renderer.distant, 49, 16));
+  /* A failed replacement deactivates coarse rendering and preserves old GPU
+     resources for cleanup/retry; no full geometry is hidden by a stale plan. */
+  const GLuint retainedVbo = renderer.distant.vbo;
+  real_buffer_upload = __glewBufferData;
+  uploads_before_failure = 0;
+  __glewBufferData = fail_buffer_upload;
+  const Vec3 moved = {eye.x + 16.0f, eye.y + 8.0f, eye.z};
+  assert(!distant_terrain_update(&renderer.distant, &world, moved, 300.0f, &performance));
+  __glewBufferData = real_buffer_upload;
+  assert(!renderer.distant.active && glIsBuffer(retainedVbo));
+  assert(!distant_terrain_replaces(&renderer.distant, 49, 16));
+  assert(distant_terrain_update(&renderer.distant, &world, moved, 300.0f, &performance));
+  assert(renderer.distant.active && !glIsBuffer(retainedVbo));
+  assert(distant_terrain_update(&renderer.distant, &world, (Vec3){eye.x, -2.0f, eye.z}, 300.0f, &performance));
+  assert(!renderer.distant.active);
+  assert(distant_terrain_update(&renderer.distant, &world, (Vec3){788.0f, 5.0f, 238.0f}, 300.0f, &performance));
+  assert(!renderer.distant.active);
+  assert(distant_terrain_update(&renderer.distant, &world, eye, 80.0f, &performance));
+  assert(!renderer.distant.active);
+  /* World replacement, shifted/scaled coordinates and capacity fallback. */
+  assert(create_terrain_streamed(&world, 2048, (Vec3){12.0f, -3.0f, 8.0f}, 2.0f, 42));
+  assert(distant_terrain_update(&renderer.distant, &world, (Vec3){1293.0f, 4.0f, 521.0f}, 300.0f, &performance));
+  assert(renderer.distant.active && renderer.distant.blockSize == 2.0f);
+  assert(create_terrain_streamed(&world, 513, (Vec3){0.0f, 0.0f, 0.0f}, 1.0f, 1));
+  assert(distant_terrain_update(&renderer.distant, &world, (Vec3){0.5f, 20.0f, 0.5f}, 300.0f, &performance));
+  assert(renderer.distant.active && renderer.distant.worldSide == 513);
+  assert(create_terrain_streamed(&world, 2048, (Vec3){0.0f, 0.0f, 0.0f}, 0.5f, 1));
+  assert(distant_terrain_update(&renderer.distant, &world, (Vec3){320.25f, 3.0f, 128.25f}, 300.0f, &performance));
+  assert(!renderer.distant.active);
+  const GLuint vao = renderer.distant.vao, vbo = renderer.distant.vbo;
+  renderer_destroy(&renderer);
+  assert(!glIsVertexArray(vao) && !glIsBuffer(vbo));
+  world_destroy(&world);
+  assert(glGetError() == GL_NO_ERROR);
+  glViewport(0, 0, 640, 480);
+  puts("Distant terrain cache, edits, near-depth parity, fallback and cleanup checks passed.");
+}
+
 int main(void) {
   storage_reject = reject_storage;
   test_frustum();
@@ -1173,6 +1273,7 @@ int main(void) {
   test_performance_counters();
   test_sparse_vertical_renderer();
   test_water_transparency();
+  test_distant_terrain();
   Renderer renderer = {0};
   World world = {0};
   assert(renderer_init(&renderer));

@@ -128,6 +128,7 @@ void performance_snapshot(Application *const application) {
   for (size_t i = 0; i < application->renderer.meshCount; i++)
     for (int t = 0; t < BLOCK_TYPE_COUNT; t++)
       application->gpuBytes += (size_t)application->renderer.meshes[i].vertexCount[t] * sizeof(SurfaceVertex);
+  application->gpuBytes += application->renderer.distant.bytes;
 }
 
 void performance_report(Application *const application, const char *const phase) {

@@ -1,5 +1,12 @@
 # Test design
 
+The [distant-terrain experiment](../plans/distant-terrain-experiment.md) uses
+native resolution. `test_renderer` checks near depth parity, edited-column
+fallback, upload failure/retry, cache invalidation, supported transforms, and GPU
+cleanup. `make distant_terrain_capture && ./distant_terrain_capture` measures
+the same views with and without coarse terrain and saves comparison images.
+Launch with `BW_DISTANT_TERRAIN=0` for the full voxel-rendering baseline.
+
 Relief experiment 02 is covered by `test_beach_generation`: all four relief
 presets, unchanged coastline, material layers, chunk/mesh agreement, edits after
 eviction, new beach spawn, and normal-jump routes to hill and mountain summits.

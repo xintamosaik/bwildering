@@ -61,6 +61,7 @@ RENDERER_PRIVATE GLuint create_shader_program(void) {
       "out vec4 FragColor;\n"
       "uniform vec3 color;\n"
       "uniform int waterPass;\n"
+      "uniform int distantPass;\n"
       "uniform vec4 waterView;\n"
       "uniform float waterSurface;\n"
       "vec4 shadeWater(vec3 position, vec3 normal, vec4 cameraTime);\n"
@@ -75,10 +76,17 @@ RENDERER_PRIVATE GLuint create_shader_program(void) {
       "void main() {\n"
       "    vec3 normal = normalize(cross(dFdx(worldPosition), dFdy(worldPosition)));\n"
       "    if (!gl_FrontFacing) normal = -normal;\n"
-      "    if (waterPass != 0) { FragColor = shadeWater(worldPosition, normal, waterView); return; }\n"
+      "    if (waterPass != 0) {\n"
+      "        if (distantPass != 0) {\n"
+      "            float f = 0.02 + 0.98 * pow(1.0 - abs(normalize(waterView.xyz - worldPosition).y), 5.0);\n"
+      "            FragColor = vec4(mix(vec3(0.075, 0.28, 0.33), vec3(0.43, 0.59, 0.69), f), mix(0.48, 0.86, f));\n"
+      "        }\n"
+      "        else FragColor = shadeWater(worldPosition, normal, waterView);\n"
+      "        return;\n"
+      "    }\n"
       "    float light = 0.45 + 0.55 * max(dot(normal, normalize(vec3(-0.4, 1.0, 0.3))), 0.0);\n"
       "    vec3 tint = color;\n"
-      "    if (blockGrid.w > 0.0) {\n"
+      "    if (blockGrid.w > 0.0 && distantPass == 0) {\n"
       "        vec3 grid = (worldPosition - blockGrid.xyz) * blockGrid.w;\n"
       "        uint h = blockHash(ivec3(floor(grid - normal * 0.001)));\n"
       "        float shade = float(h & 1023u) / 1023.0 - 0.5;\n"
@@ -151,6 +159,7 @@ RENDERER_PRIVATE void section_gpu_mesh_destroy(SectionGpuMesh *const mesh) {
 }
 
 void renderer_destroy(Renderer *const renderer) {
+  distant_terrain_destroy(&renderer->distant);
   for (size_t i = 0; i < renderer->meshCount; i++)
     section_gpu_mesh_destroy(&renderer->meshes[i]);
   storage_release(STORAGE_RECORD, renderer->meshCount * sizeof(*renderer->meshes));
@@ -208,9 +217,11 @@ int renderer_init(Renderer *const renderer) {
     return 0;
   }
   renderer->waterPassLocation = glGetUniformLocation(renderer->program, "waterPass");
+  renderer->distantPassLocation = glGetUniformLocation(renderer->program, "distantPass");
   renderer->waterViewLocation = glGetUniformLocation(renderer->program, "waterView");
   renderer->waterSurfaceLocation = glGetUniformLocation(renderer->program, "waterSurface");
-  if (renderer->waterPassLocation < 0 || renderer->waterViewLocation < 0 || renderer->waterSurfaceLocation < 0) {
+  if (renderer->waterPassLocation < 0 || renderer->waterViewLocation < 0 || renderer->waterSurfaceLocation < 0 ||
+      renderer->distantPassLocation < 0) {
     fprintf(stderr, "Failed to locate water uniforms\n");
     renderer_destroy(renderer);
     return 0;
@@ -552,6 +563,7 @@ RENDERER_PRIVATE int renderer_collect_draw_meshes(Renderer *const renderer, cons
   for (size_t n = 0; n < count; n++) {
     const size_t i = renderer->streamed ? renderer->visibleMeshes[n] : n;
     const SectionGpuMesh *const mesh = &renderer->meshes[i];
+    if (distant_terrain_replaces(&renderer->distant, mesh->chunkX, mesh->chunkZ)) continue;
     int nonempty = 0;
     for (int t = 0; t < BLOCK_TYPE_COUNT; t++)
       nonempty |= mesh->vertexCount[t] != 0;
@@ -655,6 +667,7 @@ void render_world(Renderer *const renderer, const View camera) {
 
   glUseProgram(renderer->program);
   glUniform1i(renderer->waterPassLocation, 0);
+  glUniform1i(renderer->distantPassLocation, 0);
 
   mat4 proj, view, mvp;
   glUniform4f(renderer->blockGridLocation, renderer->worldOrigin.x, renderer->worldOrigin.y,
@@ -686,6 +699,16 @@ void render_world(Renderer *const renderer, const View camera) {
       continue;
     glUniform3f(renderer->colorLocation, color.x, color.y, color.z);
     if (p && p->enabled) p->frame.materialChanges++;
+    if (renderer->distant.active && renderer->distant.vertexCount[type]) {
+      WaterDrawState distantWater = {0};
+      if (type == BLOCK_TYPE_WATER) distantWater = water_begin();
+      glUniform1i(renderer->distantPassLocation, 1);
+      glUniform1i(renderer->waterPassLocation, type == BLOCK_TYPE_WATER);
+      distant_terrain_draw(&renderer->distant, (BlockType)type, p);
+      glUniform1i(renderer->waterPassLocation, 0);
+      glUniform1i(renderer->distantPassLocation, 0);
+      if (type == BLOCK_TYPE_WATER) water_end(distantWater);
+    }
     const size_t count = collected ? (type == BLOCK_TYPE_WATER ?
         water_sort(renderer, cameraPosition) : renderer->drawMeshCount) :
         renderer->streamed ? renderer->visibleMeshCount : renderer->meshCount;
@@ -698,6 +721,7 @@ void render_world(Renderer *const renderer, const View camera) {
       const size_t i = collected ? renderer->drawMeshes[n] :
           renderer->streamed ? renderer->visibleMeshes[n] : n;
       const SectionGpuMesh *const mesh = &renderer->meshes[i];
+      if (distant_terrain_replaces(&renderer->distant, mesh->chunkX, mesh->chunkZ)) continue;
       if (!mesh->vertexCount[type]) continue;
       if (!collected) {
         if (p && p->enabled) p->frame.distanceTests++;

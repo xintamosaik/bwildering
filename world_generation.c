@@ -19,8 +19,39 @@ static const struct {
     .sandDepth = 3, .soilDepth = 2,
 };
 
-TerrainColumn terrain_sample_column(const uint32_t seed, const int worldX, const int worldZ) {
-  (void)seed;
+/* EXPERIMENTAL 02: bounded landform descriptors in local quadrant coordinates.
+   The original island is the flat control; only the eastern island gets relief. */
+typedef struct { float x, z, radiusX, radiusZ, rise; } ReliefMound;
+static const ReliefMound HILLS[] = {
+    {214.0f, 244.0f, 50.0f, 50.0f, 8.0f},
+    {286.0f, 306.0f, 45.0f, 45.0f, 6.0f},
+};
+static const ReliefMound MOUNTAIN_BASE = {276.0f, 238.0f, 75.0f, 75.0f, 10.0f};
+static const ReliefMound MOUNTAIN_CORE = {276.0f, 238.0f, 68.0f, 40.0f, 30.0f};
+
+static float mound_height(const ReliefMound mound, const float x, const float z) {
+  const float dx = (x - mound.x) / mound.radiusX;
+  const float dz = (z - mound.z) / mound.radiusZ;
+  const float t = fmaxf(0.0f, 1.0f - dx * dx - dz * dz);
+  return mound.rise * t * t * t;
+}
+
+static float relief_height(const float x, const float z, const unsigned int relief) {
+  float hills = 0.0f;
+  if (relief & TERRAIN_RELIEF_HILLS)
+    for (size_t i = 0; i < sizeof(HILLS) / sizeof(*HILLS); i++)
+      hills = fmaxf(hills, mound_height(HILLS[i], x, z));
+  const float mountain = relief & TERRAIN_RELIEF_MOUNTAINS ?
+      mound_height(MOUNTAIN_BASE, x, z) + mound_height(MOUNTAIN_CORE, x, z) : 0.0f;
+  const float dx = x - BEACH_EXPERIMENT_01.centerX;
+  const float dz = z - BEACH_EXPERIMENT_01.centerZ;
+  const float radius = sqrtf(dx * dx + dz * dz);
+  const float t = fminf(1.0f, fmaxf(0.0f, (radius - 100.0f) / 18.0f));
+  const float inland = 1.0f - t * t * (3.0f - 2.0f * t);
+  return fmaxf(hills, mountain) * inland;
+}
+
+static TerrainColumn beach_column(const int worldX, const int worldZ) {
   TerrainColumn column = {.height = TERRAIN_SEA_LEVEL + 1, .stoneTopY = TERRAIN_STONE_TOP_Y,
                           .material = BLOCK_TYPE_WATER, .deepRockY = TERRAIN_DEEP_ROCK_Y};
   /* Bound integer coordinates before conversion; distant and negative queries
@@ -58,6 +89,37 @@ TerrainColumn terrain_sample_column(const uint32_t seed, const int worldX, const
         column.sandDepth ? BLOCK_TYPE_SAND : BLOCK_TYPE_STONE;
   }
   return column;
+}
+
+TerrainColumn terrain_sample_column_with_relief(const uint32_t seed, const int worldX,
+                                               const int worldZ, const unsigned int relief) {
+  (void)seed; /* Fixed experimental placement; no exploration-order RNG. */
+  const int eastern = worldX >= 512 && worldX < 1024 && worldZ >= 0 && worldZ < 512;
+  const int localX = eastern ? worldX - 512 : worldX;
+  TerrainColumn column = beach_column(localX, worldZ);
+  if (!eastern || !column.soilDepth || !relief) return column;
+  const float x = (float)localX + 0.5f, z = (float)worldZ + 0.5f;
+  const float rise = relief_height(x, z, relief);
+  column.stoneTopY += (int)floorf(rise + 0.5f);
+  column.height = column.stoneTopY;
+  /* Evaluate the composed continuous surface across chunk boundaries. Hills
+     remain grassy; mountain high ground and steep faces expose the foundation. */
+  const float slopeX = 0.5f * (relief_height(x + 1.0f, z, relief) - relief_height(x - 1.0f, z, relief));
+  const float slopeZ = 0.5f * (relief_height(x, z + 1.0f, relief) - relief_height(x, z - 1.0f, relief));
+  if ((relief & TERRAIN_RELIEF_MOUNTAINS) &&
+      (rise >= 24.0f || slopeX * slopeX + slopeZ * slopeZ > 1.21f)) {
+    column.soilDepth = 0;
+    column.material = BLOCK_TYPE_STONE;
+  }
+  return column;
+}
+
+TerrainColumn terrain_sample_column(const uint32_t seed, const int worldX, const int worldZ) {
+  return terrain_sample_column_with_relief(seed, worldX, worldZ, TERRAIN_RELIEF_ALL);
+}
+
+TerrainColumn terrain_sample_world_column(const World *const world, const int worldX, const int worldZ) {
+  return terrain_sample_column_with_relief(world->terrainSeed, worldX, worldZ, world->terrainRelief);
 }
 
 BlockType terrain_column_block(const TerrainColumn column, const int y) {
@@ -141,11 +203,18 @@ int create_platform(World *const world, const int blocksPerSide, const Vec3 cent
 
 int create_terrain_region(World *const world, const int minX, const int minZ, const int side,
                           const Vec3 origin, const float blockSize, const uint32_t seed) {
+  return create_terrain_region_with_relief(world, minX, minZ, side, origin, blockSize, seed, TERRAIN_RELIEF_ALL);
+}
+
+int create_terrain_region_with_relief(World *const world, const int minX, const int minZ, const int side,
+                                     const Vec3 origin, const float blockSize, const uint32_t seed,
+                                     const unsigned int relief) {
   World result = {0};
-  if (!world || !world_init_region(&result, minX, minZ, side, origin, blockSize))
+  if ((relief & ~(unsigned int)TERRAIN_RELIEF_ALL) || !world || !world_init_region(&result, minX, minZ, side, origin, blockSize))
     return 0;
   result.proceduralTerrain = 1;
   result.terrainSeed = seed;
+  result.terrainRelief = relief;
   result.hasOcean = 1;
   result.waterTopY = TERRAIN_SEA_LEVEL + 1;
   for (int x = 0; x < result.chunksPerSide; x++)
@@ -170,11 +239,17 @@ int create_terrain(World *const world, const int blocksPerSide, const Vec3 cente
 }
 
 int create_terrain_streamed(World *const world, const int blocksPerSide, const Vec3 center, const float blockSize, const uint32_t seed) {
+  return create_terrain_streamed_with_relief(world, blocksPerSide, center, blockSize, seed, TERRAIN_RELIEF_ALL);
+}
+
+int create_terrain_streamed_with_relief(World *const world, const int blocksPerSide, const Vec3 center,
+                                      const float blockSize, const uint32_t seed, const unsigned int relief) {
   World result = {0};
-  if (!world || !world_init(&result, blocksPerSide, center, blockSize))
+  if ((relief & ~(unsigned int)TERRAIN_RELIEF_ALL) || !world || !world_init(&result, blocksPerSide, center, blockSize))
     return 0;
   result.proceduralTerrain = 1;
   result.terrainSeed = seed;
+  result.terrainRelief = relief;
   result.hasOcean = 1;
   result.waterTopY = TERRAIN_SEA_LEVEL + 1;
   world_destroy(world);

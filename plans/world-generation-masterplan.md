@@ -7,8 +7,9 @@ Dimensions below are experimental presets, not settled world constants.
 
 ## Next creation blueprint: archetypes and a land spawn
 
-Status: the first experimental landmass and beach spawn are implemented. Its size
-and placement are accepted; the full area layout and islands remain planned.
+Status: flat beach 01 and eastern relief experiment 02 are implemented. The first
+island's size and placement are accepted; the full area layout and small islands
+remain planned. Current spawn is on the second island at `(682, 2, 170)`.
 
 Every creation has one primary landmass, one ocean area, and two archipelago
 areas. Each archipelago area will eventually contain 2–3 small islands; those
@@ -20,7 +21,8 @@ sandy beach, then a grassy interior. Players should eventually wake up on the
 first landmass. The [experimental small-quadrant implementation plan](world-generation/experiments/01-small-beach-quadrant.md)
 uses `0 <= x,z < 512` and a 256-block dry-land diameter. After the terrain was
 finished, spawn was moved to `(170, 2, 170)`, using solid support to avoid placing
-the requested approximate y=1 inside the beach. The origin remains ocean.
+the requested approximate y=1 inside the beach. Relief experiment 02 subsequently
+moves spawn east onto its comparison island. The origin remains ocean.
 
 The [creation and archetype index](world-generation/README.md) defines the shared
 contract and links the archetype documents. The detailed next profile is
@@ -296,6 +298,11 @@ starting hypotheses; the final configuration must enforce valid layer ordering.
   expanding the playable world needs separate storage/coordinate review.
 
 ## Implementation sequence and evidence
+
+Current relief work: [experimental quadrant 02](world-generation/experiments/02-hills-and-mountain-quadrant.md)
+keeps the original flat island and adds an eastern comparison island with
+independently optional hills and a mountain. Spawn is on its beach at
+`(682,2,170)`. These dimensions are for playtesting, not permanent world scale.
 
 1. Extract generation with existing terrain behavior preserved. Validate existing
    reference behavior, allocation limits, and unloaded/resident query agreement.

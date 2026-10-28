@@ -1,5 +1,10 @@
 # Test design
 
+Relief experiment 02 is covered by `test_beach_generation`: all four relief
+presets, unchanged coastline, material layers, chunk/mesh agreement, edits after
+eviction, new beach spawn, and normal-jump routes to hill and mountain summits.
+See [experiment settings and routes](../plans/world-generation/experiments/02-hills-and-mountain-quadrant.md).
+
 Tests should state the behaviour they protect and tolerate changes that preserve it.
 Grey-box tests are useful here: inspecting state is appropriate when ownership,
 invalidation, or recovery is the behaviour under test.

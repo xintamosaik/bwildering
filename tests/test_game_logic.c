@@ -1498,7 +1498,7 @@ static void test_terrain_relief_and_underground_depth(void) {
       assert(block_is_solid(terrain_column_block(column, column.stoneTopY - 1)));
       assert(terrain_column_block(column, TERRAIN_BASE_Y - 1) == BLOCK_TYPE_EMPTY);
     }
-  assert(lowest == 1 && highest == 3);
+  assert(lowest == 1 && highest > 3 && highest <= 43);
   printf("Terrain relief: %d..%d blocks; underground base %d\n", lowest, highest, TERRAIN_BASE_Y);
   World world = {0};
   assert(create_terrain_streamed(&world, 1, (Vec3){0}, 1, seed));

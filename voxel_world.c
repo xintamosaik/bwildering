@@ -13,7 +13,7 @@
 #define MESH_BENCH_VISIT() ((void)0)
 #define MESH_BENCH_QUERY_BEGIN() ((void)0)
 #define MESH_BENCH_QUERY_END() ((void)0)
-#define MESH_BENCH_SAMPLE(seed, x, z) terrain_sample_column(seed, x, z)
+#define MESH_BENCH_SAMPLE(world, x, z) terrain_sample_world_column(world, x, z)
 #endif
 
 enum { NODE_PAGE_SLOTS = 128, PAYLOAD_PAGE_SLOTS = 64 };
@@ -313,7 +313,7 @@ static const VoxelEdit *find_edit(const World *const world, const Chunk *const c
 static BlockType baseline_block(const World *const world, const int x, const int y, const int z) {
   return world->proceduralTerrain && y >= TERRAIN_BASE_Y &&
       y < (WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT) * SECTION_SIZE ?
-      terrain_column_block(MESH_BENCH_SAMPLE(world->terrainSeed, x, z), y) : BLOCK_TYPE_EMPTY;
+      terrain_column_block(MESH_BENCH_SAMPLE(world, x, z), y) : BLOCK_TYPE_EMPTY;
 }
 
 static void include_resident_chunk(World *const world, const int cx, const int cz) {
@@ -366,7 +366,7 @@ static Subchunk *terrain_section(const World *const world, const int cx, const i
           wz < world->minZ || wz >= world->minZ + world->blocksPerSide)
         continue;
       const TerrainColumn column = columns ? columns[x][z] :
-          MESH_BENCH_SAMPLE(world->terrainSeed, wx, wz);
+          MESH_BENCH_SAMPLE(world, wx, wz);
       for (int y = 0; y < SECTION_SIZE; y++) {
         const int wy = sy * SECTION_SIZE + y;
         const BlockType type = wy >= TERRAIN_BASE_Y &&
@@ -419,7 +419,7 @@ int world_materialize_chunk(World *const world, const int chunkX, const int chun
       columns[x][z] = (TerrainColumn){.height = TERRAIN_BASE_Y, .material = BLOCK_TYPE_STONE};
       if (wx >= world->minX && wx < world->minX + world->blocksPerSide &&
           wz >= world->minZ && wz < world->minZ + world->blocksPerSide) {
-        columns[x][z] = terrain_sample_column(world->terrainSeed, wx, wz);
+        columns[x][z] = terrain_sample_world_column(world, wx, wz);
         if (columns[x][z].stoneTopY < lowestStone) lowestStone = columns[x][z].stoneTopY;
         if (columns[x][z].stoneTopY > highestStone) highestStone = columns[x][z].stoneTopY;
         if (columns[x][z].height > highest)
@@ -436,7 +436,7 @@ int world_materialize_chunk(World *const world, const int chunkX, const int chun
       if (wx < world->minX || wx >= world->minX + world->blocksPerSide ||
           wz < world->minZ || wz >= world->minZ + world->blocksPerSide) { edge = 1; continue; }
       const int h = x >= 0 && x < SECTION_SIZE && z >= 0 && z < SECTION_SIZE ?
-          columns[x][z].height : terrain_sample_column(world->terrainSeed, wx, wz).height;
+          columns[x][z].height : terrain_sample_world_column(world, wx, wz).height;
       if (h < lowest) lowest = h;
     }
 
@@ -684,7 +684,7 @@ static float surface_height(const World *const world, const float x, const float
 
   /* Start with the generated surface, accounting for explicit removals. */
   if (world->proceduralTerrain && !chunk->terrainReady) {
-    const TerrainColumn column = terrain_sample_column(world->terrainSeed, ix, iz);
+    const TerrainColumn column = terrain_sample_world_column(world, ix, iz);
     int y = column.height - 1;
     while (y >= TERRAIN_BASE_Y) {
       if (surface_material(world_get_block(world, ix, y, iz), includeWater)) break;
@@ -757,7 +757,7 @@ static BlockType mesh_boundary_block(const World *const world, MeshNeighbors *co
       wy < TERRAIN_BASE_Y || wy >= (WORLD_MIN_SECTION_Y + WORLD_SECTION_COUNT) * SECTION_SIZE)
     return BLOCK_TYPE_EMPTY;
   if (!cache->sampled[x + 1][z + 1]) {
-    cache->columns[x + 1][z + 1] = MESH_BENCH_SAMPLE(world->terrainSeed, wx, wz);
+    cache->columns[x + 1][z + 1] = MESH_BENCH_SAMPLE(world, wx, wz);
     cache->sampled[x + 1][z + 1] = 1;
   }
   return terrain_column_block(cache->columns[x + 1][z + 1], wy);

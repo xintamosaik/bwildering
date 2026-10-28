@@ -192,7 +192,135 @@ static void test_beach_spawn(void) {
   game_destroy(&game);
 }
 
+/* Relief must be optional per world, including when columns are not resident. */
+static void test_relief_profiles(void) {
+  for (unsigned int relief = 0u; relief <= TERRAIN_RELIEF_ALL; relief++) {
+    int peak = 0, grassyRaised = 0, bareStone = 0;
+    for (int z = 0; z < 512; z++) for (int x = 512; x < 1024; x++) {
+      const TerrainColumn column = terrain_sample_column_with_relief(1, x, z, relief);
+      const TerrainColumn flat = terrain_sample_column_with_relief(1, x, z, 0u);
+      const TerrainColumn control = terrain_sample_column(1, x - 512, z);
+      assert(flat.height == control.height && flat.stoneTopY == control.stoneTopY);
+      assert(flat.material == control.material && flat.soilDepth == control.soilDepth);
+      if (control.material != BLOCK_TYPE_GRASS) {
+        assert(column.stoneTopY == control.stoneTopY && column.material == control.material);
+      }
+      assert(column.stoneTopY >= flat.stoneTopY);
+      if (column.stoneTopY > peak) peak = column.stoneTopY;
+      grassyRaised += column.stoneTopY > 3 && column.material == BLOCK_TYPE_GRASS;
+      bareStone += column.stoneTopY > 3 && column.material == BLOCK_TYPE_STONE;
+      assert(terrain_column_block(column, -65) == BLOCK_TYPE_DARK_STONE);
+      assert(terrain_column_block(column, -64) == BLOCK_TYPE_STONE);
+      assert(terrain_column_block(column, column.height) == BLOCK_TYPE_EMPTY);
+      if (column.material == BLOCK_TYPE_GRASS) {
+        assert(terrain_column_block(column, column.height - 1) == BLOCK_TYPE_GRASS);
+        assert(terrain_column_block(column, column.height - 2) == BLOCK_TYPE_DIRT);
+        assert(terrain_column_block(column, column.height - 4) == BLOCK_TYPE_STONE);
+      }
+      const int east = terrain_sample_column_with_relief(1, x + 1, z, relief).stoneTopY;
+      const int north = terrain_sample_column_with_relief(1, x, z + 1, relief).stoneTopY;
+      const int maxStep = relief & TERRAIN_RELIEF_MOUNTAINS ? 2 : 1;
+      assert(abs(column.stoneTopY - east) <= maxStep);
+      assert(abs(column.stoneTopY - north) <= maxStep);
+    }
+    if (!relief) assert(peak == 3 && !grassyRaised && !bareStone);
+    else if (relief == TERRAIN_RELIEF_HILLS) assert(peak == 11 && grassyRaised > 1000 && !bareStone);
+    else assert(peak == 43 && grassyRaised > 1000 && bareStone > 100);
+    /* The elongated western mountain approach stays within normal jump height. */
+    if (relief & TERRAIN_RELIEF_MOUNTAINS)
+      for (int x = 688; x < 788; x++) {
+        const int a = terrain_sample_column_with_relief(1, x, 238, relief).stoneTopY;
+        const int b = terrain_sample_column_with_relief(1, x + 1, 238, relief).stoneTopY;
+        assert(abs(a - b) <= 1);
+      }
+    printf("Relief preset %u: peak %d, %d raised grass, %d exposed stone columns\n",
+           relief, peak, grassyRaised, bareStone);
+  }
+}
+
+static void test_relief_residency(void) {
+  for (unsigned int relief = 0u; relief <= TERRAIN_RELIEF_ALL; relief++) {
+    World eager = {0}, streamed = {0};
+    assert(create_terrain_region_with_relief(&eager, 752, 208, 64,
+                                           (Vec3){12.0f, -3.0f, 8.0f}, 0.5f, 42, relief));
+    assert(create_terrain_streamed_with_relief(&streamed, 2048,
+                                             eager.origin, 0.5f, 42, relief));
+    assert(streamed.terrainRelief == relief);
+    for (int phase = 0; phase < 3; phase++) {
+      for (int z = 224; z < 256; z++) for (int x = 768; x < 800; x++)
+        for (int y = -128; y <= 44; y++)
+          assert(world_get_block(&eager, x, y, z) == world_get_block(&streamed, x, y, z));
+      if (!phase) {
+        for (int cx = 47; cx <= 50; cx++) for (int cz = 13; cz <= 16; cz++)
+          assert(world_materialize_chunk(&streamed, cx, cz));
+        for (int sy = -4; sy <= 2; sy++) {
+          SectionMesh a = {0}, b = {0};
+          assert(section_mesh_build(&eager, 48, sy, 14, &a));
+          assert(section_mesh_build(&streamed, 48, sy, 14, &b));
+          assert(a.vertexCount == b.vertexCount);
+          assert(!memcmp(a.typeVertexCount, b.typeVertexCount, sizeof(a.typeVertexCount)));
+          if (a.vertexCount) assert(!memcmp(a.vertices, b.vertices, a.vertexCount * sizeof(*a.vertices)));
+          section_mesh_destroy(&a);
+          section_mesh_destroy(&b);
+        }
+      } else if (phase == 1) assert(world_release_chunks_outside(&streamed, -1, 0, -1, 0));
+    }
+    const int top = terrain_sample_world_column(&streamed, 788, 238).stoneTopY - 1;
+    assert(world_set_block(&streamed, 788, top, 238, BLOCK_TYPE_EMPTY));
+    assert(world_set_block(&streamed, 788, top + 1, 238, BLOCK_TYPE_STONE));
+    assert(world_release_chunks_outside(&streamed, -1, 0, -1, 0));
+    assert(world_get_block(&streamed, 788, top, 238) == BLOCK_TYPE_EMPTY);
+    assert(world_get_block(&streamed, 788, top + 1, 238) == BLOCK_TYPE_STONE);
+    assert(world_materialize_chunk(&streamed, 49, 14));
+    assert(world_get_block(&streamed, 788, top, 238) == BLOCK_TYPE_EMPTY);
+    assert(world_get_block(&streamed, 788, top + 1, 238) == BLOCK_TYPE_STONE);
+    world_destroy(&eager);
+    world_destroy(&streamed);
+  }
+}
+
+static void test_relief_spawn(void) {
+  for (unsigned int relief = 0u; relief <= TERRAIN_RELIEF_ALL; relief++) {
+    Game game = {0};
+    assert(game_init_with_relief(&game, (GameConfig){2048, {0.0f, 0.0f, 0.0f}, 1.0f, 1}, relief));
+    assert(game.player.position.x == 682.0f && game.player.position.z == 170.0f);
+    assert(game.player.position.y == 2.0f && game.player.grounded);
+    assert(game.player.aim.yaw == 45.0f);
+    for (int tick = 0; tick < 60; tick++) game_step(&game, (GameCommand){.yaw = 45.0f});
+    assert(game.player.grounded && fabsf(game.player.position.y - 2.0f) < 0.001f);
+    game_step(&game, (GameCommand){.yaw = 45.0f, .movement.jump = 1});
+    assert(!game.player.grounded && game.player.position.y > 2.0f);
+    game_destroy(&game);
+  }
+}
+
+static void test_relief_climbs(void) {
+  static const struct { unsigned int relief; float startX, z, targetX; } routes[] = {
+      {TERRAIN_RELIEF_HILLS, 678.5f, 244.5f, 726.0f},
+      {TERRAIN_RELIEF_MOUNTAINS, 714.5f, 238.5f, 788.0f},
+      {TERRAIN_RELIEF_ALL, 714.5f, 238.5f, 788.0f},
+  };
+  for (size_t i = 0; i < sizeof(routes) / sizeof(*routes); i++) {
+    World world = {0};
+    assert(create_terrain_streamed_with_relief(&world, 2048, (Vec3){0.0f, 0.0f, 0.0f},
+                                             1.0f, 1, routes[i].relief));
+    Player player = {.position = {routes[i].startX, 1.0f, routes[i].z},
+                     .eyeHeight = 1.0f, .aim = game_aim(0.0f, 0.0f)};
+    assert(player_spawn_on_surface(&player, &world));
+    for (int tick = 0; tick < 2400 && player.position.x < routes[i].targetX; tick++)
+      update_player(&player, (PlayerInput){.forward = 1.0f, .jump = player.grounded},
+                    GAME_TICK_SECONDS, &world);
+    assert(player.position.x >= routes[i].targetX);
+    assert(player.position.y >= (routes[i].relief == TERRAIN_RELIEF_HILLS ? 10.0f : 42.0f));
+    world_destroy(&world);
+  }
+}
+
 int main(void) {
+  test_relief_profiles();
+  test_relief_residency();
+  test_relief_spawn();
+  test_relief_climbs();
   test_profile_samples();
   test_outline_and_boundaries();
   test_materialization_and_edits();

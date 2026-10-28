@@ -1,4 +1,5 @@
 #include "storage.h"
+#include "world_generation.h"
 #include "application_internal.h"
 #include "ui.h"
 #include <limits.h>
@@ -50,6 +51,17 @@ int application_init(Application *const application) {
   input_init(&application->input);
 
   int worldSide = PLATFORM_BLOCKS_PER_SIDE;
+  unsigned int relief = TERRAIN_RELIEF_ALL;
+  const char *const configuredRelief = getenv("BW_RELIEF");
+  if (configuredRelief) {
+    if (strcmp(configuredRelief, "flat") == 0) relief = 0u;
+    else if (strcmp(configuredRelief, "hills") == 0) relief = TERRAIN_RELIEF_HILLS;
+    else if (strcmp(configuredRelief, "mountain") == 0) relief = TERRAIN_RELIEF_MOUNTAINS;
+    else if (strcmp(configuredRelief, "both") != 0) {
+      fprintf(stderr, "BW_RELIEF must be flat, hills, mountain, or both\n");
+      return 0;
+    }
+  }
   const char *const configuredSide = getenv("BW_WORLD_SIZE");
   if (configuredSide) {
     char *end;
@@ -132,7 +144,7 @@ int application_init(Application *const application) {
 
   const double worldStart = perf_clock(&application->performance);
   const GameConfig config = {worldSide, CENTER, BLOCK_SIZE, WORLD_SEED};
-  if (!game_init(&application->game, config) ||
+  if (!game_init_with_relief(&application->game, config, relief) ||
       !world_stream_storage_limits(game_streaming_world(&application->game), MAX_VIEW_DISTANCE)) {
     fprintf(stderr, "Failed to create voxel terrain\n");
     application_shutdown(application);

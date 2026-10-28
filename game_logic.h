@@ -104,7 +104,8 @@ typedef struct {
 /* Owning type: initialize to zero, destroy explicitly, and do not copy by value.
    Missing sections read as air in ordinary worlds; streamed worlds synthesize
    missing chunks from their seed. Horizontal side is 1..WORLD_MAX_BLOCKS_PER_SIDE;
-   generated solids occupy [-128,-32), water [-32,1); edits use WORLD_COORD_MIN..MAX.
+   generated solids begin at -128, with water filling through Y=0 outside land;
+   edits use WORLD_COORD_MIN..MAX.
    Empty allocated sections remain owned retirement markers until CPU eviction
    or destruction;
    sectionCount includes them. Renderer sync must retire their GPU geometry.
@@ -129,6 +130,7 @@ typedef struct {
      transactionally (world_set_block returns zero); restoration reclaims slots. */
   int proceduralTerrain;
   uint32_t terrainSeed;
+  unsigned int terrainRelief; /* Generation options, fixed for this world's lifetime. */
   int hasOcean;
   int waterTopY; /* Exclusive water top in voxel coordinates for the flat ocean. */
   /* Conservative envelope of resident columns, including partial edit caches. */

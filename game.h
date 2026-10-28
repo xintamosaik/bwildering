@@ -33,6 +33,8 @@ typedef struct {
 
 /* Initializes a zeroed/destroyed owner; failure leaves it empty and destroyable. */
 int game_init(Game *game, GameConfig config);
+/* Relief flags are declared by world_generation.h; zero selects flat terrain. */
+int game_init_with_relief(Game *game, GameConfig config, unsigned int relief);
 void game_destroy(Game *game);
 /* Order: aim, movement/collision, placement, removal, tick increment. */
 void game_step(Game *game, GameCommand command);

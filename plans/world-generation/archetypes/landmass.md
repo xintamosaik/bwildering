@@ -19,17 +19,19 @@ first profile is [round, flat land with beach and grass](landmass/round-flat-bea
   chunk edges or the edges of a planning square.
 - Resolve ground height before choosing beach, soil, and grass materials.
 - Provide dry, accessible ground for eventual spawn selection. The first
-  experimental beach spawn is `(170, 2, 170)`, with elevation resolved from
-  solid support after the terrain was finished.
+  experimental beach spawn was `(170, 2, 170)`; relief experiment 02 moves it to
+  `(682, 2, 170)`. Elevation comes from solid support after terrain sampling.
 - Produce the same blocks through direct sampling and chunk materialization,
   including at signed coordinates and across region borders.
 
 ## Profiles
 
-Only the round, mostly flat beach-and-grass profile is specified now. Hills,
-mountains, cliffs, lakes, rivers, caves, vegetation, structures, and other
-landmass profiles are deferred. Do not introduce a generalized biome system
-or random profile selection merely to implement this first case.
+The round, mostly flat beach-and-grass profile is implemented. The next proposed
+extension is [separate hills and optional mountains](landmass/hills-and-mountains.md),
+with mountains providing their own foothill base. It is implemented in
+[experimental quadrant 02](../experiments/02-hills-and-mountain-quadrant.md).
+Cliffs, lakes, rivers, caves, vegetation, structures, and other landmass profiles
+remain deferred. A generalized biome system is not needed for this extension.
 
 ## Review criteria
 

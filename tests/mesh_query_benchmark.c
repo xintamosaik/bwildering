@@ -17,9 +17,9 @@ static struct {
   size_t lookups, steps, samples, queries;
   double lookupTime, sampleTime, queryTime;
 } profile;
-static TerrainColumn measured_sample(uint32_t seed, int x, int z) {
-  double start = seconds();
-  TerrainColumn column = terrain_sample_column(seed, x, z);
+static TerrainColumn measured_sample(const World *const world, const int x, const int z) {
+  const double start = seconds();
+  const TerrainColumn column = terrain_sample_world_column(world, x, z);
   profile.samples++;
   profile.sampleTime += seconds() - start;
   return column;
@@ -29,7 +29,7 @@ static TerrainColumn measured_sample(uint32_t seed, int x, int z) {
 #define MESH_BENCH_VISIT() (profile.steps++)
 #define MESH_BENCH_QUERY_BEGIN() double queryStart = seconds(); profile.queries++
 #define MESH_BENCH_QUERY_END() (profile.queryTime += seconds() - queryStart)
-#define MESH_BENCH_SAMPLE(seed, x, z) measured_sample(seed, x, z)
+#define MESH_BENCH_SAMPLE(world, x, z) measured_sample(world, x, z)
 #endif
 /* Include implementation to compare the frozen baseline using the same private
    helpers and compiler settings. Do not link voxel_world.c a second time. */

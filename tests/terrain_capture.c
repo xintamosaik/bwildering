@@ -29,7 +29,8 @@ int main(void) {
   r.framebufferHeight = 640;
   r.viewDistance = 300;
   const char *const names[] = {"sea-level", "seabed", "edge", "underwater",
-                                "beach-overhead", "beach-approach", "beach-shore", "beach-interior"};
+                                "beach-overhead", "beach-approach", "beach-shore", "beach-interior",
+                                "relief-overhead", "relief-spawn", "relief-hill", "relief-mountain"};
   const Player views[] = {
       {.position = {0.5f, 6.0f, 0.5f}, .eyeHeight = 1.0f,
        .aim = {.front = {0.0f, -0.6f, -0.8f}}},
@@ -47,6 +48,14 @@ int main(void) {
        .aim = {.front = {0.95f, -0.31225f, 0.0f}}},
       {.position = {256.5f, 3.0f, 256.5f}, .eyeHeight = 1.0f,
        .aim = {.front = {0.9968f, -0.08f, 0.0f}}},
+      {.position = {768.0f, 190.0f, 256.0f}, .eyeHeight = 1.0f,
+       .aim = {.front = {0.0f, -0.9998f, -0.02f}}},
+      {.position = {682.0f, 2.0f, 170.0f}, .eyeHeight = 1.0f,
+       .aim = {.front = {0.7071068f, 0.0f, 0.7071068f}}},
+      {.position = {690.0f, 12.0f, 280.0f}, .eyeHeight = 1.0f,
+       .aim = {.front = {0.8f, -0.12f, -0.588f}}},
+      {.position = {840.0f, 34.0f, 290.0f}, .eyeHeight = 1.0f,
+       .aim = {.front = {-0.68f, -0.16f, -0.715f}}},
   };
   for (size_t scene = 0; scene < sizeof(views) / sizeof(*views); scene++) {
     const Player p = views[scene];

@@ -1,13 +1,15 @@
 # Creation blueprint and terrain archetypes
 
-Status: blueprint design with experimental beach 01 implemented. The complete
+Status: blueprint design with experimental beach 01 and relief 02 implemented. The complete
 four-area layout and small islands remain planned. See the
 [masterplan](../world-generation-masterplan.md).
 
 The first scoped implementation is the
 [experimental 512-block beach quadrant](experiments/01-small-beach-quadrant.md).
-Its terrain and beach-spawn follow-up are implemented. The player starts at
-`(170, 2, 170)`; the accepted size and placement do not establish world limits.
+Its terrain and beach-spawn follow-up are implemented. The next
+[relief experiment](experiments/02-hills-and-mountain-quadrant.md) adds an eastern
+island with optional hills and mountain; spawn is now `(682, 2, 170)`, facing
+inland. The accepted size and placement do not establish world limits.
 
 ## Composition of every creation
 
@@ -36,9 +38,12 @@ same connected ocean wherever the geography permits it.
 - Preserve this composition for every creation; vary placement and shape through
   the seed without changing the required counts.
 - Develop the [round, flat beach-and-grass profile](archetypes/landmass/round-flat-beach-grass.md)
-  first. Mountains, other landmass profiles, and small-island generation wait.
+  first. Its size and placement are accepted. The next extension is
+  [hills and optional mountains](archetypes/landmass/hills-and-mountains.md),
+  now implemented as experimental quadrant 02;
+  other landmass profiles and small-island generation wait.
 - Eventually wake the player on dry, safe solid ground on the first landmass.
-  The beach-spawn follow-up now selects `(170, 2, 170)` using solid support,
+  Relief experiment 02 now selects `(682, 2, 170)` using solid support,
   rather than the occupied water surface.
 - Preserve dark stone, the stone seabed, and static ocean water. Build land
   upward from the seabed and replace water inside its volume.

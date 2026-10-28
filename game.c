@@ -13,25 +13,35 @@ GameplayAim game_aim(const float yaw, const float pitch) {
 }
 
 int game_init(Game *const game, const GameConfig config) {
-  if (!create_terrain_streamed(&game->world, config.blocksPerSide, config.center,
-                                config.blockSize, config.seed))
+  return game_init_with_relief(game, config, TERRAIN_RELIEF_ALL);
+}
+
+int game_init_with_relief(Game *const game, const GameConfig config, const unsigned int relief) {
+  if (!create_terrain_streamed_with_relief(&game->world, config.blocksPerSide, config.center,
+                                         config.blockSize, config.seed, relief))
     return 0;
   game->player = (Player){
       .position = {game->world.origin.x + 0.5f * config.blockSize, config.center.y,
                    game->world.origin.z + 0.5f * config.blockSize},
       .eyeHeight = 1.0f, .aim = game_aim(-90.0f, 0.0f)};
-  /* Experimental beach spawn. Small fixture worlds that exclude this location
-     retain the original origin spawn; ground height comes from solid support. */
-  const int spawnX = 170, spawnZ = 170;
-  if (spawnX >= game->world.minX && spawnX < game->world.minX + config.blocksPerSide &&
-      spawnZ >= game->world.minZ && spawnZ < game->world.minZ + config.blocksPerSide) {
+  /* Prefer the eastern relief experiment; smaller worlds fall back to beach 01
+     or the origin. Resolve actual support for the full player footprint. */
+  static const struct { int x, z; float yaw; } spawns[] = {
+      {682, 170, 45.0f}, {170, 170, -90.0f}};
+  for (size_t i = 0; i < sizeof(spawns) / sizeof(*spawns); i++) {
+    const int spawnX = spawns[i].x, spawnZ = spawns[i].z;
+    if (spawnX < game->world.minX || spawnX >= game->world.minX + config.blocksPerSide ||
+        spawnZ < game->world.minZ || spawnZ >= game->world.minZ + config.blocksPerSide) continue;
     Player landSpawn = game->player;
     landSpawn.position = (Vec3){game->world.origin.x + (float)spawnX * config.blockSize,
                                game->world.origin.y + config.blockSize,
                                game->world.origin.z + (float)spawnZ * config.blockSize};
     const float waterSurface = game->world.origin.y + (float)game->world.waterTopY * config.blockSize;
-    if (player_spawn_on_surface(&landSpawn, &game->world) && landSpawn.position.y > waterSurface)
+    if (player_spawn_on_surface(&landSpawn, &game->world) && landSpawn.position.y > waterSurface) {
+      landSpawn.aim = game_aim(spawns[i].yaw, 0.0f);
       game->player = landSpawn;
+      break;
+    }
   }
   game->tick = 0;
   return 1;

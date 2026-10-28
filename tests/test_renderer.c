@@ -1339,7 +1339,8 @@ int main(void) {
   assert(application.game.world.blocksPerSide == PLATFORM_BLOCKS_PER_SIDE);
   const float spawnY = application.game.player.position.y;
   assert(spawnY == 2.0f && application.game.player.grounded);
-  assert(application.game.player.position.x == 170.0f && application.game.player.position.z == 170.0f);
+  assert(application.game.player.position.x == 682.0f && application.game.player.position.z == 170.0f);
+  assert(application.game.player.aim.yaw == 45.0f);
   /* Look down at the dry beach and its shoreline. */
   Player foundationView = application.game.player;
   foundationView.aim = game_aim(-90.0f, -45.0f);
